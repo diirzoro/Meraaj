@@ -17,6 +17,9 @@ from db import db, serialize, oid, now_iso
 from security import create_access_token, require_admin
 
 router = APIRouter(prefix="/api/integrations/rahal", tags=["rahal-integration"])
+# Simulated Rahal receiver (soft-launch on the same environment). In production this
+# lives inside Rahal at POST /api/meraaj/webhooks and verifies X-Meraaj-Signature.
+sim_router = APIRouter(prefix="/api/meraaj", tags=["rahal-sim-receiver"])
 
 
 def _shared_secret() -> str:
@@ -108,6 +111,29 @@ async def _selftest_sink(request: Request, x_meraaj_signature: str = Header(defa
     if not valid:
         raise HTTPException(401, "invalid signature")
     return {"received": True, "valid": valid}
+
+
+@sim_router.post("/webhooks")
+async def simulated_rahal_receiver(request: Request, x_meraaj_signature: str = Header(default="")):
+    """Simulated Rahal inbound receiver for the soft launch. Verifies HMAC exactly as
+    Rahal must, records the event, and acknowledges (this is what proves overbooking sync)."""
+    raw = await request.body()
+    expected = hmac.new(_meraaj_secret().encode(), raw, hashlib.sha256).hexdigest()
+    valid = hmac.compare_digest(expected, x_meraaj_signature.replace("sha256=", ""))
+    body = json.loads(raw)
+    await db.rahal_sim_inbox.insert_one({
+        "valid": valid, "event": body.get("event"),
+        "package_ref": body.get("package_ref"), "body": body, "received_at": now_iso(),
+    })
+    if not valid:
+        raise HTTPException(401, "invalid signature")
+    return {"received": True, "valid": valid, "action": "seats_synced"}
+
+
+@sim_router.get("/inbox")
+async def simulated_rahal_inbox(admin: dict = Depends(require_admin)):
+    docs = await db.rahal_sim_inbox.find().sort("received_at", -1).to_list(100)
+    return serialize(docs)
 
 
 @router.post("/packages/share")
