@@ -4,6 +4,7 @@ from typing import List, Optional
 from db import (db, serialize, oid, now_iso, adjust_wallet, log_txn,
                 platform_pct, cancel_fee_pct, marketer_pct, log_platform_revenue)
 from security import get_current_user, get_optional_user, require_office, require_buyer
+from integration import notify_rahal
 
 router = APIRouter(prefix="/api", tags=["market"])
 
@@ -157,6 +158,7 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
         "package_id": str(pkg["_id"]),
         "package_title": pkg["title"],
         "package_type": pkg["type"],
+        "rahal_ref": pkg.get("rahal_ref") if pkg.get("source") == "rahal" else None,
         "buyer_id": str(user["_id"]),
         "buyer_office_name": user["office_name"],
         "buyer_type": user["role"],
@@ -192,6 +194,15 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
                           f"عمولة تسويق (معلّقة): {pkg['title']}", bid)
         if platform_profit:
             await log_platform_revenue(platform_profit, f"أرباح المنصة من حجز مباشر: {pkg['title']}", bid)
+    if pkg.get("source") == "rahal" and pkg.get("rahal_ref"):
+        await notify_rahal("meraaj.booking.created", {
+            "package_ref": pkg["rahal_ref"],
+            "meraaj_booking_id": bid,
+            "seats_booked": seats,
+            "available_seats_now": pkg["available_seats"] - seats,
+            "buyer": {"office_name": user["office_name"], "type": user["role"]},
+            "registrants": [{"name": r.name, "passport_no": r.passport_no, "age": r.age} for r in payload.registrants],
+        })
     booking["_id"] = res.inserted_id
     return serialize(booking)
 
@@ -315,6 +326,9 @@ async def cancel_request(booking_id: str, user: dict = Depends(require_buyer)):
         await db.bookings.update_one({"_id": b["_id"]}, {"$set": {"status": "cancelled",
                                      "cancellation": {"type": "auto_blue", "refund": refund, "admin_fee": admin_fee}}})
         await log_txn(user["_id"], "cancel_refund", refund, f"استرداد إلغاء: {b['package_title']}", booking_id)
+        if b.get("rahal_ref"):
+            await notify_rahal("meraaj.booking.cancelled", {
+                "package_ref": b["rahal_ref"], "meraaj_booking_id": booking_id, "seats_released": b["seats"]})
         return {"status": "cancelled", "refund": refund, "admin_fee": admin_fee}
     # Yellow: send to seller to set deduction
     await db.bookings.update_one({"_id": b["_id"]}, {"$set": {"cancellation": {"type": "yellow_pending", "stage": "awaiting_seller"}}})
@@ -366,6 +380,9 @@ async def cancel_accept(booking_id: str, user: dict = Depends(require_buyer)):
         await log_platform_revenue(-b["platform_fee"], f"عكس عمولة منصة (إلغاء أصفر): {b['package_title']}", booking_id)
     if platform_cut:
         await log_platform_revenue(platform_cut, f"رسوم تشغيلية إلغاء: {b['package_title']}", booking_id)
+    if b.get("rahal_ref"):
+        await notify_rahal("meraaj.booking.cancelled", {
+            "package_ref": b["rahal_ref"], "meraaj_booking_id": booking_id, "seats_released": b["seats"]})
     return {"status": "cancelled", "refund": refund, "seller_keeps": seller_keeps}
 
 

@@ -192,32 +192,74 @@ DELETE https://api.meraaj.network/api/integrations/rahal/packages/{package_ref} 
 موضحة في القسم 1.3:
 `POST https://api.meraaj.network/api/integrations/rahal/webhooks` (تتحقق من توقيع HMAC).
 
-### 2.3 Webhooks من معراج إلى رحال (Meraaj → Rahal) — لمزامنة المخزون العكسية
+### 2.3 Webhooks من معراج إلى رحال (Meraaj → Rahal) — مزامنة المخزون العكسية — **مُنفّذة (خادم-لخادم)**
 
-عند إتمام حجز في سوق معراج، يجب خصم المقاعد من رحال فوراً. توفّر معراج هذه الأحداث ويجب أن يوفّر رحال نقطة استقبال لها:
+عند إتمام أو إلغاء حجز داخل سوق معراج، ترسل معراج فوراً حدثاً موقّعاً إلى نقطة الاستقبال في رحال لخصم/إرجاع المقاعد ومنع البيع المزدوج. الإرسال يعتمد نمط **Outbox موثوق**: يُخزَّن كل حدث أولاً ثم يُسلَّم في الخلفية، ويُعاد إرساله عند الفشل (لا يضيع أي حجز حتى لو انقطع الاتصال).
 
-**نقطة الاستقبال المطلوبة من رحال:** `POST https://api.rahal.example/v1/webhooks/meraaj`
+- **نقطة الاستقبال المطلوبة من رحال:** `POST {RAHAL_WEBHOOK_URL}` (المسار لديكم: `/api/meraaj/webhooks`). زوّدونا بعنوان المضيف الكامل لنضعه في المتغير `RAHAL_WEBHOOK_URL`.
+- **المصادقة:** ترويسة `X-Meraaj-Signature: sha256=<hmac>` — HMAC-SHA256 على جسم الطلب الخام باستخدام **`MERAAJ_SHARED_SECRET = "meraaj_rahal_outbound_secret_2026"`**. تحقّقوا منها قبل المعالجة.
+- **الاستجابة المتوقعة:** `2xx` خلال 10 ثوانٍ. أي رد آخر يُعيد معراج المحاولة.
 
-| # | الحدث | الغرض | الحمولة |
+| # | الحدث (event) | الغرض | الحمولة الأساسية |
 |---|---|---|---|
-| M1 | `meraaj.booking.created` | خصم مقاعد من رحال عند حجز في معراج | `package_ref`, `seats_booked`, `available_seats_now` |
-| M2 | `meraaj.booking.cancelled` | إرجاع المقاعد عند إلغاء الحجز | `package_ref`, `seats_released` |
-| M3 | `meraaj.booking.status_changed` | مزامنة الحالة (أزرق/أصفر/أخضر) | `package_ref`, `booking_id`, `status` |
+| M1 | `meraaj.booking.created` | خصم المقاعد وإنشاء الحجز المحاسبي في رحال | `package_ref`, `meraaj_booking_id`, `seats_booked`, `available_seats_now`, `buyer{office_name,type}`, `registrants[{name,passport_no,age}]`, `occurred_at` |
+| M2 | `meraaj.booking.cancelled` | إرجاع المقاعد عند إلغاء الحجز | `package_ref`, `meraaj_booking_id`, `seats_released`, `occurred_at` |
 
-### 2.4 آلية عرض السوق داخل رحال (Embedded Marketplace)
-
-**القرار الهندسي المعتمد: نوفّر Iframe URL موقّع (Signed Iframe) — وليس Component.**
-
-**السبب:** يفصل قواعد النظامين، ولا يفرض على رحال إطار عمل React، ويضمن أن منطق المحفظة/الضمان يبقى داخل معراج بأمان، ويسهّل التحديثات دون نشر جديد من طرف رحال.
-
+**مثال حمولة M1:**
 ```
-https://app.meraaj.network/embed/market?token=<signed_jwt>&office_ref=RHL-OFF-10231&lang=ar
+POST {RAHAL_WEBHOOK_URL}
+Headers: X-Meraaj-Signature: sha256=<hmac>
+Body:
+{
+  "event": "meraaj.booking.created",
+  "package_ref": "RHL-PKG-90001",
+  "meraaj_booking_id": "6a8...",
+  "seats_booked": 1,
+  "available_seats_now": 29,
+  "buyer": { "office_name": "مكتب الأمل", "type": "office" },
+  "registrants": [ { "name": "حاج مشترك", "passport_no": "SH1", "age": 45 } ],
+  "occurred_at": "2026-06-...Z"
+}
 ```
-- الـ `token` هو JWT موقّع من رحال (بنفس السر المشترك) يحوي `office_ref` وصلاحية زمنية.
-- يدعم الـ iframe الاتصال عبر `postMessage` لإعلام رحال بأحداث (فتح باكج، إتمام حجز، تغيير ارتفاع الإطار).
-- اتجاه RTL ولغة عربية افتراضياً.
+**أدوات المراقبة (لوحة الإدارة):** `GET /api/integrations/rahal/outbox` لعرض سجل الإرسال، و`POST /api/integrations/rahal/outbox/retry` لإعادة إرسال المعلّق/الفاشل بعد ضبط العنوان.
 
-**(اختياري مستقبلاً):** توفير Web Component / SDK مبسّط `<meraaj-market>` يغلّف الـ iframe إذا رغب فريق رحال بذلك.
+### 2.4 آلية عرض السوق داخل رحال (Embedded Marketplace) — **جاهزة الآن**
+
+**القرار الهندسي المعتمد والمُنفّذ: Iframe URL موقّع (Signed JWT Handoff).**
+
+**رابط السوق (يُوضع في متغير `MERAAJ_STORE_URL` لدى رحال):**
+```
+https://umrah-exchange.preview.emergentagent.com/embed/market?token=<SIGNED_JWT>&lang=ar
+```
+
+**كيف يُنشئ رحال الـ token؟** يوقّع JWT بخوارزمية HS256 باستخدام السر المشترك `RAHAL_SHARED_SECRET`، ويحوي:
+```json
+{
+  "office_ref": "RHL-OFF-10231",
+  "email": "office@example.com",
+  "office_name": "مكتب النور",
+  "owner_name": "أحمد صالح",   // اختياري
+  "phone": "+967...",           // اختياري
+  "governorate": "صنعاء",       // اختياري
+  "exp": 1710000000             // صلاحية قصيرة (≤ 10 دقائق)
+}
+```
+
+**تدفق الدخول الموحّد (SSO) المُنفّذ:**
+1. رحال يضمّن `<iframe src="MERAAJ_STORE_URL">`.
+2. صفحة الـ embed في معراج تأخذ الـ token وترسله إلى:
+   `POST /api/integrations/rahal/sso` بالجسم `{ "token": "<SIGNED_JWT>" }`.
+3. معراج تتحقق من التوقيع، تُنشئ/تربط حساب المكتب تلقائياً (role=office, source=rahal, rahal_office_ref)، وتُعيد `access_token` جلسة معراج.
+4. يُفتح السوق داخل الـ iframe والمكتب مسجّل الدخول تلقائياً ويمكنه الحجز مباشرة.
+
+**أحداث postMessage من معراج إلى رحال (لضبط ارتفاع الإطار ورصد الأحداث):**
+```
+{ source: "meraaj", type: "ready" }
+{ source: "meraaj", type: "resize", height: <px> }
+{ source: "meraaj", type: "booking_created", package_ref: "<rahal_ref|null>" }
+```
+
+**(اختياري مستقبلاً):** Web Component `<meraaj-market>` يغلّف الـ iframe.
 
 ---
 

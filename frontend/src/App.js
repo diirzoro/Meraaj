@@ -17,6 +17,7 @@ import Bookings from "@/pages/Bookings";
 import Sales from "@/pages/Sales";
 import WalletPage from "@/pages/Wallet";
 import Marketer from "@/pages/Marketer";
+import EmbedMarket from "@/pages/EmbedMarket";
 import AdminDashboard from "@/pages/admin/AdminDashboard";
 import AdminFinance from "@/pages/admin/AdminFinance";
 import AdminOffices from "@/pages/admin/AdminOffices";
@@ -52,6 +53,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/" element={<Landing />} />
+      <Route path="/embed/market" element={<EmbedMarket />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
 
