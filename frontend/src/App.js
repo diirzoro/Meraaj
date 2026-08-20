@@ -7,6 +7,7 @@ import Layout from "@/components/Layout";
 
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
+import LandingPage from "@/pages/Landing";
 import Dashboard from "@/pages/Dashboard";
 import Market from "@/pages/Market";
 import PackageDetail from "@/pages/PackageDetail";
@@ -38,10 +39,9 @@ function Protected({ role, children }) {
 }
 
 function Landing() {
-  const { user, loading } = useAuth();
-  if (loading || user === null) return <Loader />;
+  const { user } = useAuth();
   if (user) return <Navigate to={user.role === "super_admin" ? "/admin" : "/dashboard"} replace />;
-  return <Navigate to="/login" replace />;
+  return <LandingPage />;
 }
 
 function AppRoutes() {
