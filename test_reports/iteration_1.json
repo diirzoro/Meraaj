@@ -1,0 +1,69 @@
+{
+  "summary": "First full-stack QA pass on Meraaj Network (Arabic RTL B2B Umrah marketplace). Backend: created pytest regression suite (33 tests, 27 passed = 82%) covering auth/JWT/bcrypt/cookies, packages CRUD+market filters, full booking lifecycle blue->yellow->green with exact escrow math, visa validation, 24h settlement block, blue & yellow cancellations, disputes + admin resolution, wallet topup/P2P/withdrawal approval flows, office suspend/activate, and Rahal integration (API key + HMAC webhooks). Frontend: verified admin dashboard/liquidity, office register+login, wallet cards, package creation, market filters/search, booking with correct debit (2000 net + 40 platform fee = 2040), blue cancel refund (1000), full yellow cancel negotiation (deduction 250 -> refund 770), dispatch, settlement-blocked toast, dispute open + admin release_seller, finance approvals (topup/transfer), suspend/activate. Found 3 CRITICAL money-safety state-guard bugs in backend, a broken main-content layout offset (content hidden under the fixed sidebar on every page), and no handling of 403 for suspended offices.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/bookings/{id}/cancel-request + cancel-offer + cancel-accept", "issue": "cancel-request has no guard for status 'cancelled' (only blocks 'green'). An already-cancelled booking can be pushed back into the yellow cancellation flow and refunded a SECOND time. Reproduced: buyer starts with 10000, books 1020, cancels (blue refund), replays cancel-request -> cancel-offer(0) -> cancel-accept and ends with 11000 (i.e. ~1000 created out of thin air; seller pending also goes negative and seats are released twice).", "priority": "CRITICAL"},
+      {"endpoint": "POST /api/admin/disputes/{booking_id}/resolve", "issue": "No idempotency/state guard — a resolved dispute (dispute.status == 'resolved' / settled == true) can be resolved again, crediting the buyer (or seller) each time. Reproduced: buyer balance went 10000 -> 11020 after resolving the same dispute twice.", "priority": "CRITICAL"},
+      {"endpoint": "POST /api/bookings/{id}/dispute", "issue": "A second dispute POST on a booking with an already-open dispute returns 200 and overwrites the existing dispute (reason/opener/created_at lost). Also missing the spec's 'within 24h of dispatch' window check — a dispute can be opened any time while status is green.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "GET /api/packages/{id} (and every path using db.oid())", "issue": "Malformed ObjectId returns 500 (bson.errors.InvalidId leaks from oid()). Should be 400/404. Wrap oid() in try/except across market.py/wallet.py/admin.py."},
+      {"endpoint": "POST /api/auth/login", "issue": "No brute-force protection: 6+ consecutive wrong passwords all return 401, no lockout/throttle (playbook requires lockout after 5 failures)."},
+      {"endpoint": "POST /api/bookings", "issue": "Seat/balance check and the wallet debit are not atomic (read-then-$inc). Two concurrent bookings can oversell seats or overdraw available balance. Use findOneAndUpdate with a conditional filter."},
+      {"endpoint": "POST /api/bookings/{id}/issue-visas", "issue": "visa_file is unconditionally overwritten with v.get('visa_file') (None when omitted), so a previously stored visa file is wiped on re-submit. Also partial payload mutates the in-memory list only, so nothing persists — behaviour is correct today but fragile."},
+      {"endpoint": "Financial model (market.py)", "issue": "Platform fee is charged twice per booking: buyer is debited net + 10% of buyer commission, and at settlement the seller receives net - the same fee. Confirm this double-take is intended; the spec describes a single 10% platform fee."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "components/Layout.js (main content)", "issue": "Main content uses `me-72` (margin-inline-END) while the sidebar is fixed at inline-START, so all page content is offset to the wrong side and slides UNDER the sidebar. Measured on /dashboard @1920: sidebar.left=1632 but h1.right=1648 -> page titles are clipped on every screen (dashboard, sales, bookings, market, admin). Fix: `ms-72` instead of `me-72`.", "selector": "main.flex-1.me-72", "priority": "HIGH"},
+      {"component": "Layout / responsiveness", "issue": "Sidebar is always `fixed w-72` with no mobile drawer/hamburger. At 390px the document scrollWidth is 556px (horizontal overflow) and the content sits behind the sidebar — the app is unusable on mobile.", "selector": "[data-testid=\"sidebar\"]", "priority": "HIGH"},
+      {"component": "Suspended office handling", "issue": "After an admin suspends an office, every office API call returns 403 but the UI shows normal pages with misleading empty states (e.g. 'لا توجد مبيعات بعد') and no message; unhandled axios rejections trigger the CRA 'Uncaught runtime errors' overlay. Add a global 403 interceptor -> Arabic 'حسابك موقوف' screen / forced logout.", "selector": "n/a", "priority": "HIGH"},
+      {"component": "Wallet.js Balance", "issue": "data-testid is built from the Arabic title: `wallet-balance-الرصيد المتاح` / `wallet-balance-الرصيد المعلق (ضمان)`. Unstable, non-ASCII testids; only the gold card has `wallet-balance-total`. Use total/pending/available.", "selector": "[data-testid^=\"wallet-balance-\"]", "priority": "MEDIUM"},
+      {"component": "AdminOffices.js", "issue": "Office table has no email column and no search/pagination — 36 offices are rendered with no way to identify an office by email (admin identifies offices by email everywhere else, e.g. P2P transfers).", "selector": "[data-testid^=\"office-row-\"]", "priority": "MEDIUM"},
+      {"component": "Market.js search", "issue": "Search only fires on Enter (no debounce, no search button); typing appears to do nothing, which reads as a broken filter.", "selector": "[data-testid=\"market-search\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "All authenticated screens (RTL)", "issues": ["Page heading and the first stat/wallet card are partially hidden behind the fixed sidebar due to the me-72/ms-72 mistake", "Large empty area on the opposite side of the viewport because content is pushed to the wrong side"]},
+      {"screen": "Mobile (390x844)", "issues": ["No responsive sidebar, horizontal page overflow (556px content in a 390px viewport)"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_edge_cases.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL: add status guards to cancel-request/cancel-offer/cancel-accept (reject when status is 'cancelled' or when cancellation already settled) — currently allows double refund / money creation",
+    "CRITICAL: make admin dispute resolution idempotent (reject when dispute.status != 'open' or settled == true)",
+    "HIGH: reject duplicate dispute creation and enforce the 24h-from-dispatch dispute window",
+    "HIGH: change `me-72` to `ms-72` in components/Layout.js and add a mobile sidebar (drawer + hamburger)",
+    "HIGH: handle 403 responses globally (suspended office) with an Arabic message / forced logout instead of empty pages + runtime-error overlay",
+    "MEDIUM: wrap ObjectId parsing so malformed ids return 400/404 instead of 500",
+    "MEDIUM: add login rate limiting / lockout after 5 failed attempts",
+    "MEDIUM: make booking seat+balance debit atomic (conditional findOneAndUpdate) and use stable ASCII data-testids in Wallet.js",
+    "LOW: add email column + search to admin offices; trigger market search on typing (debounced) or add a search button",
+    "Clarify whether the platform fee should be charged to both buyer and seller (currently taken twice per booking)"
+  ],
+  "critical_code_review_comments": [
+    "market.py cancel-request/cancel-accept and admin.py resolve_dispute perform wallet $inc without any terminal-state check — every money-moving endpoint needs an idempotency guard (e.g. conditional update on status) to prevent replay-driven balance inflation",
+    "db.oid() raises bson.InvalidId which surfaces as HTTP 500 on every endpoint that accepts an id path param",
+    "create_booking reads wallet/seats then writes with $inc — race condition allows overselling and overdraft; use a single conditional update",
+    "No rate limiting on /api/auth/login",
+    "Layout.js main margin uses the wrong logical side (me-72 vs ms-72), which breaks the layout of every authenticated page"
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_edge_cases.py"
+  ],
+  "success_rate": {"backend": "82% (27/33 pytest; 6 failures = 5 distinct real bugs)", "frontend": "~85% (all core flows work; layout/mobile/403-handling defects)"},
+  "seed_data_creation": "Created ~25 throwaway offices test_*@qa-example.com / Test@1234 (unique per test), TEST_ prefixed packages, one TEST_UI office via the registration form, plus TEST_ topup/transfer/withdrawal requests and TEST_UI bookings on seeded seller/buyer accounts. Seeded buyer available balance is now ~48,890 (was 50,000). Seeded seller was suspended and re-activated (final state: active).",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "Admin abuzay84@gmail.com / Meraaj@2026; seller@test.com & buyer@test.com / Test@1234 (all verified working; /app/memory/test_credentials.md is accurate)",
+  "context_for_next_testing_agent": "Run `cd /app/backend && python -m pytest tests/ -q` (pytest.ini pins -n 2 --dist loadscope; conftest.py exposes new_office/fund_office/make_package/wallet_of helpers). Expected failures until fixed: test_package_not_found_and_bad_id (500 on bad ObjectId), test_brute_force_lockout_after_5_failures, test_blue_cancel_refund_and_seat_release (double cancel allowed) and all 3 tests in test_edge_cases.py (double refund / double dispute / double dispute-resolution). Do NOT use @*.test email domains — EmailStr rejects reserved TLDs; use @qa-example.com. Settlement success cannot be tested without time manipulation; only the 24h block is verified (both API 400 and UI toast). UI flows already verified end-to-end: register, login, package create, market filter/search (Enter needed), booking, visa issue (confirm button is client-side disabled until every visa number is filled), dispatch, settle-block, blue cancel, yellow cancel negotiation, dispute + admin resolve, topup/transfer approvals, suspend/activate.",
+  "rca_of_the_issue": "The money-safety bugs share one root cause: state transitions in market.py/admin.py validate only a subset of statuses before mutating wallets with $inc, and there is no terminal-state/idempotency flag check. cancel-request only rejects status=='green', so a 'cancelled' booking still enters the yellow negotiation branch and cancel-accept re-credits the buyer and re-releases seats; resolve_dispute only checks that a dispute object exists, so it can be replayed after 'resolved'. The layout bug is a logical-property mistake: the sidebar is positioned at inline-start (start-0) while <main> reserves space with margin-inline-end (me-72), so in RTL the reserved gap lands on the opposite side and content renders beneath the sidebar."
+}

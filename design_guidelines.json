@@ -1,0 +1,117 @@
+{
+  "project_name": "Meraaj Network",
+  "theme": "light",
+  "direction": "rtl",
+  "typography": {
+    "headings": "Alexandria",
+    "body": "Cairo",
+    "data_tabular": "IBM Plex Sans Arabic",
+    "instructions": "Arabic text requires slightly larger baseline sizing. Use leading-relaxed for body copy. Headings must use tracking-tight to maintain modern tension. DO NOT use generic fonts. Set logical text alignment classes like text-start instead of text-left."
+  },
+  "colors": {
+    "base_background": "#F4F6F8",
+    "surface": "#FFFFFF",
+    "primary": "#0A2540",
+    "primary_hover": "#061A2E",
+    "accent_gold": "#D4AF37",
+    "accent_sand": "#E5D9C5",
+    "text_main": "#111827",
+    "text_muted": "#6B7280",
+    "border": "#E5E7EB",
+    "statuses": {
+      "blue_registration": {
+        "description": "قيد التسجيل",
+        "bg": "#EFF6FF",
+        "text": "#1D4ED8",
+        "border": "#BFDBFE"
+      },
+      "yellow_visas": {
+        "description": "تم إصدار التأشيرات",
+        "bg": "#FEFCE8",
+        "text": "#A16207",
+        "border": "#FEF08A"
+      },
+      "green_dispatched": {
+        "description": "تم التفويج",
+        "bg": "#F0FDF4",
+        "text": "#15803D",
+        "border": "#BBF7D0"
+      }
+    }
+  },
+  "visual_enhancers": {
+    "shadows": "Use soft ambient shadows (shadow-sm) for cards, and crisp layered shadows (shadow-[0_8px_30px_rgb(0,0,0,0.04)]) for interactive elements. NO harsh shadows.",
+    "borders": "1px borders with 10% opacity (border-gray-200) on all dashboard cards to define structure clearly.",
+    "radius": "Subtle roundness (rounded-lg to rounded-xl). Avoid completely pill-shaped cards; keep the Swiss/B2B structural look."
+  },
+  "component_rules": {
+    "cards": "Flat solid surfaces. Medical/Financial context requires clarity, so NO heavy glassmorphism on data widgets. Use pure white surfaces with subtle gray borders.",
+    "buttons": "Primary buttons: #0A2540 background, white text. Secondary buttons: Flat surface with 1px border. Hover states MUST be explicit.",
+    "tables": "Dense, crisp tabular data layouts. Use border-b on rows. Ensure horizontal scroll on mobile.",
+    "wallets": "Highlight wallet cards using the Accent Gold/Sand or deep Primary color. Include large tabular numbers for balances (Total, Pending, Available).",
+    "forms": "Use Shadcn Form inputs. Required RTL considerations: labels on the right, icons on the start (right)."
+  },
+  "layouts": {
+    "app_shell": "Sidebar navigation on the RIGHT (w-72), main content area on the LEFT. Header sits atop the main content area.",
+    "spacing": "Generous interior padding for standard cards (p-6 to p-8), tighter spacing for dense data rows (py-3 px-4).",
+    "grid_system": "Use High Density Grid (MODE B) for the dashboard overview. 1-col on mobile, 3-col or 4-col on desktop for Wallet/Status widgets."
+  },
+  "motion": {
+    "hover_states": "-translate-y-0.5, shadow-md, and slight color darkening. DO NOT use generic 'transition-all'.",
+    "toast": "Use Sonner for notifications (e.g., successful bank transfer upload)."
+  },
+  "accessibility": {
+    "data_testid": "All interactive elements, buttons, and form inputs MUST have descriptive data-testid attributes (e.g., data-testid='upload-receipt-btn').",
+    "contrast": "Text contrast must meet APCA/WCAG standards. Do not use pure transparent backgrounds over content."
+  },
+  "image_urls": {
+    "packages_umrah": [
+      {
+        "url": "https://images.unsplash.com/photo-1693590614566-1d3ea9ef32f7?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzd8MHwxfHNlYXJjaHwzfHxNZWNjYSUyMEthYWJhJTIwVW1yYWh8ZW58MHx8fHwxNzg3MjI1MTg4fDA&ixlib=rb-4.1.0&q=85",
+        "description": "Kaaba courtyard for Umrah packages"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1720549973451-018d3623b55a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzd8MHwxfHNlYXJjaHw0fHxNZWNjYSUyMEthYWJhJTIwVW1yYWh8ZW58MHx8fHwxNzg3MjI1MTg4fDA&ixlib=rb-4.1.0&q=85",
+        "description": "Kaaba with Abraj Al-Bait towers"
+      }
+    ],
+    "packages_tourism_yemen": [
+      {
+        "url": "https://images.pexels.com/photos/18417462/pexels-photo-18417462.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Historic mountain village in Sana'a"
+      },
+      {
+        "url": "https://images.pexels.com/photos/29286585/pexels-photo-29286585.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Sunset over Shibam's historic mudbrick architecture"
+      }
+    ],
+    "receipts_placeholders": [
+      {
+        "url": "https://images.pexels.com/photos/7545333/pexels-photo-7545333.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Business person handling paper receipts"
+      }
+    ]
+  },
+  "instructions_to_main_agent": {
+    "RTL_CRITICAL": "You must implement the app in strictly RTL layout. Set <html dir='rtl'>. In Tailwind, ALWAYS use logical properties: ms- (margin-start) instead of ml-, pe- (padding-end) instead of pr-, start-0 instead of left-0, text-start instead of text-left.",
+    "fonts": "Import Alexandria and Cairo from Google Fonts in index.html or global css. Apply Alexandria to headers and Cairo to body text.",
+    "packages_marketplace": "Design a 'Packages Market' using a grid of cards showing package image, title, price, and a 'Buy/Book' action.",
+    "financial_wallets": "Create three distinct wallet cards: Total Balance, Pending Balance, Available Balance.",
+    "booking_lifecycle": "Implement visual badges for the 3 exact statuses: Blue (قيد التسجيل), Yellow (تم إصدار التأشيرات), Green (تم التفويج).",
+    "lucide_icons": "When using Lucide-react arrows or directional icons, apply rtl:rotate-180 if they need to flip in RTL."
+  },
+  "universal_guidelines_for_main_agent": [
+    "You tend to converge toward generic outputs. Avoid this: make creative, distinctive frontends that surprise and delight.",
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "You MUST NOT apply universal transition. Always add transitions for specific interactive elements.",
+    "You MUST NOT center align the app container. This disrupts the human natural reading flow.",
+    "Always use modern button styles with interaction animations & color relevant to the app style.",
+    "NEVER: use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯 etc for icons.",
+    "Every interaction needs micro-animations - hover states, transitions.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "Use sonner for toast notifications.",
+    "Ensure the code provided is JS not TSX (per system prompt)."
+  ]
+}
