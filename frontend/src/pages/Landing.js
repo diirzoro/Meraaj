@@ -1,4 +1,5 @@
 import { Link, useNavigate } from "react-router-dom";
+import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Network, Store, Wallet, ShieldCheck, ArrowLeft, CheckCircle2,
@@ -29,6 +30,10 @@ const lifecycle = [
 
 export default function Landing() {
   const navigate = useNavigate();
+  useEffect(() => {
+    const ref = new URLSearchParams(window.location.search).get("ref");
+    if (ref) localStorage.setItem("meraaj_ref", ref);
+  }, []);
   return (
     <div className="min-h-screen bg-[#F4F6F8]" dir="rtl">
       {/* Nav */}
@@ -59,10 +64,10 @@ export default function Landing() {
               <Sparkles className="w-3.5 h-3.5" /> منصة تابعة لشركة Target Media
             </span>
             <h1 className="font-head text-4xl sm:text-5xl lg:text-6xl font-bold leading-[1.15] mb-6">
-              سوق <span className="text-[#D4AF37]">B2B</span> لتبادل بكجات<br /> العمرة والسياحة
+              سوق <span className="text-[#D4AF37]">موحّد</span> لتبادل بكجات<br /> العمرة والسياحة
             </h1>
             <p className="text-white/60 text-base sm:text-lg leading-relaxed max-w-lg mb-8">
-              اربط مكتبك بشبكة المكاتب، بِع واشترِ البكجات بنظام محافظ مسبقة الدفع وضمان مالي كامل يحمي الطرفين — كل ذلك من حساب واحد موحّد.
+              منصة تجمع المكاتب والأفراد والمسوّقين: بِع واشترِ واحجز بكجات العمرة والسياحة بنظام محافظ مسبقة الدفع وضمان مالي كامل يحمي الجميع.
             </p>
             <div className="flex flex-wrap gap-3">
               <Button data-testid="hero-register-btn" onClick={() => navigate("/register")}
@@ -100,8 +105,8 @@ export default function Landing() {
       {/* Features */}
       <section className="max-w-6xl mx-auto px-5 sm:px-8 py-20">
         <div className="text-center max-w-2xl mx-auto mb-14">
-          <h2 className="font-head text-3xl sm:text-4xl font-bold text-[#0A2540] mb-4">كل ما يحتاجه مكتبك في مكان واحد</h2>
-          <p className="text-muted-foreground">منصة متكاملة صُمّمت خصيصاً لمكاتب السفر والعمرة في اليمن والمنطقة.</p>
+          <h2 className="font-head text-3xl sm:text-4xl font-bold text-[#0A2540] mb-4">كل ما تحتاجه في مكان واحد</h2>
+          <p className="text-muted-foreground">منصة متكاملة للمكاتب والأفراد والمسوّقين في اليمن والمنطقة.</p>
         </div>
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
           {features.map((f, i) => (
@@ -177,6 +182,28 @@ export default function Landing() {
                 <p className="text-sm leading-relaxed" style={{ color: l.c }}>{l.d}</p>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* For individuals & marketers */}
+      <section className="max-w-6xl mx-auto px-5 sm:px-8 py-20">
+        <div className="text-center max-w-2xl mx-auto mb-12">
+          <h2 className="font-head text-3xl sm:text-4xl font-bold text-[#0A2540] mb-4">لست مكتباً؟ لدينا مكانك أيضاً</h2>
+          <p className="text-muted-foreground">احجز رحلتك مباشرةً، أو انضم كمسوّق واكسب عمولة على كل حجز عبر رابطك.</p>
+        </div>
+        <div className="grid md:grid-cols-2 gap-6">
+          <div className="rounded-2xl border p-8 card-shadow bg-white" data-testid="b2c-consumer">
+            <div className="w-12 h-12 rounded-xl bg-[#0A2540] flex items-center justify-center mb-5"><Users className="w-6 h-6 text-[#D4AF37]" /></div>
+            <h3 className="font-head font-bold text-[#0A2540] text-xl mb-2">للمستهلك الفرد</h3>
+            <p className="text-sm text-muted-foreground leading-relaxed mb-5">تصفّح بكجات العمرة والسياحة واحجز بسعر واضح ونهائي، مع ضمان مالي يحمي أموالك حتى إتمام الرحلة.</p>
+            <Button variant="outline" onClick={() => navigate("/register")} data-testid="b2c-consumer-btn" className="border-[#0A2540] text-[#0A2540] hover:bg-[#0A2540]/5">ابدأ الحجز الآن</Button>
+          </div>
+          <div className="rounded-2xl border p-8 card-shadow bg-[#0A2540] text-white" data-testid="b2c-marketer">
+            <div className="w-12 h-12 rounded-xl bg-[#D4AF37] flex items-center justify-center mb-5"><TrendingUp className="w-6 h-6 text-[#0A2540]" /></div>
+            <h3 className="font-head font-bold text-xl mb-2">للمسوّق بالعمولة</h3>
+            <p className="text-sm text-white/60 leading-relaxed mb-5">فعّل وضع المسوّق واحصل على رابط إحالة خاص بك. كل حجز يتم عبر رابطك يمنحك عمولة تحفيزية تُضاف إلى محفظتك.</p>
+            <Button onClick={() => navigate("/register")} data-testid="b2c-marketer-btn" className="bg-[#D4AF37] hover:bg-[#c39f2f] text-[#0A2540] font-semibold">انضم كمسوّق</Button>
           </div>
         </div>
       </section>

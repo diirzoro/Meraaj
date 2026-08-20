@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { PageHeader } from "@/components/Layout";
 import { money } from "@/lib/format";
-import { Wallet, Clock, Building2, Package, ShoppingBag, ArrowUpCircle, ArrowLeftRight, ArrowDownCircle, ShieldAlert } from "lucide-react";
+import { Wallet, Clock, Building2, Package, ShoppingBag, ArrowUpCircle, ArrowLeftRight, ArrowDownCircle, ShieldAlert, TrendingUp, User } from "lucide-react";
 import { Link } from "react-router-dom";
 
 export default function AdminDashboard() {
@@ -14,14 +14,17 @@ export default function AdminDashboard() {
     <>
       <PageHeader title="لوحة المؤشرات المركزية" subtitle="Target Media — مراقبة السيولة والعمليات" />
 
-      <div className="grid md:grid-cols-3 gap-5 mb-6">
+      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5 mb-6">
         <Big title="إجمالي السيولة في النظام" value={money(d.total_system_balance)} icon={Wallet} gold />
+        <Big title="أرباح المنصة (Target Media)" value={money(d.platform_revenue)} icon={TrendingUp} />
         <Big title="إجمالي المتاح" value={money(d.total_available)} icon={ArrowUpCircle} />
         <Big title="إجمالي المعلّق (ضمان)" value={money(d.total_pending)} icon={Clock} />
       </div>
 
-      <div className="grid sm:grid-cols-3 gap-5 mb-8">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-5 mb-8">
         <Small title="المكاتب" value={d.offices_count} icon={Building2} />
+        <Small title="عدد الأفراد" value={d.individuals_count} icon={User} />
+        <Small title="المسوّقون" value={d.marketers_count} icon={TrendingUp} />
         <Small title="البكجات" value={d.packages_count} icon={Package} />
         <Small title="الحجوزات" value={d.bookings_count} icon={ShoppingBag} />
       </div>
@@ -43,7 +46,7 @@ const Big = ({ title, value, icon: Icon, gold }) => (
       <span className={`text-sm ${gold ? "text-white/70" : "text-muted-foreground"}`}>{title}</span>
       <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${gold ? "bg-[#D4AF37]" : "bg-[#F4F6F8]"}`}><Icon className="w-4 h-4 text-[#0A2540]" /></div>
     </div>
-    <div className={`tabular text-3xl font-bold ${gold ? "text-[#D4AF37]" : "text-[#0A2540]"}`}>{value}</div>
+    <div className={`tabular text-2xl sm:text-3xl font-bold whitespace-nowrap ${gold ? "text-[#D4AF37]" : "text-[#0A2540]"}`}>{value}</div>
   </div>
 );
 

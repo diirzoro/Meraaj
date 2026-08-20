@@ -15,6 +15,10 @@ async def dashboard(admin: dict = Depends(require_admin)):
     pending_transfers = await db.transfers.count_documents({"status": "pending"})
     pending_withdrawals = await db.withdrawals.count_documents({"status": "pending"})
     open_disputes = await db.bookings.count_documents({"dispute.status": "open"})
+    rev = await db.platform_revenue.aggregate([{"$group": {"_id": None, "t": {"$sum": "$amount"}}}]).to_list(1)
+    platform_revenue = round(rev[0]["t"], 2) if rev else 0.0
+    individuals_count = await db.users.count_documents({"role": "individual"})
+    marketers_count = await db.users.count_documents({"role": "individual", "is_marketer": True})
     return {
         "total_system_balance": round(total_system, 2),
         "total_available": round(total_available, 2),
@@ -26,6 +30,9 @@ async def dashboard(admin: dict = Depends(require_admin)):
         "pending_transfers": pending_transfers,
         "pending_withdrawals": pending_withdrawals,
         "open_disputes": open_disputes,
+        "platform_revenue": platform_revenue,
+        "individuals_count": individuals_count,
+        "marketers_count": marketers_count,
     }
 
 

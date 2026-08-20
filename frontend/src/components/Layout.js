@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import {
   LayoutDashboard, Store, Package, ShoppingBag, TicketCheck, Wallet,
-  Users, Banknote, ShieldAlert, LogOut, Building2, Network, Menu, X,
+  Users, Banknote, ShieldAlert, LogOut, Building2, Network, Menu, X, TrendingUp,
 } from "lucide-react";
 
 const officeNav = [
@@ -15,6 +15,14 @@ const officeNav = [
   { to: "/wallet", label: "المحفظة", icon: Wallet },
 ];
 
+const individualNav = [
+  { to: "/dashboard", label: "الرئيسية", icon: LayoutDashboard },
+  { to: "/market", label: "البحث عن رحلات", icon: Store },
+  { to: "/bookings", label: "حجوزاتي", icon: ShoppingBag },
+  { to: "/wallet", label: "المحفظة", icon: Wallet },
+  { to: "/marketer", label: "التسويق بالعمولة", icon: TrendingUp },
+];
+
 const adminNav = [
   { to: "/admin", label: "لوحة المؤشرات", icon: LayoutDashboard },
   { to: "/admin/finance", label: "المركز المالي", icon: Banknote },
@@ -22,11 +30,17 @@ const adminNav = [
   { to: "/admin/disputes", label: "النزاعات", icon: ShieldAlert },
 ];
 
+function navFor(role) {
+  if (role === "super_admin") return adminNav;
+  if (role === "individual") return individualNav;
+  return officeNav;
+}
+
 export default function Layout({ children }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
-  const nav = user?.role === "super_admin" ? adminNav : officeNav;
+  const nav = navFor(user?.role);
 
   const doLogout = async () => { await logout(); navigate("/login"); };
 

@@ -4,6 +4,7 @@ import bcrypt
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, HTTPException, Request, Response, Depends
 from pydantic import BaseModel, EmailStr, Field
+from typing import Optional
 from db import db, serialize, oid, now_iso
 
 JWT_ALGORITHM = "HS256"
@@ -67,14 +68,35 @@ async def require_admin(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
+async def require_buyer(user: dict = Depends(get_current_user)) -> dict:
+    """Buyer actions are allowed for offices AND individuals."""
+    if user.get("role") not in ("office", "individual"):
+        raise HTTPException(status_code=403, detail="هذه العملية متاحة للمكاتب والأفراد فقط")
+    if user.get("status") != "active":
+        raise HTTPException(status_code=403, detail="الحساب غير مفعّل أو موقوف")
+    return user
+
+
+async def get_optional_user(request: Request):
+    try:
+        return await get_current_user(request)
+    except HTTPException:
+        return None
+
+
 class RegisterInput(BaseModel):
+    account_type: str = "office"  # office | individual
     email: EmailStr
     password: str = Field(min_length=6)
-    office_name: str
-    owner_name: str
     phone: str
     governorate: str
-    address: str
+    # office fields
+    office_name: Optional[str] = None
+    owner_name: Optional[str] = None
+    address: Optional[str] = None
+    commercial_license: Optional[str] = None
+    # individual field
+    name: Optional[str] = None
 
 
 class LoginInput(BaseModel):
@@ -92,24 +114,43 @@ async def register(payload: RegisterInput, response: Response):
     email = payload.email.lower()
     if await db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="البريد الإلكتروني مستخدم مسبقاً")
-    doc = {
+    base = {
         "email": email,
         "password_hash": hash_password(payload.password),
-        "role": "office",
-        "office_name": payload.office_name,
-        "owner_name": payload.owner_name,
         "phone": payload.phone,
         "governorate": payload.governorate,
-        "address": payload.address,
         "status": "active",
         "wallet": {"total": 0.0, "pending": 0.0, "available": 0.0},
         "created_at": now_iso(),
     }
-    res = await db.users.insert_one(doc)
-    token = create_access_token(str(res.inserted_id), email, "office")
+    if payload.account_type == "individual":
+        if not payload.name:
+            raise HTTPException(status_code=400, detail="الاسم مطلوب")
+        base.update({
+            "role": "individual",
+            "office_name": payload.name,   # reused as display name
+            "owner_name": payload.name,
+            "address": "",
+            "is_marketer": False,
+            "affiliate_code": None,
+        })
+        role = "individual"
+    else:
+        if not (payload.office_name and payload.owner_name):
+            raise HTTPException(status_code=400, detail="بيانات المكتب غير مكتملة")
+        base.update({
+            "role": "office",
+            "office_name": payload.office_name,
+            "owner_name": payload.owner_name,
+            "address": payload.address or "",
+            "commercial_license": payload.commercial_license or "",
+        })
+        role = "office"
+    res = await db.users.insert_one(base)
+    token = create_access_token(str(res.inserted_id), email, role)
     _set_cookie(response, token)
-    doc["_id"] = res.inserted_id
-    return {"user": serialize(doc), "access_token": token}
+    base["_id"] = res.inserted_id
+    return {"user": serialize(base), "access_token": token}
 
 
 @router.post("/login")

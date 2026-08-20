@@ -513,7 +513,9 @@ class TestRahalIntegration:
         assert r.json()["status"] == "listed"
         pkg = requests.get(f"{API}/packages/{pid}").json()
         assert pkg["source"] == "rahal" and pkg["available_seats"] == 12
-        assert pkg["net_cost_per_seat"] == 900
+        # net cost is stripped for guests/individuals now; only offices see it
+        ofc, _, _ = new_office("RAHALVIEW")
+        assert ofc.get(f"{API}/packages/{pid}").json()["net_cost_per_seat"] == 900
         # upsert same ref
         body["available_seats"] = 7
         r2 = requests.post(f"{API}/integrations/rahal/packages/share", json=body,

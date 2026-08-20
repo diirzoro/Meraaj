@@ -15,6 +15,7 @@ from market import router as market_router
 from wallet import router as wallet_router
 from admin import router as admin_router
 from integration import router as integration_router
+from individual import router as individual_router
 
 app = FastAPI(title="Meraaj Network API")
 
@@ -32,6 +33,7 @@ app.include_router(market_router)
 app.include_router(wallet_router)
 app.include_router(admin_router)
 app.include_router(integration_router)
+app.include_router(individual_router)
 
 frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 app.add_middleware(

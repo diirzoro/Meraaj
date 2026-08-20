@@ -22,13 +22,17 @@ export default function WalletPage() {
   const [transfers, setTransfers] = useState([]);
   const [withdrawals, setWithdrawals] = useState([]);
   const [tab, setTab] = useState("txns");
+  const [loading, setLoading] = useState(true);
 
   const load = () => {
-    api.get("/wallet").then((r) => setW(r.data));
-    api.get("/wallet/transactions").then((r) => setTxns(r.data));
-    api.get("/wallet/topups").then((r) => setTopups(r.data));
-    api.get("/wallet/transfers").then((r) => setTransfers(r.data));
-    api.get("/wallet/withdrawals").then((r) => setWithdrawals(r.data));
+    setLoading(true);
+    Promise.all([
+      api.get("/wallet").then((r) => setW(r.data)),
+      api.get("/wallet/transactions").then((r) => setTxns(r.data)),
+      api.get("/wallet/topups").then((r) => setTopups(r.data)),
+      api.get("/wallet/transfers").then((r) => setTransfers(r.data)),
+      api.get("/wallet/withdrawals").then((r) => setWithdrawals(r.data)),
+    ]).catch(() => toast.error("تعذّر تحميل بيانات المحفظة")).finally(() => setLoading(false));
   };
   useEffect(() => { load(); }, []);
 
@@ -42,9 +46,9 @@ export default function WalletPage() {
         </div>} />
 
       <div className="grid md:grid-cols-3 gap-5 mb-8">
-        <Balance id="total" title="الرصيد الإجمالي" value={money(w.total)} icon={Wallet} gold />
-        <Balance id="pending" title="الرصيد المعلق (ضمان)" value={money(w.pending)} icon={Clock} />
-        <Balance id="available" title="الرصيد المتاح" value={money(w.available)} icon={CheckCircle2} />
+        <Balance id="total" title="الرصيد الإجمالي" value={loading ? "..." : money(w.total)} icon={Wallet} gold />
+        <Balance id="pending" title="الرصيد المعلق (ضمان)" value={loading ? "..." : money(w.pending)} icon={Clock} />
+        <Balance id="available" title="الرصيد المتاح" value={loading ? "..." : money(w.available)} icon={CheckCircle2} />
       </div>
 
       <div className="flex gap-1 bg-white border rounded-xl p-1 card-shadow w-fit mb-5">
@@ -139,7 +143,7 @@ function TransferDialog({ onDone, available }) {
       <DialogContent dir="rtl">
         <DialogHeader><DialogTitle className="font-head text-[#0A2540]">تحويل رصيد لمكتب آخر</DialogTitle></DialogHeader>
         <div className="space-y-4">
-          <div><Label className="mb-2 block">بريد المكتب المستلم</Label><Input data-testid="transfer-email" value={f.to_email} onChange={(e) => setF({ ...f, to_email: e.target.value })} /></div>
+          <div><Label className="mb-2 block">بريد المستلم (مكتب أو فرد)</Label><Input data-testid="transfer-email" value={f.to_email} onChange={(e) => setF({ ...f, to_email: e.target.value })} /></div>
           <div><Label className="mb-2 block">المبلغ (المتاح {money(available)})</Label><Input data-testid="transfer-amount" type="number" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></div>
           <div><Label className="mb-2 block">ملاحظة</Label><Textarea data-testid="transfer-note" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} rows={2} /></div>
         </div>

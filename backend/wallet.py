@@ -1,19 +1,19 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from db import db, serialize, oid, now_iso, adjust_wallet, log_txn
-from security import require_office
+from security import require_buyer
 
 router = APIRouter(prefix="/api/wallet", tags=["wallet"])
 
 
 @router.get("")
-async def get_wallet(user: dict = Depends(require_office)):
+async def get_wallet(user: dict = Depends(require_buyer)):
     fresh = await db.users.find_one({"_id": user["_id"]})
     return fresh["wallet"]
 
 
 @router.get("/transactions")
-async def transactions(user: dict = Depends(require_office)):
+async def transactions(user: dict = Depends(require_buyer)):
     docs = await db.transactions.find({"office_id": str(user["_id"])}).sort("created_at", -1).to_list(300)
     return serialize(docs)
 
@@ -25,7 +25,7 @@ class TopupInput(BaseModel):
 
 
 @router.post("/topups")
-async def create_topup(payload: TopupInput, user: dict = Depends(require_office)):
+async def create_topup(payload: TopupInput, user: dict = Depends(require_buyer)):
     doc = {
         "office_id": str(user["_id"]),
         "office_name": user["office_name"],
@@ -41,7 +41,7 @@ async def create_topup(payload: TopupInput, user: dict = Depends(require_office)
 
 
 @router.get("/topups")
-async def my_topups(user: dict = Depends(require_office)):
+async def my_topups(user: dict = Depends(require_buyer)):
     docs = await db.topups.find({"office_id": str(user["_id"])}).sort("created_at", -1).to_list(200)
     return serialize(docs)
 
@@ -53,8 +53,8 @@ class TransferInput(BaseModel):
 
 
 @router.post("/transfers")
-async def create_transfer(payload: TransferInput, user: dict = Depends(require_office)):
-    target = await db.users.find_one({"email": payload.to_email.lower(), "role": "office"})
+async def create_transfer(payload: TransferInput, user: dict = Depends(require_buyer)):
+    target = await db.users.find_one({"email": payload.to_email.lower(), "role": {"$in": ["office", "individual"]}})
     if not target:
         raise HTTPException(404, "المكتب المستلم غير موجود")
     if str(target["_id"]) == str(user["_id"]):
@@ -78,7 +78,7 @@ async def create_transfer(payload: TransferInput, user: dict = Depends(require_o
 
 
 @router.get("/transfers")
-async def my_transfers(user: dict = Depends(require_office)):
+async def my_transfers(user: dict = Depends(require_buyer)):
     uid = str(user["_id"])
     docs = await db.transfers.find({"$or": [{"from_office_id": uid}, {"to_office_id": uid}]}).sort("created_at", -1).to_list(200)
     return serialize(docs)
@@ -91,7 +91,7 @@ class WithdrawalInput(BaseModel):
 
 
 @router.post("/withdrawals")
-async def create_withdrawal(payload: WithdrawalInput, user: dict = Depends(require_office)):
+async def create_withdrawal(payload: WithdrawalInput, user: dict = Depends(require_buyer)):
     fresh = await db.users.find_one({"_id": user["_id"]})
     if fresh["wallet"]["available"] < payload.amount:
         raise HTTPException(400, "الرصيد المتاح غير كافٍ")
@@ -110,6 +110,6 @@ async def create_withdrawal(payload: WithdrawalInput, user: dict = Depends(requi
 
 
 @router.get("/withdrawals")
-async def my_withdrawals(user: dict = Depends(require_office)):
+async def my_withdrawals(user: dict = Depends(require_buyer)):
     docs = await db.withdrawals.find({"office_id": str(user["_id"])}).sort("created_at", -1).to_list(200)
     return serialize(docs)

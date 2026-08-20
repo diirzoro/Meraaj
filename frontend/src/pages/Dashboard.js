@@ -32,28 +32,38 @@ export default function Dashboard() {
   const { user } = useAuth();
   const [wallet, setWallet] = useState({ total: 0, pending: 0, available: 0 });
   const [recent, setRecent] = useState([]);
+  const isIndividual = user?.role === "individual";
 
   useEffect(() => {
     api.get("/wallet").then((r) => setWallet(r.data)).catch(() => {});
     api.get("/bookings?role=buyer").then((r) => setRecent(r.data.slice(0, 5))).catch(() => {});
   }, []);
 
+  const officeActions = [
+    { to: "/market", label: "تصفّح السوق", icon: Store },
+    { to: "/packages/new", label: "أضف باكج للبيع", icon: Package },
+    { to: "/wallet", label: "اشحن المحفظة", icon: ShoppingBag },
+  ];
+  const individualActions = [
+    { to: "/market", label: "ابحث عن رحلة", icon: Store },
+    { to: "/bookings", label: "حجوزاتي", icon: ShoppingBag },
+    { to: "/marketer", label: "التسويق بالعمولة", icon: Package },
+  ];
+  const actions = isIndividual ? individualActions : officeActions;
+
   return (
     <>
-      <PageHeader title={`أهلاً، ${user?.office_name}`} subtitle="نظرة عامة على محفظتك ونشاطك في السوق" />
+      <PageHeader title={`أهلاً، ${user?.office_name}`}
+        subtitle={isIndividual ? "احجز رحلتك بأمان وتابع حجوزاتك" : "نظرة عامة على محفظتك ونشاطك في السوق"} />
 
       <div className="grid md:grid-cols-3 gap-5 mb-8">
         <WalletCard title="الرصيد الإجمالي" value={money(wallet.total)} icon={Wallet} tone="gold" />
-        <WalletCard title="الرصيد المعلق (ضمان)" value={money(wallet.pending)} icon={Clock} tone="pending" />
+        <WalletCard title={isIndividual ? "الرصيد المعلق" : "الرصيد المعلق (ضمان)"} value={money(wallet.pending)} icon={Clock} tone="pending" />
         <WalletCard title="الرصيد المتاح" value={money(wallet.available)} icon={CheckCircle2} tone="available" />
       </div>
 
       <div className="grid sm:grid-cols-3 gap-5 mb-8">
-        {[
-          { to: "/market", label: "تصفّح السوق", icon: Store },
-          { to: "/packages/new", label: "أضف باكج للبيع", icon: Package },
-          { to: "/wallet", label: "اشحن المحفظة", icon: ShoppingBag },
-        ].map((a) => (
+        {actions.map((a) => (
           <Link key={a.to} to={a.to} data-testid={`quick-${a.to.replace(/\//g, "")}`}
                 className="hover-lift bg-white rounded-2xl border p-5 flex items-center gap-4 card-shadow">
             <div className="w-11 h-11 rounded-xl bg-[#F4F6F8] flex items-center justify-center">

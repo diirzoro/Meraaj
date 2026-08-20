@@ -1,10 +1,20 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from db import db, serialize, oid, now_iso, adjust_wallet, log_txn, platform_pct, cancel_fee_pct
-from security import get_current_user, require_office
+from db import (db, serialize, oid, now_iso, adjust_wallet, log_txn,
+                platform_pct, cancel_fee_pct, marketer_pct, log_platform_revenue)
+from security import get_current_user, get_optional_user, require_office, require_buyer
 
 router = APIRouter(prefix="/api", tags=["market"])
+
+
+def _view_package(doc, user):
+    """Hide wholesale/net pricing from non-office viewers (individuals & guests)."""
+    d = serialize(doc)
+    if not user or user.get("role") != "office":
+        d.pop("net_cost_per_seat", None)
+        d.pop("buyer_office_commission", None)
+    return d
 
 
 # ---------- Packages ----------
@@ -50,14 +60,14 @@ async def create_package(payload: PackageInput, user: dict = Depends(require_off
 
 
 @router.get("/packages")
-async def list_packages(type: Optional[str] = None, q: Optional[str] = None):
+async def list_packages(type: Optional[str] = None, q: Optional[str] = None, user=Depends(get_optional_user)):
     query = {"status": "listed"}
     if type:
         query["type"] = type
     if q:
         query["title"] = {"$regex": q, "$options": "i"}
     docs = await db.packages.find(query).sort("created_at", -1).to_list(500)
-    return serialize(docs)
+    return [_view_package(d, user) for d in docs]
 
 
 @router.get("/packages/mine")
@@ -67,11 +77,11 @@ async def my_packages(user: dict = Depends(require_office)):
 
 
 @router.get("/packages/{pkg_id}")
-async def get_package(pkg_id: str):
+async def get_package(pkg_id: str, user=Depends(get_optional_user)):
     doc = await db.packages.find_one({"_id": oid(pkg_id)})
     if not doc:
         raise HTTPException(404, "الباكج غير موجود")
-    return serialize(doc)
+    return _view_package(doc, user)
 
 
 @router.patch("/packages/{pkg_id}/toggle")
@@ -94,10 +104,11 @@ class RegistrantInput(BaseModel):
 class BookingInput(BaseModel):
     package_id: str
     registrants: List[RegistrantInput]
+    ref: Optional[str] = None  # affiliate code
 
 
 @router.post("/bookings")
-async def create_booking(payload: BookingInput, user: dict = Depends(require_office)):
+async def create_booking(payload: BookingInput, user: dict = Depends(require_buyer)):
     pkg = await db.packages.find_one({"_id": oid(payload.package_id)})
     if not pkg or pkg["status"] != "listed":
         raise HTTPException(404, "الباكج غير متاح")
@@ -110,15 +121,34 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_off
         raise HTTPException(400, "المقاعد المتاحة غير كافية")
 
     net_total = pkg["net_cost_per_seat"] * seats
-    buyer_commission_total = pkg["buyer_office_commission"] * seats
-    platform_fee = round(buyer_commission_total * platform_pct(), 2)
-    required = round(net_total + platform_fee, 2)
+    is_office = user["role"] == "office"
+    marketer_id = None
+    marketer_commission = 0.0
+    platform_profit = 0.0
+
+    if is_office:
+        # B2B: office pays net + platform fee (double commission); keeps margin offline
+        buyer_commission_total = pkg["buyer_office_commission"] * seats
+        platform_fee = round(buyer_commission_total * platform_pct(), 2)
+        required = round(net_total + platform_fee, 2)
+    else:
+        # B2C: consumer pays full retail; seller gets net; margin => platform (+marketer)
+        buyer_commission_total = 0.0
+        platform_fee = 0.0
+        required = round(pkg["final_sale_price"] * seats, 2)
+        margin_total = round((pkg["final_sale_price"] - pkg["net_cost_per_seat"]) * seats, 2)
+        if payload.ref:
+            m = await db.users.find_one({"affiliate_code": payload.ref, "is_marketer": True})
+            if m and str(m["_id"]) not in (pkg["seller_id"], str(user["_id"])):
+                marketer_id = str(m["_id"])
+        if marketer_id:
+            marketer_commission = round(margin_total * marketer_pct(), 2)
+        platform_profit = round(margin_total - marketer_commission, 2)
 
     fresh = await db.users.find_one({"_id": user["_id"]})
     if fresh["wallet"]["available"] < required:
         raise HTTPException(400, f"الرصيد المتاح غير كافٍ. المطلوب: {required} {pkg['currency']}")
 
-    # Debit buyer available; escrow net to seller pending; platform takes fee
     await adjust_wallet(user["_id"], available=-required, total=-required)
     await adjust_wallet(oid(pkg["seller_id"]), pending=net_total, total=net_total)
     await db.packages.update_one({"_id": pkg["_id"]}, {"$inc": {"available_seats": -seats}})
@@ -129,6 +159,7 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_off
         "package_type": pkg["type"],
         "buyer_id": str(user["_id"]),
         "buyer_office_name": user["office_name"],
+        "buyer_type": user["role"],
         "seller_id": pkg["seller_id"],
         "seller_office_name": pkg["seller_office_name"],
         "departure_date": pkg["departure_date"],
@@ -137,6 +168,9 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_off
         "net_cost_total": net_total,
         "buyer_commission_total": buyer_commission_total,
         "platform_fee": platform_fee,
+        "marketer_id": marketer_id,
+        "marketer_commission": marketer_commission,
+        "platform_profit": platform_profit,
         "amount_charged": required,
         "currency": pkg["currency"],
         "status": "blue",
@@ -146,21 +180,31 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_off
         "created_at": now_iso(),
     }
     res = await db.bookings.insert_one(booking)
-    await log_txn(user["_id"], "booking_debit", -required, f"حجز باكج: {pkg['title']}", str(res.inserted_id))
-    await log_txn(pkg["seller_id"], "booking_escrow", net_total, f"إيراد معلق من حجز: {pkg['title']}", str(res.inserted_id))
+    bid = str(res.inserted_id)
+    await log_txn(user["_id"], "booking_debit", -required, f"حجز باكج: {pkg['title']}", bid)
+    await log_txn(pkg["seller_id"], "booking_escrow", net_total, f"إيراد معلق من حجز: {pkg['title']}", bid)
+    if is_office and platform_fee:
+        await log_platform_revenue(platform_fee, f"عمولة منصة (حجز): {pkg['title']}", bid)
+    if not is_office:
+        if marketer_id and marketer_commission > 0:
+            await adjust_wallet(oid(marketer_id), pending=marketer_commission, total=marketer_commission)
+            await log_txn(marketer_id, "marketer_commission", marketer_commission,
+                          f"عمولة تسويق (معلّقة): {pkg['title']}", bid)
+        if platform_profit:
+            await log_platform_revenue(platform_profit, f"أرباح المنصة من حجز مباشر: {pkg['title']}", bid)
     booking["_id"] = res.inserted_id
     return serialize(booking)
 
 
 @router.get("/bookings")
-async def list_bookings(role: str = "buyer", user: dict = Depends(require_office)):
+async def list_bookings(role: str = "buyer", user: dict = Depends(require_buyer)):
     key = "buyer_id" if role == "buyer" else "seller_id"
     docs = await db.bookings.find({key: str(user["_id"])}).sort("created_at", -1).to_list(500)
     return serialize(docs)
 
 
 @router.get("/bookings/{booking_id}")
-async def get_booking(booking_id: str, user: dict = Depends(require_office)):
+async def get_booking(booking_id: str, user: dict = Depends(require_buyer)):
     b = await db.bookings.find_one({"_id": oid(booking_id)})
     if not b or str(user["_id"]) not in (b["buyer_id"], b["seller_id"]):
         raise HTTPException(404, "الحجز غير موجود")
@@ -184,7 +228,8 @@ async def issue_visas(booking_id: str, payload: VisaInput, user: dict = Depends(
         if idx is None or idx < 0 or idx >= len(registrants):
             continue
         registrants[idx]["visa_no"] = v.get("visa_no")
-        registrants[idx]["visa_file"] = v.get("visa_file")
+        if v.get("visa_file") is not None:
+            registrants[idx]["visa_file"] = v.get("visa_file")
     # Validation: every registrant must have a visa number
     if any(not r.get("visa_no") for r in registrants):
         raise HTTPException(400, "يجب إدخال رقم التأشيرة لكل مسجّل قبل تحويل الحالة")
@@ -224,13 +269,19 @@ async def settle_booking(booking_id: str, user: dict = Depends(require_office)):
     fee = b["platform_fee"]
     await adjust_wallet(user["_id"], pending=-net, available=(net - fee), total=-fee)
     await log_txn(user["_id"], "settlement", net - fee, f"تسوية حجز: {b['package_title']}", booking_id)
+    if fee:
+        await log_platform_revenue(fee, f"عمولة منصة (تسوية): {b['package_title']}", booking_id)
+    if b.get("marketer_id") and b.get("marketer_commission"):
+        await adjust_wallet(oid(b["marketer_id"]), pending=-b["marketer_commission"], available=b["marketer_commission"])
+        await log_txn(b["marketer_id"], "marketer_commission_release", b["marketer_commission"],
+                      f"تحرير عمولة تسويق: {b['package_title']}", booking_id)
     await db.bookings.update_one({"_id": b["_id"]}, {"$set": {"settled": True, "settled_at": now_iso()}})
     return {"ok": True, "released": net - fee}
 
 
 # ---------- Cancellation ----------
 @router.post("/bookings/{booking_id}/cancel-request")
-async def cancel_request(booking_id: str, user: dict = Depends(require_office)):
+async def cancel_request(booking_id: str, user: dict = Depends(require_buyer)):
     b = await db.bookings.find_one({"_id": oid(booking_id)})
     if not b or b["buyer_id"] != str(user["_id"]):
         raise HTTPException(404, "الحجز غير موجود")
@@ -240,11 +291,25 @@ async def cancel_request(booking_id: str, user: dict = Depends(require_office)):
         raise HTTPException(400, "لا يمكن إلغاء هذا الحجز في حالته الحالية")
     if b.get("cancellation"):
         raise HTTPException(400, "يوجد طلب إلغاء قيد المعالجة على هذا الحجز")
+    if b["status"] == "yellow" and b.get("buyer_type") == "individual":
+        raise HTTPException(400, "لا يمكن الإلغاء بعد إصدار التأشيرات. يرجى التواصل مع الإدارة.")
     if b["status"] == "blue":
         # Full refund minus small admin fee
         admin_fee = round(b["net_cost_total"] * cancel_fee_pct(), 2)
         refund = round(b["amount_charged"] - admin_fee, 2)
         await adjust_wallet(oid(b["seller_id"]), pending=-b["net_cost_total"], total=-b["net_cost_total"])
+        if admin_fee:
+            await log_platform_revenue(admin_fee, f"رسوم إلغاء إدارية: {b['package_title']}", booking_id)
+        if b.get("buyer_type") != "individual" and b.get("platform_fee"):
+            await log_platform_revenue(-b["platform_fee"], f"عكس عمولة منصة (إلغاء): {b['package_title']}", booking_id)
+        if b.get("buyer_type") == "individual":
+            if b.get("marketer_id") and b.get("marketer_commission"):
+                await adjust_wallet(oid(b["marketer_id"]),
+                                    pending=-b["marketer_commission"], total=-b["marketer_commission"])
+                await log_txn(b["marketer_id"], "marketer_commission_reversal", -b["marketer_commission"],
+                              f"عكس عمولة تسويق (إلغاء): {b['package_title']}", booking_id)
+            if b.get("platform_profit"):
+                await log_platform_revenue(-b["platform_profit"], f"عكس أرباح إلغاء: {b['package_title']}", booking_id)
         await adjust_wallet(user["_id"], available=refund, total=refund)
         await db.packages.update_one({"_id": oid(b["package_id"])}, {"$inc": {"available_seats": b["seats"]}})
         await db.bookings.update_one({"_id": b["_id"]}, {"$set": {"status": "cancelled",
@@ -273,7 +338,7 @@ async def cancel_offer(booking_id: str, payload: DeductionInput, user: dict = De
 
 
 @router.post("/bookings/{booking_id}/cancel-accept")
-async def cancel_accept(booking_id: str, user: dict = Depends(require_office)):
+async def cancel_accept(booking_id: str, user: dict = Depends(require_buyer)):
     b = await db.bookings.find_one({"_id": oid(booking_id)})
     if not b or b["buyer_id"] != str(user["_id"]):
         raise HTTPException(404, "الحجز غير موجود")
@@ -297,11 +362,15 @@ async def cancel_accept(booking_id: str, user: dict = Depends(require_office)):
                                                   "refund": refund}}})
     await log_txn(user["_id"], "cancel_refund", refund, f"استرداد إلغاء (أصفر): {b['package_title']}", booking_id)
     await log_txn(b["seller_id"], "cancel_deduction", seller_keeps, f"خصم إلغاء: {b['package_title']}", booking_id)
+    if b.get("platform_fee"):
+        await log_platform_revenue(-b["platform_fee"], f"عكس عمولة منصة (إلغاء أصفر): {b['package_title']}", booking_id)
+    if platform_cut:
+        await log_platform_revenue(platform_cut, f"رسوم تشغيلية إلغاء: {b['package_title']}", booking_id)
     return {"status": "cancelled", "refund": refund, "seller_keeps": seller_keeps}
 
 
 @router.post("/bookings/{booking_id}/dispute")
-async def open_dispute(booking_id: str, payload: dict, user: dict = Depends(require_office)):
+async def open_dispute(booking_id: str, payload: dict, user: dict = Depends(require_buyer)):
     b = await db.bookings.find_one({"_id": oid(booking_id)})
     if not b or b["buyer_id"] != str(user["_id"]):
         raise HTTPException(404, "الحجز غير موجود")

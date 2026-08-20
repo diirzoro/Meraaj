@@ -16,6 +16,7 @@ import CreatePackage from "@/pages/CreatePackage";
 import Bookings from "@/pages/Bookings";
 import Sales from "@/pages/Sales";
 import WalletPage from "@/pages/Wallet";
+import Marketer from "@/pages/Marketer";
 import AdminDashboard from "@/pages/admin/AdminDashboard";
 import AdminFinance from "@/pages/admin/AdminFinance";
 import AdminOffices from "@/pages/admin/AdminOffices";
@@ -33,8 +34,11 @@ function Protected({ role, children }) {
   const { user, loading } = useAuth();
   if (loading || user === null) return <Loader />;
   if (!user) return <Navigate to="/login" replace />;
-  if (role === "office" && user.role !== "office") return <Navigate to="/admin" replace />;
+  if (user.role === "super_admin" && role !== "admin") return <Navigate to="/admin" replace />;
   if (role === "admin" && user.role !== "super_admin") return <Navigate to="/dashboard" replace />;
+  if (role === "office" && user.role !== "office") return <Navigate to="/dashboard" replace />;
+  if (role === "individual" && user.role !== "individual") return <Navigate to="/dashboard" replace />;
+  if (role === "member" && !["office", "individual"].includes(user.role)) return <Navigate to="/dashboard" replace />;
   return <Layout>{children}</Layout>;
 }
 
@@ -51,14 +55,15 @@ function AppRoutes() {
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
 
-      <Route path="/dashboard" element={<Protected role="office"><Dashboard /></Protected>} />
-      <Route path="/market" element={<Protected role="office"><Market /></Protected>} />
-      <Route path="/market/:id" element={<Protected role="office"><PackageDetail /></Protected>} />
+      <Route path="/dashboard" element={<Protected role="member"><Dashboard /></Protected>} />
+      <Route path="/market" element={<Protected role="member"><Market /></Protected>} />
+      <Route path="/market/:id" element={<Protected role="member"><PackageDetail /></Protected>} />
       <Route path="/packages" element={<Protected role="office"><MyPackages /></Protected>} />
       <Route path="/packages/new" element={<Protected role="office"><CreatePackage /></Protected>} />
-      <Route path="/bookings" element={<Protected role="office"><Bookings /></Protected>} />
+      <Route path="/bookings" element={<Protected role="member"><Bookings /></Protected>} />
       <Route path="/sales" element={<Protected role="office"><Sales /></Protected>} />
-      <Route path="/wallet" element={<Protected role="office"><WalletPage /></Protected>} />
+      <Route path="/wallet" element={<Protected role="member"><WalletPage /></Protected>} />
+      <Route path="/marketer" element={<Protected role="individual"><Marketer /></Protected>} />
 
       <Route path="/admin" element={<Protected role="admin"><AdminDashboard /></Protected>} />
       <Route path="/admin/finance" element={<Protected role="admin"><AdminFinance /></Protected>} />

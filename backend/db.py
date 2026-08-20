@@ -70,3 +70,16 @@ def platform_pct() -> float:
 
 def cancel_fee_pct() -> float:
     return float(os.environ.get("CANCEL_ADMIN_FEE_PCT", "0.02"))
+
+
+def marketer_pct() -> float:
+    return float(os.environ.get("MARKETER_COMMISSION_PCT", "0.20"))
+
+
+async def log_platform_revenue(amount: float, description: str, ref: str = None):
+    await db.platform_revenue.insert_one({
+        "amount": amount,
+        "description": description,
+        "ref": ref,
+        "created_at": now_iso(),
+    })

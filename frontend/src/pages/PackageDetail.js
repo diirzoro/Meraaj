@@ -27,14 +27,17 @@ export default function PackageDetail() {
   if (!pkg) return <div className="text-center py-20 text-muted-foreground">جارٍ التحميل...</div>;
 
   const isOwner = pkg.seller_id === user?.id;
+  const isOffice = user?.role === "office";
   const setReg = (i, k) => (e) => { const c = [...regs]; c[i][k] = e.target.value; setRegs(c); };
   const addReg = () => setRegs([...regs, { name: "", passport_no: "", age: "" }]);
   const rmReg = (i) => setRegs(regs.filter((_, x) => x !== i));
 
   const seats = regs.length;
-  const netTotal = pkg.net_cost_per_seat * seats;
-  const platformFee = +(pkg.buyer_office_commission * seats * 0.1).toFixed(2);
-  const required = +(netTotal + platformFee).toFixed(2);
+  const netTotal = (pkg.net_cost_per_seat || 0) * seats;
+  const platformFee = isOffice ? +((pkg.buyer_office_commission || 0) * seats * 0.1).toFixed(2) : 0;
+  const required = isOffice
+    ? +(netTotal + platformFee).toFixed(2)
+    : +((pkg.final_sale_price || 0) * seats).toFixed(2);
 
   const book = async () => {
     setBusy(true);
@@ -42,6 +45,7 @@ export default function PackageDetail() {
       await api.post("/bookings", {
         package_id: id,
         registrants: regs.map((r) => ({ name: r.name, passport_no: r.passport_no, age: Number(r.age) })),
+        ref: localStorage.getItem("meraaj_ref") || undefined,
       });
       toast.success("تم إنشاء الحجز وتجميد الرصيد بنجاح");
       setOpen(false);
@@ -93,10 +97,12 @@ export default function PackageDetail() {
           <div className="bg-white rounded-2xl border card-shadow p-6 sticky top-8">
             <div className="text-sm text-muted-foreground">سعر البيع النهائي للزبون</div>
             <div className="tabular text-3xl font-bold text-[#0A2540] mt-1">{money(pkg.final_sale_price, pkg.currency)}</div>
-            <div className="mt-4 space-y-2 text-sm">
-              <Row label="التكلفة الصافية (تدفعها أنت)" value={money(pkg.net_cost_per_seat, pkg.currency)} />
-              <Row label="عمولتك كموزّع" value={money(pkg.buyer_office_commission, pkg.currency)} pos />
-            </div>
+            {isOffice && (
+              <div className="mt-4 space-y-2 text-sm">
+                <Row label="التكلفة الصافية (تدفعها أنت)" value={money(pkg.net_cost_per_seat, pkg.currency)} />
+                <Row label="عمولتك كموزّع" value={money(pkg.buyer_office_commission, pkg.currency)} pos />
+              </div>
+            )}
 
             {isOwner ? (
               <div className="mt-5 text-center text-sm bg-[#F4F6F8] rounded-lg py-3 text-muted-foreground">هذا الباكج من إضافتك</div>
@@ -137,8 +143,14 @@ export default function PackageDetail() {
                     <Button variant="outline" onClick={addReg} data-testid="add-reg-btn" className="w-full"><Plus className="w-4 h-4" /> إضافة مسجّل</Button>
 
                     <div className="bg-[#F4F6F8] rounded-xl p-4 text-sm space-y-2">
-                      <Row label={`التكلفة الصافية × ${seats}`} value={money(netTotal, pkg.currency)} />
-                      <Row label="عمولة المنصة (10% من عمولتك)" value={money(platformFee, pkg.currency)} />
+                      {isOffice ? (
+                        <>
+                          <Row label={`التكلفة الصافية × ${seats}`} value={money(netTotal, pkg.currency)} />
+                          <Row label="عمولة المنصة (10% من عمولتك)" value={money(platformFee, pkg.currency)} />
+                        </>
+                      ) : (
+                        <Row label={`سعر البيع × ${seats}`} value={money((pkg.final_sale_price || 0) * seats, pkg.currency)} />
+                      )}
                       <div className="border-t pt-2 flex justify-between font-bold text-[#0A2540]">
                         <span>الإجمالي المخصوم من رصيدك المتاح</span>
                         <span className="tabular">{money(required, pkg.currency)}</span>
