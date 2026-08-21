@@ -49,8 +49,16 @@ B2B marketplace ("Meraaj Network" by Target Media) connecting travel/Umrah offic
 ## Verified (iteration 4)
 - 80/80 pytest pass; all money-safety fixes confirmed (marketer escrow no-overdraft, ledger reconciliation, no self-referral, cancellation fees recorded, individual P2P, B2B platform fee logged). Frontend flows all pass.
 
+## Android App — Phase 1 (Capacitor native shell) — DONE June 2026
+- Capacitor **v7** stack (Node-20 compatible; v8 CLI needs Node ≥22). Packages: @capacitor/core,app,status-bar,splash-screen,keyboard + dev cli,android,assets. Config `frontend/capacitor.config.json` (appId `network.meraaj.app`, appName «معراج نتورك», webDir `build`).
+- Native code under `frontend/src/native/` (all guarded by `Capacitor.isNativePlatform()` → zero effect on web): `useAndroidBackButton.js` (router-aware back, double-back-to-exit on root routes), `useNativeChrome.js` (status bar navy #0A2540 + light icons, splash hide, sets `cap-native` body class), `NativeBridge.jsx` (mounted once inside BrowserRouter).
+- Touch/native feel in `src/index.css`: tap-highlight off, `touch-action: manipulation`, overscroll off, user-select off (except inputs), safe-area insets. `index.html` viewport → `viewport-fit=cover, maximum-scale=1`.
+- Icon+splash generated (navy/gold brand) from `frontend/assets/` → 56 Android resources. Android project scaffolded at `frontend/android/`. Web build unaffected (verified 200 + clean console + landing screenshot).
+- Local build steps documented in `frontend/ANDROID_BUILD.md` (yarn build → cap sync → cap open android; gradlew assembleDebug/bundleRelease). APK/AAB built on user's machine (no Android SDK in server env).
+
 ## Backlog (P1/P2)
-- P1: Real Rahal SSO + embedded signed-iframe (awaiting Rahal APIs). Atomic booking debit (transactions/optimistic locking) to prevent oversell/overdraw under concurrency. Capacitor mobile shell (Android first) + FCM/APNs push + OTA updates.
+- P1 (mobile next): Firebase FCM push (needs Firebase project + `google-services.json`; add `device_tokens` model + triggers on booking/wallet events) — Phase 3. Capgo OTA updates (needs Capgo account/key) — Phase 4.
+- P1: Real Rahal SSO + embedded signed-iframe (awaiting Rahal APIs). Atomic booking debit (transactions/optimistic locking) to prevent oversell/overdraw under concurrency.
 - P2: Object storage for receipt/visa uploads (currently URL/base64 fields). Email/notifications. Phone OTP. Debounced market search. Split market.py. Rewrite/delete obsolete single-USD pytest suites. Clean stale TEST_* accounts.
 
 ## Test Credentials

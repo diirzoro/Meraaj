@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "sonner";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import Layout from "@/components/Layout";
+import NativeBridge from "@/native/NativeBridge";
 
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
@@ -81,6 +82,7 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <NativeBridge />
         <AppRoutes />
         <Toaster position="top-center" richColors dir="rtl" />
       </BrowserRouter>

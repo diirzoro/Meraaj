@@ -1,0 +1,29 @@
+{
+  "appId": "network.meraaj.app",
+  "appName": "معراج نتورك",
+  "webDir": "build",
+  "backgroundColor": "#0A2540",
+  "android": {
+    "backgroundColor": "#0A2540",
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": false,
+      "backgroundColor": "#0A2540",
+      "androidScaleType": "CENTER_CROP",
+      "showSpinner": false,
+      "splashFullScreen": true,
+      "splashImmersive": true,
+      "androidSplashResourceName": "splash"
+    },
+    "Keyboard": {
+      "resizeOnFullScreen": true
+    },
+    "StatusBar": {
+      "overlaysWebView": false,
+      "style": "DARK",
+      "backgroundColor": "#0A2540"
+    }
+  }
+}

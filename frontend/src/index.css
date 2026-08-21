@@ -74,3 +74,25 @@ h1, h2, h3, h4, .font-head {
 @layer base {
     body { @apply bg-background text-foreground; }
 }
+
+/* --- Native (Capacitor) touch & feel; harmless on web --- */
+html { overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
+body { overscroll-behavior-y: none; -webkit-tap-highlight-color: transparent; }
+button, a, [role="button"], label, .sidebar-link {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+}
+/* Only when running inside the native app shell */
+body.cap-native {
+    -webkit-user-select: none;
+    user-select: none;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+}
+body.cap-native input,
+body.cap-native textarea,
+body.cap-native [contenteditable="true"] {
+    -webkit-user-select: text;
+    user-select: text;
+}
+

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">معراج نتورك</string>
+    <string name="title_activity_main">معراج نتورك</string>
+    <string name="package_name">network.meraaj.app</string>
+    <string name="custom_url_scheme">network.meraaj.app</string>
+</resources>
