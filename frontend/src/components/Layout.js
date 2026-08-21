@@ -8,8 +8,8 @@ import {
 
 const officeNav = [
   { to: "/dashboard", label: "الرئيسية", icon: LayoutDashboard },
-  { to: "/market", label: "سوق البكجات", icon: Store },
-  { to: "/packages", label: "بكجاتي (بائع)", icon: Package },
+  { to: "/market", label: "سوق البرامج", icon: Store },
+  { to: "/packages", label: "برامجي (بائع)", icon: Package },
   { to: "/sales", label: "مبيعاتي", icon: TicketCheck },
   { to: "/bookings", label: "حجوزاتي (مشتري)", icon: ShoppingBag },
   { to: "/wallet", label: "المحفظة", icon: Wallet },

@@ -39,7 +39,7 @@ export default function CreatePackage() {
         images: [IMG[f.type]],
         hotels: hotels.filter((h) => h.name).map((h) => ({ ...h, nights: Number(h.nights) || 0 })),
       });
-      toast.success("تم نشر الباكج في السوق");
+      toast.success("تم نشر البرنامج في السوق");
       navigate("/packages");
     } catch (err) { toast.error(apiError(err)); } finally { setBusy(false); }
   };
@@ -50,7 +50,7 @@ export default function CreatePackage() {
 
   return (
     <>
-      <PageHeader title="إضافة باكج جديد" subtitle="أنت هنا بدور المُصنّع/البائع" />
+      <PageHeader title="إضافة برنامج جديد" subtitle="أنت هنا بدور المُصنّع/البائع" />
 
       <form onSubmit={submit} className="grid lg:grid-cols-3 gap-6" data-testid="create-pkg-form">
         <div className="lg:col-span-2 space-y-6">
@@ -104,7 +104,7 @@ export default function CreatePackage() {
               <div className="flex justify-between"><span className="text-muted-foreground">عمولة المنصة على المشتري (10%)</span><span className="tabular font-semibold">{money(comm * 0.1, f.currency)}</span></div>
             </div>
 
-            <Button data-testid="submit-pkg-btn" disabled={busy} className="w-full h-11 bg-[#0A2540] hover:bg-[#061A2E]">{busy ? "جارٍ النشر..." : "نشر الباكج"}</Button>
+            <Button data-testid="submit-pkg-btn" disabled={busy} className="w-full h-11 bg-[#0A2540] hover:bg-[#061A2E]">{busy ? "جارٍ النشر..." : "نشر البرنامج"}</Button>
           </div>
         </div>
       </form>

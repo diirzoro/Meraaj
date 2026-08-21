@@ -26,7 +26,7 @@ export default function Market() {
 
   return (
     <>
-      <PageHeader title="سوق البكجات" subtitle="تصفّح باكجات العمرة والسياحة المتاحة من المكاتب الأخرى" />
+      <PageHeader title="سوق البرامج" subtitle="تصفّح برنامجات العمرة والسياحة المتاحة من المكاتب الأخرى" />
 
       <div className="flex flex-wrap items-center gap-3 mb-6">
         <div className="flex bg-white border rounded-xl p-1 card-shadow">
@@ -41,14 +41,14 @@ export default function Market() {
         <div className="relative flex-1 min-w-[220px]">
           <Search className="w-4 h-4 absolute top-1/2 -translate-y-1/2 start-3 text-muted-foreground" />
           <Input data-testid="market-search" value={q} onChange={(e) => setQ(e.target.value)}
-                 onKeyDown={(e) => e.key === "Enter" && load()} placeholder="ابحث عن باكج..." className="ps-9" />
+                 onKeyDown={(e) => e.key === "Enter" && load()} placeholder="ابحث عن برنامج..." className="ps-9" />
         </div>
       </div>
 
       {loading ? (
         <div className="text-center py-20 text-muted-foreground">جارٍ التحميل...</div>
       ) : items.length === 0 ? (
-        <div className="text-center py-20 text-muted-foreground">لا توجد باكجات مطابقة</div>
+        <div className="text-center py-20 text-muted-foreground">لا توجد برنامجات مطابقة</div>
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {items.map((p) => (

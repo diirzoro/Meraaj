@@ -85,12 +85,12 @@ export default function EmbedMarket() {
         <div className="relative flex-1 min-w-[200px]">
           <Search className="w-4 h-4 absolute top-1/2 -translate-y-1/2 start-3 text-muted-foreground" />
           <Input data-testid="embed-search" value={q} onChange={(e) => setQ(e.target.value)}
-                 onKeyDown={(e) => e.key === "Enter" && load()} placeholder="ابحث عن باكج..." className="ps-9 bg-white" />
+                 onKeyDown={(e) => e.key === "Enter" && load()} placeholder="ابحث عن برنامج..." className="ps-9 bg-white" />
         </div>
       </div>
 
       {items.length === 0 ? (
-        <div className="text-center py-16 text-muted-foreground text-sm">لا توجد باكجات مطابقة</div>
+        <div className="text-center py-16 text-muted-foreground text-sm">لا توجد برنامجات مطابقة</div>
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
           {items.map((p) => (

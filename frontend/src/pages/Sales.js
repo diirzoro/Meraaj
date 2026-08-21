@@ -28,7 +28,7 @@ export default function Sales() {
 
   return (
     <>
-      <PageHeader title="مبيعاتي (كبائع)" subtitle="إدارة الحجوزات على باكجاتك ودورة حياتها" />
+      <PageHeader title="مبيعاتي (كبائع)" subtitle="إدارة الحجوزات على برنامجاتك ودورة حياتها" />
       {items.length === 0 ? (
         <div className="text-center py-20 text-muted-foreground">لا توجد مبيعات بعد</div>
       ) : (

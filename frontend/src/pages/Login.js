@@ -52,10 +52,10 @@ export default function Login() {
 
         <div className="relative">
           <h1 className="font-head text-4xl font-bold leading-snug mb-4">
-            سوق البكجات <span className="text-[#D4AF37]">B2B</span><br /> للعمرة والسياحة
+            سوق البرامج <span className="text-[#D4AF37]">B2B</span><br /> للعمرة والسياحة
           </h1>
           <p className="text-white/60 leading-relaxed max-w-md">
-            منصة تربط مكاتب السفر لبيع وشراء البكجات بنظام محافظ مسبقة الدفع وضمان مالي كامل يحمي الطرفين.
+            منصة تربط مكاتب السفر لبيع وشراء البرامج بنظام محافظ مسبقة الدفع وضمان مالي كامل يحمي الطرفين.
           </p>
           <div className="grid grid-cols-3 gap-4 mt-10 max-w-md">
             {[[Store, "سوق موحّد"], [Wallet, "محافظ وضمان"], [ShieldCheck, "حماية النزاعات"]].map(([Icon, t], i) => (

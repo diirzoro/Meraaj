@@ -41,7 +41,7 @@ export default function Marketer() {
 
   return (
     <>
-      <PageHeader title="التسويق بالعمولة" subtitle="روّج لبكجات المنصة واكسب عمولة على كل حجز عبر رابطك" />
+      <PageHeader title="التسويق بالعمولة" subtitle="روّج لبرامج المنصة واكسب عمولة على كل حجز عبر رابطك" />
 
       {!data.is_marketer ? (
         <div className="max-w-lg mx-auto bg-white rounded-2xl border card-shadow p-10 text-center" data-testid="become-marketer-card">

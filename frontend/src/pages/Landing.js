@@ -10,7 +10,7 @@ const HERO = "https://images.unsplash.com/photo-1592326871020-04f58c1a52f3?crop=
 const TOURISM = "https://images.unsplash.com/photo-1527838832700-5059252407fa?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MTN8MHwxfHNlYXJjaHwxfHxJc3RhbmJ1bCUyMG1vc3F1ZSUyMHRyYXZlbCUyMHRvdXJpc218ZW58MHx8fHwxNzg3MjQ5NTQyfDA&ixlib=rb-4.1.0&q=85";
 
 const features = [
-  { icon: Store, title: "سوق B2B موحّد", desc: "منصة واحدة تعرض فيها بكجات العمرة والسياحة وتشتري من مكاتب أخرى بضغطة زر." },
+  { icon: Store, title: "سوق B2B موحّد", desc: "منصة واحدة تعرض فيها برامج العمرة والسياحة وتشتري من مكاتب أخرى بضغطة زر." },
   { icon: Wallet, title: "محافظ مسبقة الدفع", desc: "محفظة لكل مكتب بأرصدة (إجمالي، معلّق، متاح) تضبط كل عملية بيع وشراء بدقّة." },
   { icon: ShieldCheck, title: "نظام ضمان (Escrow)", desc: "تبقى أموال الحجز معلّقة حتى إتمام التفويج، فلا يخسر البائع ولا المشتري." },
   { icon: RefreshCw, title: "تكامل مع نظام رحال", desc: "شارك برامجك من رحال إلى السوق فوراً، مع تزامن لحظي للمقاعد ومنع البيع المزدوج." },
@@ -19,7 +19,7 @@ const features = [
 const steps = [
   { n: "١", title: "سجّل مكتبك", desc: "أنشئ حساب مكتبك ببياناتك الكاملة وابدأ خلال دقائق." },
   { n: "٢", title: "اشحن محفظتك", desc: "ارفع إشعار الحوالة البنكية وتعتمده الإدارة ليصبح رصيدك جاهزاً." },
-  { n: "٣", title: "بِع واشترِ", desc: "اعرض بكجاتك أو احجز من السوق، والنظام يدير الضمان والعمولات تلقائياً." },
+  { n: "٣", title: "بِع واشترِ", desc: "اعرض برامجك أو احجز من السوق، والنظام يدير الضمان والعمولات تلقائياً." },
 ];
 
 const lifecycle = [
@@ -64,10 +64,10 @@ export default function Landing() {
               <Sparkles className="w-3.5 h-3.5" /> منصة تابعة لشركة Target Media
             </span>
             <h1 className="font-head text-4xl sm:text-5xl lg:text-6xl font-bold leading-[1.15] mb-6">
-              سوق <span className="text-[#D4AF37]">موحّد</span> لتبادل بكجات<br /> العمرة والسياحة
+              سوق <span className="text-[#D4AF37]">موحّد</span> لتبادل برامج<br /> العمرة والسياحة
             </h1>
             <p className="text-white/60 text-base sm:text-lg leading-relaxed max-w-lg mb-8">
-              منصة تجمع المكاتب والأفراد والمسوّقين: بِع واشترِ واحجز بكجات العمرة والسياحة بنظام محافظ مسبقة الدفع وضمان مالي كامل يحمي الجميع.
+              منصة تجمع المكاتب والأفراد والمسوّقين: بِع واشترِ واحجز برامج العمرة والسياحة بنظام محافظ مسبقة الدفع وضمان مالي كامل يحمي الجميع.
             </p>
             <div className="flex flex-wrap gap-3">
               <Button data-testid="hero-register-btn" onClick={() => navigate("/register")}
@@ -131,11 +131,11 @@ export default function Landing() {
             </span>
             <h2 className="font-head text-3xl sm:text-4xl font-bold text-[#0A2540] mb-5">بائع ومشترٍ… بنفس الحساب والمحفظة</h2>
             <p className="text-muted-foreground leading-relaxed mb-6">
-              لا حاجة لحسابات منفصلة. مكتبك يعرض بكجاته ويحجز من الآخرين عبر داشبورد واحد، والنظام يحدّد طبيعة كل عملية برمجياً.
+              لا حاجة لحسابات منفصلة. مكتبك يعرض برامجه ويحجز من الآخرين عبر داشبورد واحد، والنظام يحدّد طبيعة كل عملية برمجياً.
             </p>
             <div className="space-y-3">
               {[
-                [Store, "أدوات البيع: عرض البكجات، متابعة الحجوزات الواردة، وطلبات السحب."],
+                [Store, "أدوات البيع: عرض البرامج، متابعة الحجوزات الواردة، وطلبات السحب."],
                 [Wallet, "أدوات الشراء: تصفّح السوق بالفلاتر، الحجز، وشحن المحفظة."],
                 [Lock, "ضمان مالي يحمي كل صفقة حتى إتمام التفويج."],
               ].map(([Icon, t], i) => (
@@ -196,7 +196,7 @@ export default function Landing() {
           <div className="rounded-2xl border p-8 card-shadow bg-white" data-testid="b2c-consumer">
             <div className="w-12 h-12 rounded-xl bg-[#0A2540] flex items-center justify-center mb-5"><Users className="w-6 h-6 text-[#D4AF37]" /></div>
             <h3 className="font-head font-bold text-[#0A2540] text-xl mb-2">للمستهلك الفرد</h3>
-            <p className="text-sm text-muted-foreground leading-relaxed mb-5">تصفّح بكجات العمرة والسياحة واحجز بسعر واضح ونهائي، مع ضمان مالي يحمي أموالك حتى إتمام الرحلة.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed mb-5">تصفّح برامج العمرة والسياحة واحجز بسعر واضح ونهائي، مع ضمان مالي يحمي أموالك حتى إتمام الرحلة.</p>
             <Button variant="outline" onClick={() => navigate("/register")} data-testid="b2c-consumer-btn" className="border-[#0A2540] text-[#0A2540] hover:bg-[#0A2540]/5">ابدأ الحجز الآن</Button>
           </div>
           <div className="rounded-2xl border p-8 card-shadow bg-[#0A2540] text-white" data-testid="b2c-marketer">
@@ -215,7 +215,7 @@ export default function Landing() {
           <div className="relative">
             <Users className="w-10 h-10 text-[#D4AF37] mx-auto mb-5" />
             <h2 className="font-head text-3xl sm:text-4xl font-bold text-white mb-4">انضم إلى شبكة معراج اليوم</h2>
-            <p className="text-white/60 max-w-lg mx-auto mb-8">أنشئ حساب مكتبك مجاناً وابدأ بتبادل البكجات بأمان مع المكاتب الأخرى.</p>
+            <p className="text-white/60 max-w-lg mx-auto mb-8">أنشئ حساب مكتبك مجاناً وابدأ بتبادل البرامج بأمان مع المكاتب الأخرى.</p>
             <Button data-testid="cta-register-btn" onClick={() => navigate("/register")}
                     className="bg-[#D4AF37] hover:bg-[#c39f2f] text-[#0A2540] font-semibold h-12 px-8 text-base">
               إنشاء حساب مكتب <ArrowLeft className="w-4 h-4" />

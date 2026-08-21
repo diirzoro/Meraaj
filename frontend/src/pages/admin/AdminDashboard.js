@@ -25,7 +25,7 @@ export default function AdminDashboard() {
         <Small title="المكاتب" value={d.offices_count} icon={Building2} />
         <Small title="عدد الأفراد" value={d.individuals_count} icon={User} />
         <Small title="المسوّقون" value={d.marketers_count} icon={TrendingUp} />
-        <Small title="البكجات" value={d.packages_count} icon={Package} />
+        <Small title="البرامج" value={d.packages_count} icon={Package} />
         <Small title="الحجوزات" value={d.bookings_count} icon={ShoppingBag} />
       </div>
 

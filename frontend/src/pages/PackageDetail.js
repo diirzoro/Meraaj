@@ -22,7 +22,7 @@ export default function PackageDetail() {
   const [regs, setRegs] = useState([{ name: "", passport_no: "", age: "" }]);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => { api.get(`/packages/${id}`).then((r) => setPkg(r.data)).catch(() => toast.error("تعذّر تحميل الباكج")); }, [id]);
+  useEffect(() => { api.get(`/packages/${id}`).then((r) => setPkg(r.data)).catch(() => toast.error("تعذّر تحميل البرنامج")); }, [id]);
 
   if (!pkg) return <div className="text-center py-20 text-muted-foreground">جارٍ التحميل...</div>;
 
@@ -105,7 +105,7 @@ export default function PackageDetail() {
             )}
 
             {isOwner ? (
-              <div className="mt-5 text-center text-sm bg-[#F4F6F8] rounded-lg py-3 text-muted-foreground">هذا الباكج من إضافتك</div>
+              <div className="mt-5 text-center text-sm bg-[#F4F6F8] rounded-lg py-3 text-muted-foreground">هذا البرنامج من إضافتك</div>
             ) : (
               <Dialog open={open} onOpenChange={setOpen}>
                 <DialogTrigger asChild>

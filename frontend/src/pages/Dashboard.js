@@ -41,7 +41,7 @@ export default function Dashboard() {
 
   const officeActions = [
     { to: "/market", label: "تصفّح السوق", icon: Store },
-    { to: "/packages/new", label: "أضف باكج للبيع", icon: Package },
+    { to: "/packages/new", label: "أضف برنامج للبيع", icon: Package },
     { to: "/wallet", label: "اشحن المحفظة", icon: ShoppingBag },
   ];
   const individualActions = [
@@ -86,7 +86,7 @@ export default function Dashboard() {
           <table className="w-full text-sm">
             <thead className="text-muted-foreground text-xs">
               <tr className="border-b">
-                <th className="text-start px-6 py-3 font-medium">الباكج</th>
+                <th className="text-start px-6 py-3 font-medium">البرنامج</th>
                 <th className="text-start px-6 py-3 font-medium">المقاعد</th>
                 <th className="text-start px-6 py-3 font-medium">المبلغ</th>
                 <th className="text-start px-6 py-3 font-medium">الحالة</th>

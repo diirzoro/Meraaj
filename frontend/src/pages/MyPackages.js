@@ -21,17 +21,17 @@ export default function MyPackages() {
 
   return (
     <>
-      <PageHeader title="بكجاتي (كبائع)" subtitle="البكجات التي أضفتها للبيع في السوق"
-        action={<Button data-testid="new-pkg-btn" onClick={() => navigate("/packages/new")} className="bg-[#0A2540] hover:bg-[#061A2E]"><Plus className="w-4 h-4" /> باكج جديد</Button>} />
+      <PageHeader title="برامجي (كبائع)" subtitle="البرامج التي أضفتها للبيع في السوق"
+        action={<Button data-testid="new-pkg-btn" onClick={() => navigate("/packages/new")} className="bg-[#0A2540] hover:bg-[#061A2E]"><Plus className="w-4 h-4" /> برنامج جديد</Button>} />
 
       {items.length === 0 ? (
-        <div className="text-center py-20 text-muted-foreground">لم تضف أي باكج بعد</div>
+        <div className="text-center py-20 text-muted-foreground">لم تضف أي برنامج بعد</div>
       ) : (
         <div className="bg-white rounded-2xl border card-shadow overflow-x-auto">
           <table className="w-full text-sm min-w-[640px]">
             <thead className="text-muted-foreground text-xs border-b">
               <tr>
-                <th className="text-start px-6 py-3 font-medium">الباكج</th>
+                <th className="text-start px-6 py-3 font-medium">البرنامج</th>
                 <th className="text-start px-6 py-3 font-medium">النوع</th>
                 <th className="text-start px-6 py-3 font-medium">الانطلاق</th>
                 <th className="text-start px-6 py-3 font-medium">المقاعد</th>

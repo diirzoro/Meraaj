@@ -81,7 +81,7 @@ async def my_packages(user: dict = Depends(require_office)):
 async def get_package(pkg_id: str, user=Depends(get_optional_user)):
     doc = await db.packages.find_one({"_id": oid(pkg_id)})
     if not doc:
-        raise HTTPException(404, "الباكج غير موجود")
+        raise HTTPException(404, "البرنامج غير موجود")
     return _view_package(doc, user)
 
 
@@ -89,7 +89,7 @@ async def get_package(pkg_id: str, user=Depends(get_optional_user)):
 async def toggle_package(pkg_id: str, user: dict = Depends(require_office)):
     pkg = await db.packages.find_one({"_id": oid(pkg_id), "seller_id": str(user["_id"])})
     if not pkg:
-        raise HTTPException(404, "الباكج غير موجود")
+        raise HTTPException(404, "البرنامج غير موجود")
     new_status = "unlisted" if pkg["status"] == "listed" else "listed"
     await db.packages.update_one({"_id": oid(pkg_id)}, {"$set": {"status": new_status}})
     return {"status": new_status}
@@ -112,9 +112,9 @@ class BookingInput(BaseModel):
 async def create_booking(payload: BookingInput, user: dict = Depends(require_buyer)):
     pkg = await db.packages.find_one({"_id": oid(payload.package_id)})
     if not pkg or pkg["status"] != "listed":
-        raise HTTPException(404, "الباكج غير متاح")
+        raise HTTPException(404, "البرنامج غير متاح")
     if pkg["seller_id"] == str(user["_id"]):
-        raise HTTPException(400, "لا يمكنك حجز الباكج الخاص بك")
+        raise HTTPException(400, "لا يمكنك حجز البرنامج الخاص بك")
     seats = len(payload.registrants)
     if seats == 0:
         raise HTTPException(400, "يجب إضافة مسجّل واحد على الأقل")
@@ -183,7 +183,7 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
     }
     res = await db.bookings.insert_one(booking)
     bid = str(res.inserted_id)
-    await log_txn(user["_id"], "booking_debit", -required, f"حجز باكج: {pkg['title']}", bid)
+    await log_txn(user["_id"], "booking_debit", -required, f"حجز برنامج: {pkg['title']}", bid)
     await log_txn(pkg["seller_id"], "booking_escrow", net_total, f"إيراد معلق من حجز: {pkg['title']}", bid)
     if is_office and platform_fee:
         await log_platform_revenue(platform_fee, f"عمولة منصة (حجز): {pkg['title']}", bid)
