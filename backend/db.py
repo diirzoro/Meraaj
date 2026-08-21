@@ -76,6 +76,16 @@ def marketer_pct() -> float:
     return float(os.environ.get("MARKETER_COMMISSION_PCT", "0.20"))
 
 
+SAR_PER_USD = float(os.environ.get("SAR_PER_USD", "3.77"))
+
+
+def to_usd(amount, currency: str) -> float:
+    """Convert a native amount to the USD base used by all wallets."""
+    if (currency or "USD") == "SAR":
+        return round(float(amount) / SAR_PER_USD, 2)
+    return round(float(amount), 2)
+
+
 async def log_platform_revenue(amount: float, description: str, ref: str = None):
     await db.platform_revenue.insert_one({
         "amount": amount,

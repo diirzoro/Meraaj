@@ -83,7 +83,9 @@ export default function AdminFinance() {
 
       <Dialog open={!!preview} onOpenChange={() => setPreview(null)}>
         <DialogContent dir="rtl"><DialogHeader><DialogTitle className="font-head text-[#0A2540]">إشعار الحوالة</DialogTitle></DialogHeader>
-          {preview && <img src={preview} alt="receipt" className="w-full rounded-lg border" />}
+          {preview && (String(preview).includes("application/pdf") || String(preview).toLowerCase().endsWith(".pdf")
+            ? <a href={preview} target="_blank" rel="noreferrer" className="block text-center bg-[#0A2540] text-white rounded-lg py-3 font-semibold">فتح ملف الإشعار (PDF)</a>
+            : <img src={preview} alt="receipt" className="w-full rounded-lg border" />)}
         </DialogContent>
       </Dialog>
     </>

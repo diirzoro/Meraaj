@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import api, { apiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { PageHeader } from "@/components/Layout";
-import { money, fmtDate, PKG_TYPE } from "@/lib/format";
+import { money, equiv, fmtDate, PKG_TYPE } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -97,6 +97,7 @@ export default function PackageDetail() {
           <div className="bg-white rounded-2xl border card-shadow p-6 sticky top-8">
             <div className="text-sm text-muted-foreground">سعر البيع النهائي للزبون</div>
             <div className="tabular text-3xl font-bold text-[#0A2540] mt-1">{money(pkg.final_sale_price, pkg.currency)}</div>
+            <div className="text-xs text-muted-foreground tabular mt-0.5">{equiv(pkg.final_sale_price, pkg.currency)} — الخصم من المحفظة بالدولار</div>
             {isOffice && (
               <div className="mt-4 space-y-2 text-sm">
                 <Row label="التكلفة الصافية (تدفعها أنت)" value={money(pkg.net_cost_per_seat, pkg.currency)} />

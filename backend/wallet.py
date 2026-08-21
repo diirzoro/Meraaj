@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
-from db import db, serialize, oid, now_iso, adjust_wallet, log_txn
+from db import db, serialize, oid, now_iso, adjust_wallet, log_txn, to_usd
 from security import require_buyer
 
 router = APIRouter(prefix="/api/wallet", tags=["wallet"])
@@ -20,16 +20,20 @@ async def transactions(user: dict = Depends(require_buyer)):
 
 class TopupInput(BaseModel):
     amount: float = Field(gt=0)
+    currency: str = "USD"  # SAR | USD
     method: str
     receipt_url: str
 
 
 @router.post("/topups")
 async def create_topup(payload: TopupInput, user: dict = Depends(require_buyer)):
+    amount_usd = to_usd(payload.amount, payload.currency)
     doc = {
         "office_id": str(user["_id"]),
         "office_name": user["office_name"],
-        "amount": payload.amount,
+        "amount": amount_usd,               # canonical USD credited on approval
+        "amount_original": payload.amount,
+        "currency": payload.currency,
         "method": payload.method,
         "receipt_url": payload.receipt_url,
         "status": "pending",

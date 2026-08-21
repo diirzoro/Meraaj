@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api from "@/lib/api";
 import { PageHeader } from "@/components/Layout";
-import { money, fmtDate, PKG_TYPE } from "@/lib/format";
+import { money, equiv, fmtDate, PKG_TYPE } from "@/lib/format";
 import { MapPin, Users, CalendarDays, Search, Landmark } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
@@ -74,6 +74,7 @@ export default function Market() {
                   <div>
                     <div className="text-[11px] text-muted-foreground">سعر البيع للزبون</div>
                     <div className="tabular text-xl font-bold text-[#0A2540]">{money(p.final_sale_price, p.currency)}</div>
+                    <div className="text-[10px] text-muted-foreground tabular">{equiv(p.final_sale_price, p.currency)}</div>
                   </div>
                   <span className="text-xs font-semibold text-[#15803D] bg-[#F0FDF4] px-2 py-1 rounded-md">
                     {p.buyer_office_commission != null ? `عمولتك ${money(p.buyer_office_commission, p.currency)}` : "احجز مباشرة"}

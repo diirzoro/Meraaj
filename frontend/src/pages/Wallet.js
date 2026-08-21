@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import api, { apiError } from "@/lib/api";
 import { PageHeader } from "@/components/Layout";
-import { money, fmtDate } from "@/lib/format";
+import { money, equiv, fmtDate } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -105,10 +105,23 @@ function SimpleTable({ rows, cols, empty }) {
 
 function TopupDialog({ onDone }) {
   const [open, setOpen] = useState(false);
-  const [f, setF] = useState({ amount: "", method: "حوالة بنكية", receipt_url: "" });
+  const [f, setF] = useState({ amount: "", currency: "SAR", method: "حوالة بنكية", receipt_url: "" });
+  const [fileName, setFileName] = useState("");
+  const onFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!/(image\/(png|jpe?g|webp)|application\/pdf)/.test(file.type)) { toast.error("الملف يجب أن يكون صورة (JPG/PNG) أو PDF"); return; }
+    if (file.size > 5 * 1024 * 1024) { toast.error("حجم الملف يتجاوز 5 ميجابايت"); return; }
+    const reader = new FileReader();
+    reader.onload = () => { setF((p) => ({ ...p, receipt_url: reader.result })); setFileName(file.name); };
+    reader.readAsDataURL(file);
+  };
   const submit = async () => {
-    try { await api.post("/wallet/topups", { amount: Number(f.amount), method: f.method, receipt_url: f.receipt_url }); toast.success("أُرسل طلب الشحن للإدارة للمراجعة"); setOpen(false); setF({ amount: "", method: "حوالة بنكية", receipt_url: "" }); onDone(); }
-    catch (e) { toast.error(apiError(e)); }
+    try {
+      await api.post("/wallet/topups", { amount: Number(f.amount), currency: f.currency, method: f.method, receipt_url: f.receipt_url });
+      toast.success("أُرسل طلب الشحن للإدارة للمراجعة");
+      setOpen(false); setF({ amount: "", currency: "SAR", method: "حوالة بنكية", receipt_url: "" }); setFileName(""); onDone();
+    } catch (e) { toast.error(apiError(e)); }
   };
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -116,13 +129,25 @@ function TopupDialog({ onDone }) {
       <DialogContent dir="rtl">
         <DialogHeader><DialogTitle className="font-head text-[#0A2540]">شحن المحفظة برفع إشعار حوالة</DialogTitle></DialogHeader>
         <div className="space-y-4">
-          <div><Label className="mb-2 block">المبلغ</Label><Input data-testid="topup-amount" type="number" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></div>
+          <div><Label className="mb-2 block">العملة</Label>
+            <select data-testid="topup-currency" value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value })} className="w-full h-9 rounded-md border border-input bg-transparent px-3 text-sm">
+              <option value="SAR">ريال سعودي (SAR)</option><option value="USD">دولار أمريكي (USD)</option>
+            </select>
+          </div>
+          <div><Label className="mb-2 block">المبلغ</Label>
+            <Input data-testid="topup-amount" type="number" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} />
+            {f.amount && <p className="text-xs text-muted-foreground mt-1 tabular">{money(f.amount, f.currency)} {equiv(f.amount, f.currency)}</p>}
+          </div>
           <div><Label className="mb-2 block">طريقة الدفع</Label>
             <select data-testid="topup-method" value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })} className="w-full h-9 rounded-md border border-input bg-transparent px-3 text-sm">
               <option>حوالة بنكية</option><option>صرافة</option><option>نقداً</option>
             </select>
           </div>
-          <div><Label className="mb-2 block">رابط صورة الإشعار</Label><Input data-testid="topup-receipt" value={f.receipt_url} onChange={(e) => setF({ ...f, receipt_url: e.target.value })} placeholder="https://..." /></div>
+          <div><Label className="mb-2 block">إشعار الحوالة (صورة أو PDF)</Label>
+            <input data-testid="topup-receipt-file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" onChange={onFile}
+                   className="w-full text-sm file:me-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-[#0A2540] file:text-white file:cursor-pointer" />
+            {fileName && <p className="text-xs text-[#15803D] mt-2">✓ تم اختيار: {fileName}</p>}
+          </div>
         </div>
         <DialogFooter><Button className="bg-[#0A2540] hover:bg-[#061A2E]" onClick={submit} disabled={!f.amount || !f.receipt_url} data-testid="submit-topup-btn">إرسال الطلب</Button></DialogFooter>
       </DialogContent>

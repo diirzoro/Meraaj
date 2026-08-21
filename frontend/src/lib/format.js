@@ -1,6 +1,15 @@
+export const SAR_RATE = 3.77;
+
 export const money = (n, currency = "USD") => {
   const v = Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return `${v} ${currency === "USD" ? "$" : currency}`;
+  const sym = currency === "USD" ? "$" : currency === "SAR" ? "﷼" : currency;
+  return `${v} ${sym}`;
+};
+
+export const equiv = (amount, currency = "USD") => {
+  const a = Number(amount || 0);
+  if (currency === "SAR") return `≈ $${(a / SAR_RATE).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `≈ ${Math.round(a * SAR_RATE).toLocaleString("en-US")} ﷼`;
 };
 
 export const STATUS = {

@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from db import (db, serialize, oid, now_iso, adjust_wallet, log_txn,
-                platform_pct, cancel_fee_pct, marketer_pct, log_platform_revenue)
+                platform_pct, cancel_fee_pct, marketer_pct, log_platform_revenue, to_usd)
 from security import get_current_user, get_optional_user, require_office, require_buyer
 from integration import notify_rahal
 
@@ -121,7 +121,11 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
     if seats > pkg["available_seats"]:
         raise HTTPException(400, "المقاعد المتاحة غير كافية")
 
-    net_total = pkg["net_cost_per_seat"] * seats
+    cur = pkg.get("currency", "USD")
+    net_seat = to_usd(pkg["net_cost_per_seat"], cur)
+    comm_seat = to_usd(pkg.get("buyer_office_commission", 0), cur)
+    sale_seat = to_usd(pkg["final_sale_price"], cur)
+    net_total = round(net_seat * seats, 2)
     is_office = user["role"] == "office"
     marketer_id = None
     marketer_commission = 0.0
@@ -129,15 +133,15 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
 
     if is_office:
         # B2B: office pays net + platform fee (double commission); keeps margin offline
-        buyer_commission_total = pkg["buyer_office_commission"] * seats
+        buyer_commission_total = round(comm_seat * seats, 2)
         platform_fee = round(buyer_commission_total * platform_pct(), 2)
         required = round(net_total + platform_fee, 2)
     else:
         # B2C: consumer pays full retail; seller gets net; margin => platform (+marketer)
         buyer_commission_total = 0.0
         platform_fee = 0.0
-        required = round(pkg["final_sale_price"] * seats, 2)
-        margin_total = round((pkg["final_sale_price"] - pkg["net_cost_per_seat"]) * seats, 2)
+        required = round(sale_seat * seats, 2)
+        margin_total = round((sale_seat - net_seat) * seats, 2)
         if payload.ref:
             m = await db.users.find_one({"affiliate_code": payload.ref, "is_marketer": True})
             if m and str(m["_id"]) not in (pkg["seller_id"], str(user["_id"])):
@@ -174,7 +178,7 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
         "marketer_commission": marketer_commission,
         "platform_profit": platform_profit,
         "amount_charged": required,
-        "currency": pkg["currency"],
+        "currency": "USD",
         "status": "blue",
         "dispatched_at": None,
         "dispute": None,
