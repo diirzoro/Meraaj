@@ -5,7 +5,7 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, HTTPException, Request, Response, Depends
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
-from db import db, serialize, oid, now_iso
+from db import db, serialize, oid, now_iso, empty_wallet
 
 JWT_ALGORITHM = "HS256"
 LOCK_THRESHOLD = 5
@@ -120,7 +120,7 @@ async def register(payload: RegisterInput, response: Response):
         "phone": payload.phone,
         "governorate": payload.governorate,
         "status": "active",
-        "wallet": {"total": 0.0, "pending": 0.0, "available": 0.0},
+        "wallet": empty_wallet(),
         "created_at": now_iso(),
     }
     if payload.account_type == "individual":
@@ -203,7 +203,7 @@ async def seed_admin():
             "governorate": "",
             "address": "",
             "status": "active",
-            "wallet": {"total": 0.0, "pending": 0.0, "available": 0.0},
+            "wallet": empty_wallet(),
             "created_at": now_iso(),
         })
     elif not verify_password(password, existing["password_hash"]):

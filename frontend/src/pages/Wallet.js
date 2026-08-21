@@ -14,9 +14,11 @@ import { toast } from "sonner";
 
 const badge = { pending: "bg-[#FEFCE8] text-[#A16207]", approved: "bg-[#F0FDF4] text-[#15803D]", rejected: "bg-red-50 text-red-600" };
 const stLabel = { pending: "قيد المراجعة", approved: "معتمد", rejected: "مرفوض" };
+const EMPTY = { SAR: { available: 0, pending: 0, total: 0 }, USD: { available: 0, pending: 0, total: 0 } };
+const availOf = (w, c) => (w?.[c]?.available ?? 0);
 
 export default function WalletPage() {
-  const [w, setW] = useState({ total: 0, pending: 0, available: 0 });
+  const [w, setW] = useState(EMPTY);
   const [txns, setTxns] = useState([]);
   const [topups, setTopups] = useState([]);
   const [transfers, setTransfers] = useState([]);
@@ -27,7 +29,7 @@ export default function WalletPage() {
   const load = () => {
     setLoading(true);
     Promise.all([
-      api.get("/wallet").then((r) => setW(r.data)),
+      api.get("/wallet").then((r) => setW(r.data || EMPTY)),
       api.get("/wallet/transactions").then((r) => setTxns(r.data)),
       api.get("/wallet/topups").then((r) => setTopups(r.data)),
       api.get("/wallet/transfers").then((r) => setTransfers(r.data)),
@@ -38,17 +40,16 @@ export default function WalletPage() {
 
   return (
     <>
-      <PageHeader title="المحفظة المالية" subtitle="أرصدتك، الشحن، التحويلات، والسحوبات"
+      <PageHeader title="المحفظة المالية" subtitle="أرصدتك بعملتين منفصلتين (ريال ودولار)، الشحن، التحويلات، والسحوبات"
         action={<div className="flex flex-wrap gap-2">
           <TopupDialog onDone={load} />
-          <TransferDialog onDone={load} available={w.available} />
-          <WithdrawDialog onDone={load} available={w.available} />
+          <TransferDialog onDone={load} wallet={w} />
+          <WithdrawDialog onDone={load} wallet={w} />
         </div>} />
 
-      <div className="grid md:grid-cols-3 gap-5 mb-8">
-        <Balance id="total" title="الرصيد الإجمالي" value={loading ? "..." : money(w.total)} icon={Wallet} gold />
-        <Balance id="pending" title="الرصيد المعلق (ضمان)" value={loading ? "..." : money(w.pending)} icon={Clock} />
-        <Balance id="available" title="الرصيد المتاح" value={loading ? "..." : money(w.available)} icon={CheckCircle2} />
+      <div className="grid md:grid-cols-2 gap-5 mb-8">
+        <CurrencyWallet ccy="SAR" title="محفظة الريال السعودي" data={w.SAR} loading={loading} gold />
+        <CurrencyWallet ccy="USD" title="محفظة الدولار الأمريكي" data={w.USD} loading={loading} />
       </div>
 
       <div className="flex gap-1 bg-white border rounded-xl p-1 card-shadow w-fit mb-5">
@@ -68,14 +69,20 @@ export default function WalletPage() {
   );
 }
 
-function Balance({ id, title, value, icon: Icon, gold }) {
+function CurrencyWallet({ ccy, title, data, loading, gold }) {
+  const d = data || { available: 0, pending: 0, total: 0 };
   return (
-    <div data-testid={`wallet-balance-${id}`} className={`rounded-2xl border p-6 card-shadow ${gold ? "bg-[#0A2540] text-white border-[#0A2540]" : "bg-white"}`}>
-      <div className="flex items-center justify-between mb-4">
-        <span className={`text-sm ${gold ? "text-white/70" : "text-muted-foreground"}`}>{title}</span>
-        <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${gold ? "bg-[#D4AF37]" : "bg-[#F4F6F8]"}`}><Icon className="w-4 h-4 text-[#0A2540]" /></div>
+    <div data-testid={`wallet-${ccy}`} className={`rounded-2xl border p-6 card-shadow ${gold ? "bg-[#0A2540] text-white border-[#0A2540]" : "bg-white"}`}>
+      <div className="flex items-center justify-between mb-5">
+        <span className={`text-sm font-semibold ${gold ? "text-white/80" : "text-muted-foreground"}`}>{title}</span>
+        <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${gold ? "bg-[#D4AF37]" : "bg-[#F4F6F8]"}`}><Wallet className="w-4 h-4 text-[#0A2540]" /></div>
       </div>
-      <div className={`tabular text-3xl font-bold ${gold ? "text-[#D4AF37]" : "text-[#0A2540]"}`}>{value}</div>
+      <div className={`text-xs mb-1 ${gold ? "text-white/60" : "text-muted-foreground"}`}>الرصيد المتاح</div>
+      <div data-testid={`wallet-${ccy}-available`} className={`tabular text-3xl font-bold mb-4 ${gold ? "text-[#D4AF37]" : "text-[#0A2540]"}`}>{loading ? "..." : money(d.available, ccy)}</div>
+      <div className={`flex items-center justify-between text-sm pt-3 border-t ${gold ? "border-white/10" : ""}`}>
+        <span className={`flex items-center gap-1.5 ${gold ? "text-white/70" : "text-muted-foreground"}`}><Clock className="w-3.5 h-3.5" /> المعلّق (ضمان)</span>
+        <span data-testid={`wallet-${ccy}-pending`} className={`tabular font-semibold ${gold ? "text-white" : "text-[#0A2540]"}`}>{loading ? "..." : money(d.pending, ccy)}</span>
+      </div>
     </div>
   );
 }
@@ -100,6 +107,16 @@ function SimpleTable({ rows, cols, empty }) {
         ))}
       </tbody>
     </table>
+  );
+}
+
+function CurrencySelect({ value, onChange, testid }) {
+  return (
+    <select data-testid={testid} value={value} onChange={(e) => onChange(e.target.value)}
+            className="w-full h-9 rounded-md border border-input bg-transparent px-3 text-sm">
+      <option value="SAR">ريال سعودي (SAR)</option>
+      <option value="USD">دولار أمريكي (USD)</option>
+    </select>
   );
 }
 
@@ -129,10 +146,8 @@ function TopupDialog({ onDone }) {
       <DialogContent dir="rtl">
         <DialogHeader><DialogTitle className="font-head text-[#0A2540]">شحن المحفظة برفع إشعار حوالة</DialogTitle></DialogHeader>
         <div className="space-y-4">
-          <div><Label className="mb-2 block">العملة</Label>
-            <select data-testid="topup-currency" value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value })} className="w-full h-9 rounded-md border border-input bg-transparent px-3 text-sm">
-              <option value="SAR">ريال سعودي (SAR)</option><option value="USD">دولار أمريكي (USD)</option>
-            </select>
+          <div><Label className="mb-2 block">العملة (تُضاف كما هي دون تحويل)</Label>
+            <CurrencySelect value={f.currency} onChange={(v) => setF({ ...f, currency: v })} testid="topup-currency" />
           </div>
           <div><Label className="mb-2 block">المبلغ</Label>
             <Input data-testid="topup-amount" type="number" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} />
@@ -155,11 +170,12 @@ function TopupDialog({ onDone }) {
   );
 }
 
-function TransferDialog({ onDone, available }) {
+function TransferDialog({ onDone, wallet }) {
   const [open, setOpen] = useState(false);
-  const [f, setF] = useState({ to_email: "", amount: "", note: "" });
+  const [f, setF] = useState({ to_email: "", amount: "", currency: "SAR", note: "" });
+  const avail = availOf(wallet, f.currency);
   const submit = async () => {
-    try { await api.post("/wallet/transfers", { to_email: f.to_email, amount: Number(f.amount), note: f.note }); toast.success("أُرسل طلب التحويل — بانتظار موافقة الإدارة"); setOpen(false); setF({ to_email: "", amount: "", note: "" }); onDone(); }
+    try { await api.post("/wallet/transfers", { to_email: f.to_email, amount: Number(f.amount), currency: f.currency, note: f.note }); toast.success("أُرسل طلب التحويل — بانتظار موافقة الإدارة"); setOpen(false); setF({ to_email: "", amount: "", currency: "SAR", note: "" }); onDone(); }
     catch (e) { toast.error(apiError(e)); }
   };
   return (
@@ -169,7 +185,8 @@ function TransferDialog({ onDone, available }) {
         <DialogHeader><DialogTitle className="font-head text-[#0A2540]">تحويل رصيد لمكتب آخر</DialogTitle></DialogHeader>
         <div className="space-y-4">
           <div><Label className="mb-2 block">بريد المستلم (مكتب أو فرد)</Label><Input data-testid="transfer-email" value={f.to_email} onChange={(e) => setF({ ...f, to_email: e.target.value })} /></div>
-          <div><Label className="mb-2 block">المبلغ (المتاح {money(available)})</Label><Input data-testid="transfer-amount" type="number" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></div>
+          <div><Label className="mb-2 block">العملة</Label><CurrencySelect value={f.currency} onChange={(v) => setF({ ...f, currency: v })} testid="transfer-currency" /></div>
+          <div><Label className="mb-2 block">المبلغ (المتاح {money(avail, f.currency)})</Label><Input data-testid="transfer-amount" type="number" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></div>
           <div><Label className="mb-2 block">ملاحظة</Label><Textarea data-testid="transfer-note" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} rows={2} /></div>
         </div>
         <DialogFooter><Button className="bg-[#0A2540] hover:bg-[#061A2E]" onClick={submit} disabled={!f.to_email || !f.amount} data-testid="submit-transfer-btn">إرسال طلب التحويل</Button></DialogFooter>
@@ -178,11 +195,12 @@ function TransferDialog({ onDone, available }) {
   );
 }
 
-function WithdrawDialog({ onDone, available }) {
+function WithdrawDialog({ onDone, wallet }) {
   const [open, setOpen] = useState(false);
-  const [f, setF] = useState({ amount: "", method: "حوالة بنكية", details: "" });
+  const [f, setF] = useState({ amount: "", currency: "SAR", method: "حوالة بنكية", details: "" });
+  const avail = availOf(wallet, f.currency);
   const submit = async () => {
-    try { await api.post("/wallet/withdrawals", { amount: Number(f.amount), method: f.method, details: f.details }); toast.success("أُرسل طلب السحب للإدارة"); setOpen(false); setF({ amount: "", method: "حوالة بنكية", details: "" }); onDone(); }
+    try { await api.post("/wallet/withdrawals", { amount: Number(f.amount), currency: f.currency, method: f.method, details: f.details }); toast.success("أُرسل طلب السحب للإدارة"); setOpen(false); setF({ amount: "", currency: "SAR", method: "حوالة بنكية", details: "" }); onDone(); }
     catch (e) { toast.error(apiError(e)); }
   };
   return (
@@ -191,7 +209,8 @@ function WithdrawDialog({ onDone, available }) {
       <DialogContent dir="rtl">
         <DialogHeader><DialogTitle className="font-head text-[#0A2540]">طلب سحب من الرصيد المتاح</DialogTitle></DialogHeader>
         <div className="space-y-4">
-          <div><Label className="mb-2 block">المبلغ (المتاح {money(available)})</Label><Input data-testid="withdraw-amount" type="number" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></div>
+          <div><Label className="mb-2 block">العملة</Label><CurrencySelect value={f.currency} onChange={(v) => setF({ ...f, currency: v })} testid="withdraw-currency" /></div>
+          <div><Label className="mb-2 block">المبلغ (المتاح {money(avail, f.currency)})</Label><Input data-testid="withdraw-amount" type="number" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></div>
           <div><Label className="mb-2 block">طريقة الاستلام</Label>
             <select data-testid="withdraw-method" value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })} className="w-full h-9 rounded-md border border-input bg-transparent px-3 text-sm">
               <option>حوالة بنكية</option><option>صرافة</option>

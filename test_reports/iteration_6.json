@@ -1,0 +1,43 @@
+{
+  "summary": "Backend-only deep testing of the new TRUE dual-currency (SAR/USD) wallet engine. Created 2 new pytest suites: /app/backend/tests/test_dual_currency.py (15 tests, ALL PASS) covering wallet shape, currency-preserving top-ups, SAR-native booking/escrow, cross-currency shortfall @3.77, insufficient-funds 400, settlement 24h guard, full yellow cancellation flow, blue cancellation, P2P transfer + admin approval (currency-aware), withdrawal + admin approval, marketer commission per currency + affiliate total_earned {SAR,USD}, dispute resolve refund_buyer currency-aware, admin dashboard per-currency liquidity/revenue, and money conservation @3.77 with no negative buckets. Plus /app/backend/tests/test_dual_currency_edges.py (7 tests, 2 pass / 5 fail) which uncovered 2 CRITICAL money-creation bugs in the yellow cancellation deduction path and 3 silent currency-coercion validation gaps. Rahal + auth playbook suites re-run: 32/32 pass (no regression). Old pre-dual-currency suites were intentionally NOT run (obsolete contract, per request).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/bookings/{id}/cancel-offer + /cancel-accept", "issue": "deduction is unbounded — seller offered deduction=5000 on a booking whose escrow (net_cost_total) was only 1000 SAR; after buyer accept the seller's wallet.SAR.available was credited 4500 SAR while buyer refund was clamped to 0. This CREATES money out of nothing (system liquidity inflated, seller wallet.total math inconsistent). Must validate 0 <= deduction <= net_cost_total.", "priority": "CRITICAL"},
+      {"endpoint": "POST /api/bookings/{id}/cancel-offer + /cancel-accept", "issue": "negative deduction accepted (DeductionInput.deduction has no ge=0). With deduction=-1000 on a 1040-SAR booking, buyer ended with 7000 SAR after having funded only 6000 SAR — money created; seller_keeps/platform_cut also go negative.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/wallet/topups", "issue": "Unknown/invalid currency (e.g. 'EUR', or lowercase 'sar') is silently coerced to USD by _ccy() and returns 200 — a user intending SAR can be credited USD. Should reject with 422 via Literal['SAR','USD'] (and/or uppercase-normalize)."},
+      {"endpoint": "POST /api/wallet/transfers, POST /api/wallet/withdrawals", "issue": "Same silent coercion of unknown currency to USD (returns 200)."},
+      {"endpoint": "POST /api/packages", "issue": "PackageInput.currency accepts any string ('EUR', 'sar'); create_booking then treats it as USD, so a SAR-intended program silently prices/escrows in USD. Should validate to Literal['SAR','USD'] and normalize case."},
+      {"endpoint": "POST /api/bookings/{id}/cancel-request (blue, cross-currency booking)", "issue": "Design note, not a leak: when a booking was funded partly/entirely from the other currency (debit_split), the blue-cancel refund is paid entirely in the PROGRAM currency. Verified: SAR-only buyer paid 3845.40 SAR for a USD program then got 1000 USD refunded. Value is conserved at 3.77, but it gives users an implicit FX conversion (SAR->USD) for a 2% fee — confirm this is intended, otherwise refund per debit_split."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_dual_currency.py",
+    "/app/backend/tests/test_dual_currency_edges.py",
+    "/app/test_reports/pytest/dual_currency.xml",
+    "/app/test_reports/pytest/dual_currency_edges.xml"
+  ],
+  "action_items": [
+    "Validate yellow-cancel deduction: enforce 0 <= deduction <= booking.net_cost_total in cancel-offer (and re-check in cancel-accept); use Field(ge=0) on DeductionInput.",
+    "Use Literal['SAR','USD'] (with .upper() normalization) for currency in TopupInput/TransferInput/WithdrawalInput/PackageInput instead of the silent _ccy() USD fallback.",
+    "Decide/document whether blue-cancel refund should follow debit_split instead of paying 100% in the program currency (implicit FX round-trip at 3.77)."
+  ],
+  "critical_code_review_comments": [
+    "market.py cancel_accept: seller is credited `deduction - platform_cut` into available while only `net_cost_total` was ever escrowed — any deduction > net inflates system liquidity; add a server-side cap.",
+    "db.py _ccy/adjust_wallet fallback ('SAR' if c=='SAR' else 'USD') is used everywhere as the currency validator; a single typo/lowercase value routes money to the wrong bucket. Centralize strict validation at the Pydantic layer.",
+    "Wallet debits/credits are multi-step non-atomic $inc calls (buyer debit, seller escrow, seat decrement). Under concurrent bookings a double-spend/partial-state is possible; consider a transaction or conditional update on available balance."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_dual_currency.py",
+    "/app/backend/tests/test_dual_currency_edges.py"
+  ],
+  "success_rate": {"backend": "82% (18/22 new dual-currency tests; core dual-currency contract 15/15 pass, 5 edge/validation failures)", "frontend": "not tested (backend-only request)"},
+  "seed_data_creation": "Registered ~18 throwaway TEST_* offices/individuals (emails test_*@qa-example.com, password Test@1234) plus TEST_ packages/bookings/topups; wallets funded via top-up + admin approval. Not cleaned up (no delete endpoints exist) — they are prefixed TEST_ for identification.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "Super admin abuzay84@gmail.com / Meraaj@2026 (worked). /app/memory/test_credentials.md present and accurate.",
+  "context_for_next_testing_agent": "Use /app/backend/tests/test_dual_currency.py as the regression suite for the dual-currency contract (helpers register_office/register_individual/fund/wallet/book are importable from it). Run with `-n 0` for deterministic sequencing. test_dual_currency_edges.py encodes the expected (currently failing) validation behavior — after the main agent fixes deduction bounds + currency Literals, all 7 should pass. Settlement after the 24h grace could not be exercised (no time-travel hook); only the 400 guard was verified. Old suites backend_test.py / test_escrow_conservation.py / test_b2c_*.py / test_edge_cases.py / test_fix_verification.py still assert the obsolete single-USD wallet shape and should be rewritten or deleted.",
+  "rca_of_the_issue": "cancel_accept in backend/market.py computes seller_keeps = deduction - 10% and credits it to the seller's available while decrementing only net_cost_total from pending, with refund clamped at 0. Because `deduction` arrives unvalidated from the seller (DeductionInput: plain float), any value > net_cost_total or < 0 breaks conservation: the wallet receives funds that were never escrowed (or the buyer receives more than was charged). Reproduce: SAR program net=1000/comm=200, buyer funds 6000 SAR, book 1 seat, issue-visas, buyer cancel-request, seller cancel-offer {deduction: 5000}, buyer cancel-accept -> seller available +4500 SAR. Fix: clamp/validate deduction to [0, net_cost_total] server-side."
+}

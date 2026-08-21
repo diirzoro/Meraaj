@@ -2,7 +2,8 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from db import (db, serialize, oid, now_iso, adjust_wallet, log_txn,
-                platform_pct, cancel_fee_pct, marketer_pct, log_platform_revenue, to_usd)
+                platform_pct, cancel_fee_pct, marketer_pct, log_platform_revenue,
+                plan_debit, wallet_available, CurrencyField)
 from security import get_current_user, get_optional_user, require_office, require_buyer
 from integration import notify_rahal
 
@@ -39,7 +40,7 @@ class PackageInput(BaseModel):
     net_cost_per_seat: float
     final_sale_price: float
     buyer_office_commission: float
-    currency: str = "USD"
+    currency: CurrencyField = "USD"
     total_seats: int
 
 
@@ -122,9 +123,10 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
         raise HTTPException(400, "المقاعد المتاحة غير كافية")
 
     cur = pkg.get("currency", "USD")
-    net_seat = to_usd(pkg["net_cost_per_seat"], cur)
-    comm_seat = to_usd(pkg.get("buyer_office_commission", 0), cur)
-    sale_seat = to_usd(pkg["final_sale_price"], cur)
+    cur = "SAR" if cur == "SAR" else "USD"
+    net_seat = round(float(pkg["net_cost_per_seat"]), 2)
+    comm_seat = round(float(pkg.get("buyer_office_commission", 0)), 2)
+    sale_seat = round(float(pkg["final_sale_price"]), 2)
     net_total = round(net_seat * seats, 2)
     is_office = user["role"] == "office"
     marketer_id = None
@@ -151,11 +153,16 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
         platform_profit = round(margin_total - marketer_commission, 2)
 
     fresh = await db.users.find_one({"_id": user["_id"]})
-    if fresh["wallet"]["available"] < required:
-        raise HTTPException(400, f"الرصيد المتاح غير كافٍ. المطلوب: {required} {pkg['currency']}")
+    split = plan_debit(fresh["wallet"], cur, required)
+    if split is None:
+        raise HTTPException(400, f"الرصيد المتاح غير كافٍ. المطلوب: {required} {cur}")
 
-    await adjust_wallet(user["_id"], available=-required, total=-required)
-    await adjust_wallet(oid(pkg["seller_id"]), pending=net_total, total=net_total)
+    # Debit buyer (program currency first, shortfall covered from the other currency at fixed rate)
+    for c, amt in split.items():
+        if amt:
+            await adjust_wallet(user["_id"], c, available=-amt, total=-amt)
+    # Escrow to seller in the program's own currency
+    await adjust_wallet(oid(pkg["seller_id"]), cur, pending=net_total, total=net_total)
     await db.packages.update_one({"_id": pkg["_id"]}, {"$inc": {"available_seats": -seats}})
 
     booking = {
@@ -178,7 +185,8 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
         "marketer_commission": marketer_commission,
         "platform_profit": platform_profit,
         "amount_charged": required,
-        "currency": "USD",
+        "debit_split": split,
+        "currency": cur,
         "status": "blue",
         "dispatched_at": None,
         "dispute": None,
@@ -187,17 +195,17 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
     }
     res = await db.bookings.insert_one(booking)
     bid = str(res.inserted_id)
-    await log_txn(user["_id"], "booking_debit", -required, f"حجز برنامج: {pkg['title']}", bid)
-    await log_txn(pkg["seller_id"], "booking_escrow", net_total, f"إيراد معلق من حجز: {pkg['title']}", bid)
+    await log_txn(user["_id"], "booking_debit", -required, f"حجز برنامج: {pkg['title']}", bid, currency=cur)
+    await log_txn(pkg["seller_id"], "booking_escrow", net_total, f"إيراد معلق من حجز: {pkg['title']}", bid, currency=cur)
     if is_office and platform_fee:
-        await log_platform_revenue(platform_fee, f"عمولة منصة (حجز): {pkg['title']}", bid)
+        await log_platform_revenue(platform_fee, f"عمولة منصة (حجز): {pkg['title']}", bid, currency=cur)
     if not is_office:
         if marketer_id and marketer_commission > 0:
-            await adjust_wallet(oid(marketer_id), pending=marketer_commission, total=marketer_commission)
+            await adjust_wallet(oid(marketer_id), cur, pending=marketer_commission, total=marketer_commission)
             await log_txn(marketer_id, "marketer_commission", marketer_commission,
-                          f"عمولة تسويق (معلّقة): {pkg['title']}", bid)
+                          f"عمولة تسويق (معلّقة): {pkg['title']}", bid, currency=cur)
         if platform_profit:
-            await log_platform_revenue(platform_profit, f"أرباح المنصة من حجز مباشر: {pkg['title']}", bid)
+            await log_platform_revenue(platform_profit, f"أرباح المنصة من حجز مباشر: {pkg['title']}", bid, currency=cur)
     if pkg.get("source") == "rahal" and pkg.get("rahal_ref"):
         await notify_rahal("meraaj.booking.created", {
             "package_ref": pkg["rahal_ref"],
@@ -282,14 +290,15 @@ async def settle_booking(booking_id: str, user: dict = Depends(require_office)):
         raise HTTPException(400, "لم تنته فترة السماح (24 ساعة) بعد")
     net = b["net_cost_total"]
     fee = b["platform_fee"]
-    await adjust_wallet(user["_id"], pending=-net, available=(net - fee), total=-fee)
-    await log_txn(user["_id"], "settlement", net - fee, f"تسوية حجز: {b['package_title']}", booking_id)
+    cur = b.get("currency", "USD")
+    await adjust_wallet(user["_id"], cur, pending=-net, available=(net - fee), total=-fee)
+    await log_txn(user["_id"], "settlement", net - fee, f"تسوية حجز: {b['package_title']}", booking_id, currency=cur)
     if fee:
-        await log_platform_revenue(fee, f"عمولة منصة (تسوية): {b['package_title']}", booking_id)
+        await log_platform_revenue(fee, f"عمولة منصة (تسوية): {b['package_title']}", booking_id, currency=cur)
     if b.get("marketer_id") and b.get("marketer_commission"):
-        await adjust_wallet(oid(b["marketer_id"]), pending=-b["marketer_commission"], available=b["marketer_commission"])
+        await adjust_wallet(oid(b["marketer_id"]), cur, pending=-b["marketer_commission"], available=b["marketer_commission"])
         await log_txn(b["marketer_id"], "marketer_commission_release", b["marketer_commission"],
-                      f"تحرير عمولة تسويق: {b['package_title']}", booking_id)
+                      f"تحرير عمولة تسويق: {b['package_title']}", booking_id, currency=cur)
     await db.bookings.update_one({"_id": b["_id"]}, {"$set": {"settled": True, "settled_at": now_iso()}})
     return {"ok": True, "released": net - fee}
 
@@ -309,27 +318,28 @@ async def cancel_request(booking_id: str, user: dict = Depends(require_buyer)):
     if b["status"] == "yellow" and b.get("buyer_type") == "individual":
         raise HTTPException(400, "لا يمكن الإلغاء بعد إصدار التأشيرات. يرجى التواصل مع الإدارة.")
     if b["status"] == "blue":
-        # Full refund minus small admin fee
+        # Full refund minus small admin fee (all in the program's currency)
+        cur = b.get("currency", "USD")
         admin_fee = round(b["net_cost_total"] * cancel_fee_pct(), 2)
         refund = round(b["amount_charged"] - admin_fee, 2)
-        await adjust_wallet(oid(b["seller_id"]), pending=-b["net_cost_total"], total=-b["net_cost_total"])
+        await adjust_wallet(oid(b["seller_id"]), cur, pending=-b["net_cost_total"], total=-b["net_cost_total"])
         if admin_fee:
-            await log_platform_revenue(admin_fee, f"رسوم إلغاء إدارية: {b['package_title']}", booking_id)
+            await log_platform_revenue(admin_fee, f"رسوم إلغاء إدارية: {b['package_title']}", booking_id, currency=cur)
         if b.get("buyer_type") != "individual" and b.get("platform_fee"):
-            await log_platform_revenue(-b["platform_fee"], f"عكس عمولة منصة (إلغاء): {b['package_title']}", booking_id)
+            await log_platform_revenue(-b["platform_fee"], f"عكس عمولة منصة (إلغاء): {b['package_title']}", booking_id, currency=cur)
         if b.get("buyer_type") == "individual":
             if b.get("marketer_id") and b.get("marketer_commission"):
-                await adjust_wallet(oid(b["marketer_id"]),
+                await adjust_wallet(oid(b["marketer_id"]), cur,
                                     pending=-b["marketer_commission"], total=-b["marketer_commission"])
                 await log_txn(b["marketer_id"], "marketer_commission_reversal", -b["marketer_commission"],
-                              f"عكس عمولة تسويق (إلغاء): {b['package_title']}", booking_id)
+                              f"عكس عمولة تسويق (إلغاء): {b['package_title']}", booking_id, currency=cur)
             if b.get("platform_profit"):
-                await log_platform_revenue(-b["platform_profit"], f"عكس أرباح إلغاء: {b['package_title']}", booking_id)
-        await adjust_wallet(user["_id"], available=refund, total=refund)
+                await log_platform_revenue(-b["platform_profit"], f"عكس أرباح إلغاء: {b['package_title']}", booking_id, currency=cur)
+        await adjust_wallet(user["_id"], cur, available=refund, total=refund)
         await db.packages.update_one({"_id": oid(b["package_id"])}, {"$inc": {"available_seats": b["seats"]}})
         await db.bookings.update_one({"_id": b["_id"]}, {"$set": {"status": "cancelled",
                                      "cancellation": {"type": "auto_blue", "refund": refund, "admin_fee": admin_fee}}})
-        await log_txn(user["_id"], "cancel_refund", refund, f"استرداد إلغاء: {b['package_title']}", booking_id)
+        await log_txn(user["_id"], "cancel_refund", refund, f"استرداد إلغاء: {b['package_title']}", booking_id, currency=cur)
         if b.get("rahal_ref"):
             await notify_rahal("meraaj.booking.cancelled", {
                 "package_ref": b["rahal_ref"], "meraaj_booking_id": booking_id, "seats_released": b["seats"]})
@@ -340,7 +350,7 @@ async def cancel_request(booking_id: str, user: dict = Depends(require_buyer)):
 
 
 class DeductionInput(BaseModel):
-    deduction: float  # non-refundable (visa cost)
+    deduction: float = Field(ge=0)  # non-refundable (visa cost); capped at escrowed net
 
 
 @router.post("/bookings/{booking_id}/cancel-offer")
@@ -350,6 +360,8 @@ async def cancel_offer(booking_id: str, payload: DeductionInput, user: dict = De
         raise HTTPException(404, "الحجز غير موجود")
     if not b.get("cancellation") or b["cancellation"].get("stage") != "awaiting_seller":
         raise HTTPException(400, "لا يوجد طلب إلغاء بانتظارك")
+    if payload.deduction > b["net_cost_total"]:
+        raise HTTPException(400, f"الخصم لا يمكن أن يتجاوز التكلفة الصافية المحجوزة ({b['net_cost_total']} {b.get('currency','USD')})")
     await db.bookings.update_one({"_id": b["_id"]}, {"$set": {
         "cancellation": {"type": "yellow_pending", "stage": "awaiting_buyer", "deduction": payload.deduction}}})
     return {"stage": "awaiting_buyer", "deduction": payload.deduction}
@@ -364,26 +376,27 @@ async def cancel_accept(booking_id: str, user: dict = Depends(require_buyer)):
     if not c or c.get("stage") != "awaiting_buyer":
         raise HTTPException(400, "لا يوجد عرض إلغاء لقبوله")
     deduction = c["deduction"]
+    cur = b.get("currency", "USD")
     platform_cut = round(deduction * platform_pct(), 2)
     seller_keeps = round(deduction - platform_cut, 2)
     refund = round(b["net_cost_total"] - deduction + b["platform_fee"], 2)
     if refund < 0:
         refund = 0.0
     # seller: remove escrow, keep deduction minus platform cut into available
-    await adjust_wallet(oid(b["seller_id"]), pending=-b["net_cost_total"],
+    await adjust_wallet(oid(b["seller_id"]), cur, pending=-b["net_cost_total"],
                         available=seller_keeps, total=-(b["net_cost_total"] - seller_keeps))
-    await adjust_wallet(user["_id"], available=refund, total=refund)
+    await adjust_wallet(user["_id"], cur, available=refund, total=refund)
     await db.packages.update_one({"_id": oid(b["package_id"])}, {"$inc": {"available_seats": b["seats"]}})
     await db.bookings.update_one({"_id": b["_id"]}, {"$set": {"status": "cancelled",
                                  "cancellation": {"type": "yellow_settled", "deduction": deduction,
                                                   "seller_keeps": seller_keeps, "platform_cut": platform_cut,
                                                   "refund": refund}}})
-    await log_txn(user["_id"], "cancel_refund", refund, f"استرداد إلغاء (أصفر): {b['package_title']}", booking_id)
-    await log_txn(b["seller_id"], "cancel_deduction", seller_keeps, f"خصم إلغاء: {b['package_title']}", booking_id)
+    await log_txn(user["_id"], "cancel_refund", refund, f"استرداد إلغاء (أصفر): {b['package_title']}", booking_id, currency=cur)
+    await log_txn(b["seller_id"], "cancel_deduction", seller_keeps, f"خصم إلغاء: {b['package_title']}", booking_id, currency=cur)
     if b.get("platform_fee"):
-        await log_platform_revenue(-b["platform_fee"], f"عكس عمولة منصة (إلغاء أصفر): {b['package_title']}", booking_id)
+        await log_platform_revenue(-b["platform_fee"], f"عكس عمولة منصة (إلغاء أصفر): {b['package_title']}", booking_id, currency=cur)
     if platform_cut:
-        await log_platform_revenue(platform_cut, f"رسوم تشغيلية إلغاء: {b['package_title']}", booking_id)
+        await log_platform_revenue(platform_cut, f"رسوم تشغيلية إلغاء: {b['package_title']}", booking_id, currency=cur)
     if b.get("rahal_ref"):
         await notify_rahal("meraaj.booking.cancelled", {
             "package_ref": b["rahal_ref"], "meraaj_booking_id": booking_id, "seats_released": b["seats"]})

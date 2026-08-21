@@ -43,7 +43,7 @@ export default function AdminFinance() {
             {topups.map((t) => (
               <tr key={t.id} className="border-b last:border-0" data-testid={`topup-row-${t.id}`}>
                 <td className="px-6 py-3 font-medium">{t.office_name}</td>
-                <td className="px-6 py-3 tabular font-semibold text-[#0A2540]">{money(t.amount)}</td>
+                <td className="px-6 py-3 tabular font-semibold text-[#0A2540]">{money(t.amount, t.currency)}</td>
                 <td className="px-6 py-3">{t.method}</td>
                 <td className="px-6 py-3">{t.receipt_url ? <button onClick={() => setPreview(t.receipt_url)} className="text-[#0A2540] flex items-center gap-1 text-xs hover:underline" data-testid={`view-receipt-${t.id}`}><ExternalLink className="w-3.5 h-3.5" /> عرض</button> : "-"}</td>
                 <td className="px-6 py-3 text-xs text-muted-foreground">{fmtDate(t.created_at)}</td>
@@ -58,7 +58,7 @@ export default function AdminFinance() {
               <tr key={t.id} className="border-b last:border-0" data-testid={`transfer-row-${t.id}`}>
                 <td className="px-6 py-3 font-medium">{t.from_office_name}</td>
                 <td className="px-6 py-3">{t.to_office_name}</td>
-                <td className="px-6 py-3 tabular font-semibold text-[#0A2540]">{money(t.amount)}</td>
+                <td className="px-6 py-3 tabular font-semibold text-[#0A2540]">{money(t.amount, t.currency)}</td>
                 <td className="px-6 py-3 text-xs text-muted-foreground">{fmtDate(t.created_at)}</td>
                 <td className="px-6 py-3"><Actions onOk={() => review("transfers", t.id, true)} onNo={() => review("transfers", t.id, false)} /></td>
               </tr>
@@ -70,7 +70,7 @@ export default function AdminFinance() {
             {withdrawals.map((t) => (
               <tr key={t.id} className="border-b last:border-0" data-testid={`withdraw-row-${t.id}`}>
                 <td className="px-6 py-3 font-medium">{t.office_name}</td>
-                <td className="px-6 py-3 tabular font-semibold text-[#0A2540]">{money(t.amount)}</td>
+                <td className="px-6 py-3 tabular font-semibold text-[#0A2540]">{money(t.amount, t.currency)}</td>
                 <td className="px-6 py-3">{t.method}</td>
                 <td className="px-6 py-3 text-xs max-w-[180px] truncate">{t.details}</td>
                 <td className="px-6 py-3 text-xs text-muted-foreground">{fmtDate(t.created_at)}</td>

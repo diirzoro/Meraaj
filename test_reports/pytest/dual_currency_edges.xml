@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="5" skipped="0" tests="7" time="8.178" timestamp="2026-08-21T17:46:31.803164+00:00" hostname="agent-env-c2e7ffa1-fee7-4e56-adb8-1ff4334b3ae6"><testcase classname="tests.test_dual_currency_edges.TestCurrencyValidation" name="test_topup_unknown_currency" time="1.537"><failure message="AssertionError: unknown currency accepted (coerced to USD) — expected validation error&#10;assert 200 in (400, 422)&#10; +  where 200 = &lt;Response [200]&gt;.status_code">tests/test_dual_currency_edges.py:24: in test_topup_unknown_currency
+    assert r.status_code in (400, 422), (
+E   AssertionError: unknown currency accepted (coerced to USD) — expected validation error
+E   assert 200 in (400, 422)
+E    +  where 200 = &lt;Response [200]&gt;.status_code</failure></testcase><testcase classname="tests.test_dual_currency_edges.TestCurrencyValidation" name="test_transfer_unknown_currency" time="1.215"><failure message="AssertionError: unknown currency accepted on transfer (coerced to USD)&#10;assert 200 in (400, 422)&#10; +  where 200 = &lt;Response [200]&gt;.status_code">tests/test_dual_currency_edges.py:34: in test_transfer_unknown_currency
+    assert r.status_code in (400, 422), (
+E   AssertionError: unknown currency accepted on transfer (coerced to USD)
+E   assert 200 in (400, 422)
+E    +  where 200 = &lt;Response [200]&gt;.status_code</failure></testcase><testcase classname="tests.test_dual_currency_edges.TestCurrencyValidation" name="test_package_unknown_currency" time="0.178"><failure message="AssertionError: package created with unsupported currency EUR — bookings will silently treat it as USD&#10;assert 200 in (400, 422)&#10; +  where 200 = &lt;Response [200]&gt;.status_code">tests/test_dual_currency_edges.py:43: in test_package_unknown_currency
+    assert r.status_code in (400, 422), (
+E   AssertionError: package created with unsupported currency EUR — bookings will silently treat it as USD
+E   assert 200 in (400, 422)
+E    +  where 200 = &lt;Response [200]&gt;.status_code</failure></testcase><testcase classname="tests.test_dual_currency_edges.TestYellowDeductionValidation" name="test_deduction_greater_than_net_creates_money" time="1.641"><failure message="AssertionError: seller credited 4500.0 SAR from an escrow of only 1000.0 — money created&#10;assert 4500.0 &lt;= (1000.0 + 0.01)">tests/test_dual_currency_edges.py:68: in test_deduction_greater_than_net_creates_money
+    assert gained &lt;= b["net_cost_total"] + 0.01, (
+E   AssertionError: seller credited 4500.0 SAR from an escrow of only 1000.0 — money created
+E   assert 4500.0 &lt;= (1000.0 + 0.01)</failure></testcase><testcase classname="tests.test_dual_currency_edges.TestYellowDeductionValidation" name="test_negative_deduction_rejected" time="1.256"><failure message="AssertionError: buyer ended with 7000.0 SAR after paying and cancelling — negative deduction created money&#10;assert 7000.0 &lt;= 6000.01&#10; +  where 7000.0 = av({'SAR': {'available': 7000.0, 'pending': 0.0, 'total': 7000.0}, 'USD': {'available': 0.0, 'pending': 0.0, 'total': 0.0}}, 'SAR')">tests/test_dual_currency_edges.py:88: in test_negative_deduction_rejected
+    assert av(bw, "SAR") &lt;= 6000.01, (
+E   AssertionError: buyer ended with 7000.0 SAR after paying and cancelling — negative deduction created money
+E   assert 7000.0 &lt;= 6000.01
+E    +  where 7000.0 = av({'SAR': {'available': 7000.0, 'pending': 0.0, 'total': 7000.0}, 'USD': {'available': 0.0, 'pending': 0.0, 'total': 0.0}}, 'SAR')</failure></testcase><testcase classname="tests.test_dual_currency_edges.TestCrossCurrencyCancelConversion" name="test_book_then_cancel_converts_currency" time="1.027" /><testcase classname="tests.test_dual_currency_edges.TestDoubleCancelGuards" name="test_second_cancel_request_rejected" time="1.263" /></testsuite></testsuites>

@@ -28,12 +28,25 @@ B2B marketplace ("Meraaj Network" by Target Media) connecting travel/Umrah offic
 - Admin dashboard: system liquidity, platform revenue, offices/individuals/marketers counts, pending approvals, disputes; finance center; offices management (activate/suspend); disputes.
 - Rahal integration layer: /api/integrations/rahal/status, /packages/share (X-Rahal-Api-Key), /webhooks (HMAC-SHA256). Doc at /app/memory/RAHAL_INTEGRATION_REQUIREMENTS.md.
 
+## Wallet Engine — TRUE Dual-Currency (updated June 2026)
+- Wallet shape: `{ SAR:{available,pending,total}, USD:{available,pending,total} }` (was single-USD). Migration script `backend/migrate_dual_wallet.py` moved legacy balances into the USD bucket (run once; idempotent).
+- Top-ups keep their own currency (no conversion). Bookings are denominated in the PROGRAM's currency; escrow/settlement/refunds/marketer-commissions/platform-revenue all stay in that currency (NO merge to USD).
+- Buyer debit: program-currency balance first, then covers any shortfall from the other currency at FIXED rate SAR_PER_USD=3.77 (the ONLY conversion point). Stored per-booking as `debit_split`. Insufficient total funds → 400.
+- P2P transfers & withdrawals carry a `currency`; admin approval moves funds in that currency, checking sender balance in that currency.
+- Platform revenue SPLIT per currency; admin dashboard `GET /api/admin/dashboard` returns `liquidity{SAR,USD}` + `platform_revenue{SAR,USD}`.
+- Strict currency validation via `CurrencyField` (db.py) on Topup/Transfer/Withdrawal/Package inputs (Literal SAR/USD, case-normalized, rejects others → 422).
+- Yellow-cancel `deduction` now bounded `0 <= deduction <= net_cost_total` (fixed 2 critical money-creation leaks).
+
+## Verified (iteration 6 — dual-currency)
+- 22/22 new dual-currency pytest pass (core contract 15 + edges 7 incl. the 2 critical fixes + 3 validation gaps). Rahal suites 27/27 pass (no regression). Frontend: Wallet/Dashboard/Admin pages show per-currency balances; compiles clean.
+- NOTE (by design, per user): blue-cancel refund is paid in the PROGRAM currency (not per debit_split); value conserved at 3.77.
+
 ## Verified (iteration 4)
 - 80/80 pytest pass; all money-safety fixes confirmed (marketer escrow no-overdraft, ledger reconciliation, no self-referral, cancellation fees recorded, individual P2P, B2B platform fee logged). Frontend flows all pass.
 
 ## Backlog (P1/P2)
-- P1: Real Rahal SSO + embedded signed-iframe (awaiting Rahal APIs). Atomic booking debit (transactions/optimistic locking) to prevent oversell/overdraw under concurrency.
-- P2: Object storage for receipt/visa uploads (currently URL fields). Email/notifications. Phone OTP. Debounced market search. Split market.py into packages/bookings modules. Clean stale negative-wallet test accounts.
+- P1: Real Rahal SSO + embedded signed-iframe (awaiting Rahal APIs). Atomic booking debit (transactions/optimistic locking) to prevent oversell/overdraw under concurrency. Capacitor mobile shell (Android first) + FCM/APNs push + OTA updates.
+- P2: Object storage for receipt/visa uploads (currently URL/base64 fields). Email/notifications. Phone OTP. Debounced market search. Split market.py. Rewrite/delete obsolete single-USD pytest suites. Clean stale TEST_* accounts.
 
 ## Test Credentials
 See /app/memory/test_credentials.md — Admin abuzay84@gmail.com / Meraaj@2026; seller@test.com & buyer@test.com / Test@1234; individual+marketer user1@qa-example.com / Test@1234.

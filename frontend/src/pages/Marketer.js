@@ -65,7 +65,10 @@ export default function Marketer() {
                 <span className="text-sm text-white/70">إجمالي عمولات التسويق</span>
                 <div className="w-9 h-9 rounded-lg bg-[#D4AF37] flex items-center justify-center"><TrendingUp className="w-4 h-4 text-[#0A2540]" /></div>
               </div>
-              <div className="tabular text-3xl font-bold text-[#D4AF37]">{money(data.total_earned)}</div>
+              <div className="flex items-baseline gap-4">
+                <div className="tabular text-3xl font-bold text-[#D4AF37]">{money(data.total_earned?.SAR || 0, "SAR")}</div>
+                <div className="tabular text-xl font-bold text-white/80">{money(data.total_earned?.USD || 0, "USD")}</div>
+              </div>
             </div>
             <div className="rounded-2xl border p-6 card-shadow bg-white flex flex-col justify-center">
               <span className="text-sm text-muted-foreground mb-2 flex items-center gap-2"><Wallet className="w-4 h-4" /> رمز الإحالة</span>
@@ -94,7 +97,7 @@ export default function Marketer() {
                   {data.transactions.map((t) => (
                     <tr key={t.id} className="border-b last:border-0">
                       <td className="px-6 py-3">{t.description}</td>
-                      <td className="px-6 py-3 tabular font-semibold text-[#15803D] text-left">{money(t.amount)}</td>
+                      <td className="px-6 py-3 tabular font-semibold text-[#15803D] text-left">{money(t.amount, t.currency)}</td>
                     </tr>
                   ))}
                 </tbody>

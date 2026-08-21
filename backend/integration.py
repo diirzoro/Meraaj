@@ -16,6 +16,10 @@ from fastapi import APIRouter, HTTPException, Request, Header, Depends
 from db import db, serialize, oid, now_iso
 from security import create_access_token, require_admin
 
+def _empty_wallet():
+    from db import empty_wallet
+    return empty_wallet()
+
 router = APIRouter(prefix="/api/integrations/rahal", tags=["rahal-integration"])
 # Simulated Rahal receiver (soft-launch on the same environment). In production this
 # lives inside Rahal at POST /api/meraaj/webhooks and verifies X-Meraaj-Signature.
@@ -153,7 +157,7 @@ async def share_package(request: Request, x_rahal_api_key: str = Header(default=
             "owner_name": body.get("owner_name") or "",
             "phone": "", "governorate": "", "address": "", "commercial_license": "",
             "status": "active", "source": "rahal", "rahal_office_ref": office_ref,
-            "wallet": {"total": 0.0, "pending": 0.0, "available": 0.0},
+            "wallet": _empty_wallet(),
             "created_at": now_iso(),
         }
         try:
@@ -284,7 +288,7 @@ async def rahal_sso(payload: SSOInput):
             "status": "active",
             "source": "rahal",
             "rahal_office_ref": office_ref,
-            "wallet": {"total": 0.0, "pending": 0.0, "available": 0.0},
+            "wallet": _empty_wallet(),
             "created_at": now_iso(),
         }
         res = await db.users.insert_one(doc)

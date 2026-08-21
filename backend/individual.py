@@ -39,11 +39,15 @@ async def affiliate(user: dict = Depends(require_individual)):
     txns = await db.transactions.find(
         {"office_id": str(user["_id"]), "type": "marketer_commission"}
     ).sort("created_at", -1).to_list(200)
-    total_earned = round(sum(t["amount"] for t in txns), 2)
+    earned = {"SAR": 0.0, "USD": 0.0}
+    for t in txns:
+        c = t.get("currency", "USD")
+        c = "SAR" if c == "SAR" else "USD"
+        earned[c] = round(earned[c] + t.get("amount", 0.0), 2)
     return {
         "is_marketer": bool(fresh.get("is_marketer")),
         "affiliate_code": code,
         "link": link,
-        "total_earned": total_earned,
+        "total_earned": earned,
         "transactions": serialize(txns),
     }

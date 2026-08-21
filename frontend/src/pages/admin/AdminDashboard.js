@@ -12,13 +12,11 @@ export default function AdminDashboard() {
 
   return (
     <>
-      <PageHeader title="لوحة المؤشرات المركزية" subtitle="Target Media — مراقبة السيولة والعمليات" />
+      <PageHeader title="لوحة المؤشرات المركزية" subtitle="Target Media — مراقبة السيولة والعمليات بعملتين منفصلتين" />
 
-      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5 mb-6">
-        <Big title="إجمالي السيولة في النظام" value={money(d.total_system_balance)} icon={Wallet} gold />
-        <Big title="أرباح المنصة (Target Media)" value={money(d.platform_revenue)} icon={TrendingUp} />
-        <Big title="إجمالي المتاح" value={money(d.total_available)} icon={ArrowUpCircle} />
-        <Big title="إجمالي المعلّق (ضمان)" value={money(d.total_pending)} icon={Clock} />
+      <div className="grid md:grid-cols-2 gap-5 mb-6">
+        <LiquidityCard ccy="SAR" title="سيولة الريال السعودي" liq={d.liquidity?.SAR} revenue={d.platform_revenue?.SAR} gold />
+        <LiquidityCard ccy="USD" title="سيولة الدولار الأمريكي" liq={d.liquidity?.USD} revenue={d.platform_revenue?.USD} />
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-5 mb-8">
@@ -40,13 +38,29 @@ export default function AdminDashboard() {
   );
 }
 
-const Big = ({ title, value, icon: Icon, gold }) => (
-  <div className={`rounded-2xl border p-6 card-shadow ${gold ? "bg-[#0A2540] text-white border-[#0A2540]" : "bg-white"}`} data-testid={`admin-stat-${title}`}>
-    <div className="flex items-center justify-between mb-4">
-      <span className={`text-sm ${gold ? "text-white/70" : "text-muted-foreground"}`}>{title}</span>
-      <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${gold ? "bg-[#D4AF37]" : "bg-[#F4F6F8]"}`}><Icon className="w-4 h-4 text-[#0A2540]" /></div>
+const LiquidityCard = ({ ccy, title, liq, revenue, gold }) => {
+  const l = liq || { available: 0, pending: 0, total: 0 };
+  return (
+    <div data-testid={`admin-liquidity-${ccy}`} className={`rounded-2xl border p-6 card-shadow ${gold ? "bg-[#0A2540] text-white border-[#0A2540]" : "bg-white"}`}>
+      <div className="flex items-center justify-between mb-5">
+        <span className={`text-sm font-semibold ${gold ? "text-white/80" : "text-muted-foreground"}`}>{title}</span>
+        <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${gold ? "bg-[#D4AF37]" : "bg-[#F4F6F8]"}`}><Wallet className="w-4 h-4 text-[#0A2540]" /></div>
+      </div>
+      <div className={`text-xs mb-1 ${gold ? "text-white/60" : "text-muted-foreground"}`}>إجمالي السيولة</div>
+      <div className={`tabular text-3xl font-bold mb-4 ${gold ? "text-[#D4AF37]" : "text-[#0A2540]"}`}>{money(l.total, ccy)}</div>
+      <div className={`grid grid-cols-3 gap-3 text-center pt-3 border-t ${gold ? "border-white/10" : ""}`}>
+        <Stat label="المتاح" value={money(l.available, ccy)} gold={gold} />
+        <Stat label="المعلّق" value={money(l.pending, ccy)} gold={gold} />
+        <Stat label="أرباح المنصة" value={money(revenue || 0, ccy)} gold={gold} accent />
+      </div>
     </div>
-    <div className={`tabular text-2xl sm:text-3xl font-bold whitespace-nowrap ${gold ? "text-[#D4AF37]" : "text-[#0A2540]"}`}>{value}</div>
+  );
+};
+
+const Stat = ({ label, value, gold, accent }) => (
+  <div>
+    <div className={`text-[11px] mb-1 ${gold ? "text-white/60" : "text-muted-foreground"}`}>{label}</div>
+    <div className={`tabular text-sm font-bold ${accent ? (gold ? "text-[#D4AF37]" : "text-[#15803D]") : (gold ? "text-white" : "text-[#0A2540]")}`}>{value}</div>
   </div>
 );
 
