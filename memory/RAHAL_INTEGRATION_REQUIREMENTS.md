@@ -284,3 +284,19 @@ https://umrah-exchange.preview.emergentagent.com/embed/market?token=<SIGNED_JWT>
 ---
 
 **الخلاصة للبدء:** فريق رحال يبدأ فوراً بتجهيز (SSO API #1/#2، Package API #3/#4، وإرسال Webhooks W1–W5). وفريق معراج يجهّز (Endpoints المشاركة #1/#2، نقطة استقبال الـ Webhooks، Signed Iframe URL، وإرسال Webhooks M1–M3).
+
+
+---
+
+## ملحق (يونيو 2026) — تحديث عقد استقبال البرامج والمزامنة (Receiver v1.1)
+
+**نقطة استقبال البرامج:** `POST /api/integrations/rahal/packages/share`
+- المصادقة: توقيع **HMAC-SHA256** في الترويسة `X-Rahal-Signature` (أو `X-Meraaj-Signature`) محسوباً بمفتاح **`MERAAJ_SHARED_SECRET`**. (لا يزال مفتاح `X-Rahal-Api-Key` القديم مقبولاً للتوافق الخلفي.)
+- الحقول المستقبَلة: `package_ref` (إلزامي)، `office_ref`، `title`، `description`، `departure_date`، `return_date`، `departure_city`، `transport`، `hotels[]`، **`images[]` (روابط URL)**، **`features[]` (مصفوفة مميزات نصية)**، و`pricing{net_cost_per_seat, final_sale_price, buyer_office_commission, currency}`.
+- التخزين: يُحفظ في مجموعة السوق `packages` (ليظهر مباشرة) وأيضاً في مجموعة مصدر مخصّصة **`rahal_packages`** (نسخة طبق الأصل من الحمولة الأصلية مربوطة بـ `rahal_ref`).
+- الرد: `{ "remote_id": "<meraaj_package_id>", "meraaj_package_id": "...", "status": "listed", "market_url": "..." }`.
+
+**نقطة استقبال التنبيهات:** `POST /api/integrations/rahal/webhooks`
+- المصادقة: HMAC-SHA256 بمفتاح `MERAAJ_SHARED_SECRET` (مع قبول `RAHAL_SHARED_SECRET` للتوافق) في `X-Rahal-Signature`.
+- الأحداث المدعومة: `package.deactivated`, `package.deleted`, `package.removed`, `package.disabled` → إخفاء البرنامج من السوق (status=`unlisted`) وتحديث نسخة `rahal_packages`؛ `package.activated` → إعادة العرض؛ `package.updated` → تحديث الحقول (بما فيها images/features) مع تطبيع الحالة؛ `inventory.updated` → تحديث `available_seats`.
+- الرد: `{ received, event, handled, matched_count }` — `matched_count=0` إذا لم يطابق الحدث أي برنامج.

@@ -26,7 +26,12 @@ B2B marketplace ("Meraaj Network" by Target Media) connecting travel/Umrah offic
 - P2P transfers (office or individual recipient, admin-approved), withdrawals (admin-approved), top-ups via receipt upload (admin-approved).
 - Disputes: buyer opens within 24h of dispatch; admin resolves (refund_buyer/release_seller), idempotent.
 - Admin dashboard: system liquidity, platform revenue, offices/individuals/marketers counts, pending approvals, disputes; finance center; offices management (activate/suspend); disputes.
-- Rahal integration layer: /api/integrations/rahal/status, /packages/share (X-Rahal-Api-Key), /webhooks (HMAC-SHA256). Doc at /app/memory/RAHAL_INTEGRATION_REQUIREMENTS.md.
+- Rahal integration layer: /api/integrations/rahal/status, /packages/share, /webhooks. Doc at /app/memory/RAHAL_INTEGRATION_REQUIREMENTS.md.
+
+## Rahal Receiver v1.1 (updated June 2026)
+- `POST /api/integrations/rahal/packages/share`: now verifies inbound requests via HMAC-SHA256 with `MERAAJ_SHARED_SECRET` (header `X-Rahal-Signature`/`X-Meraaj-Signature`); legacy `X-Rahal-Api-Key` still accepted. Stores `images[]` + `features[]`, mirrors the raw payload into a dedicated `rahal_packages` collection, and returns `remote_id`.
+- `POST /api/integrations/rahal/webhooks`: accepts HMAC via `MERAAJ_SHARED_SECRET` OR `RAHAL_SHARED_SECRET`. `package.deactivated/deleted/removed/disabled` → unlist (soft, preserves booking history) + syncs `rahal_packages` mirror; `package.activated` → relist; `package.updated` passes through images/features. NOTE: "deletion" = unlist/hidden (no physical delete) to protect existing bookings.
+- Frontend `PackageDetail.js`: shows an image gallery (hero + up to 4 thumbnails) and a `features` checklist. `_view_package` passes features/images to all viewers while still hiding net cost from non-office.
 
 ## Wallet Engine — TRUE Dual-Currency (updated June 2026)
 - Wallet shape: `{ SAR:{available,pending,total}, USD:{available,pending,total} }` (was single-USD). Migration script `backend/migrate_dual_wallet.py` moved legacy balances into the USD bucket (run once; idempotent).

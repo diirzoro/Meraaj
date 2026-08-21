@@ -36,11 +36,16 @@ def _check_api_key(key: str):
 
 
 def _verify_hmac(raw_body: bytes, signature: str) -> bool:
+    """Verify an inbound HMAC-SHA256 signature from Rahal. Accepts MERAAJ_SHARED_SECRET
+    (the agreed inbound key) and falls back to RAHAL_SHARED_SECRET for backward compat."""
     if not signature:
         return False
-    expected = hmac.new(_shared_secret().encode(), raw_body, hashlib.sha256).hexdigest()
     provided = signature.replace("sha256=", "")
-    return hmac.compare_digest(expected, provided)
+    for secret in (_meraaj_secret(), _shared_secret()):
+        expected = hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+        if hmac.compare_digest(expected, provided):
+            return True
+    return False
 
 
 # ---------- Outbound: Meraaj -> Rahal (reliable outbox + HMAC) ----------
@@ -141,9 +146,20 @@ async def simulated_rahal_inbox(admin: dict = Depends(require_admin)):
 
 
 @router.post("/packages/share")
-async def share_package(request: Request, x_rahal_api_key: str = Header(default="")):
-    _check_api_key(x_rahal_api_key)
-    body = await request.json()
+async def share_package(request: Request,
+                        x_rahal_api_key: str = Header(default=""),
+                        x_rahal_signature: str = Header(default=""),
+                        x_meraaj_signature: str = Header(default="")):
+    raw = await request.body()
+    sig = x_rahal_signature or x_meraaj_signature
+    # Authorize via HMAC (MERAAJ_SHARED_SECRET) OR the legacy shared API key
+    authorized = (x_rahal_api_key and x_rahal_api_key == _shared_secret()) or _verify_hmac(raw, sig)
+    if not authorized:
+        raise HTTPException(status_code=401, detail="Invalid Rahal credentials (API key or HMAC signature)")
+    try:
+        body = json.loads(raw)
+    except (ValueError, json.JSONDecodeError):
+        raise HTTPException(status_code=400, detail="Malformed JSON body")
     pricing = body.get("pricing", {})
     office_ref = body.get("office_ref")
     # Resolve (or auto-provision) the seller office linked to this Rahal office_ref
@@ -166,6 +182,8 @@ async def share_package(request: Request, x_rahal_api_key: str = Header(default=
             seller = seller_doc
         except Exception:
             seller = await db.users.find_one({"rahal_office_ref": office_ref})
+    images = body.get("images", []) or []
+    features = body.get("features", []) or []
     existing = await db.packages.find_one({"rahal_ref": body["package_ref"]})
     doc = {
         "type": body.get("type", "umrah"),
@@ -176,7 +194,8 @@ async def share_package(request: Request, x_rahal_api_key: str = Header(default=
         "departure_city": body.get("departure_city", ""),
         "transport": body.get("transport", ""),
         "hotels": body.get("hotels", []),
-        "images": body.get("images", []),
+        "images": images,
+        "features": features,
         "net_cost_per_seat": pricing.get("net_cost_per_seat", 0),
         "final_sale_price": pricing.get("final_sale_price", 0),
         "buyer_office_commission": pricing.get("buyer_office_commission", 0),
@@ -197,7 +216,22 @@ async def share_package(request: Request, x_rahal_api_key: str = Header(default=
         doc["created_at"] = now_iso()
         res = await db.packages.insert_one(doc)
         pkg_id = str(res.inserted_id)
-    return {"meraaj_package_id": pkg_id, "status": "listed",
+    # Source-of-truth mirror of the exact inbound payload (dedicated Rahal collection)
+    await db.rahal_packages.update_one(
+        {"rahal_ref": body["package_ref"]},
+        {"$set": {
+            "rahal_ref": body["package_ref"],
+            "office_ref": office_ref,
+            "payload": body,
+            "images": images,
+            "features": features,
+            "meraaj_package_id": pkg_id,
+            "status": "listed",
+            "updated_at": now_iso(),
+        }, "$setOnInsert": {"created_at": now_iso()}},
+        upsert=True,
+    )
+    return {"remote_id": pkg_id, "meraaj_package_id": pkg_id, "status": "listed",
             "market_url": f"{os.environ.get('FRONTEND_URL','')}/market/{pkg_id}"}
 
 
@@ -246,6 +280,12 @@ async def rahal_webhook(request: Request, x_rahal_signature: str = Header(defaul
         recognized = False
     # handled = event recognized AND (non-ref event OR a package was actually matched)
     handled = recognized and (matched_count > 0 if ref else True)
+    # Keep the dedicated Rahal mirror collection in sync for deactivate/delete/activate
+    if ref and etype in ("package.deactivated", "package.deleted", "package.removed",
+                         "package.disabled", "package.activated"):
+        mirror_status = "listed" if etype == "package.activated" else "unlisted"
+        await db.rahal_packages.update_one({"rahal_ref": ref},
+                                           {"$set": {"status": mirror_status, "updated_at": now_iso()}})
     await db.rahal_inbound_log.update_one(
         {"_id": log_res.inserted_id},
         {"$set": {"handled": handled, "matched_count": matched_count}})
@@ -311,5 +351,8 @@ async def integration_status():
             "share": "/api/integrations/rahal/packages/share",
             "webhooks": "/api/integrations/rahal/webhooks",
         },
-        "auth": "X-Rahal-Api-Key + HMAC-SHA256 (X-Rahal-Signature)",
+        "receives": ["title", "description", "dates", "images[]", "features[]", "hotels[]", "pricing"],
+        "auth": "HMAC-SHA256 via MERAAJ_SHARED_SECRET (X-Rahal-Signature / X-Meraaj-Signature); legacy X-Rahal-Api-Key also accepted",
+        "webhook_events": ["package.deactivated", "package.deleted", "package.removed",
+                           "package.disabled", "package.activated", "package.updated", "inventory.updated"],
     }

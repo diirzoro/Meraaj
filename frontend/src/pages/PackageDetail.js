@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
-import { MapPin, Users, CalendarDays, Building2, Plane, Hotel, Plus, Trash2, ShoppingCart, Landmark } from "lucide-react";
+import { MapPin, Users, CalendarDays, Building2, Plane, Hotel, Plus, Trash2, ShoppingCart, Landmark, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function PackageDetail() {
@@ -61,9 +61,18 @@ export default function PackageDetail() {
         <div className="lg:col-span-2 space-y-6">
           <div className="rounded-2xl overflow-hidden border card-shadow h-72 bg-[#0A2540] flex items-center justify-center">
             {pkg.images?.[0]
-              ? <img src={pkg.images[0]} alt={pkg.title} className="w-full h-full object-cover" />
+              ? <img src={pkg.images[0]} alt={pkg.title} className="w-full h-full object-cover" data-testid="pkg-hero-image" />
               : <Landmark className="w-16 h-16 text-white/15" />}
           </div>
+          {pkg.images?.length > 1 && (
+            <div className="grid grid-cols-4 gap-3" data-testid="pkg-gallery">
+              {pkg.images.slice(1, 5).map((src, i) => (
+                <div key={i} className="rounded-xl overflow-hidden border h-20 bg-[#F4F6F8]">
+                  <img src={src} alt={`${pkg.title} ${i + 2}`} className="w-full h-full object-cover" />
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className="bg-white rounded-2xl border card-shadow p-6">
             <h3 className="font-head font-bold text-[#0A2540] mb-4">تفاصيل الرحلة</h3>
@@ -86,6 +95,19 @@ export default function PackageDetail() {
                   <div key={i} className="flex items-center justify-between text-sm border-b last:border-0 pb-3 last:pb-0">
                     <div><span className="font-semibold">{h.name}</span> <span className="text-muted-foreground">— {h.city}</span></div>
                     <span className="text-muted-foreground">{h.nights} ليالٍ</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {pkg.features?.length > 0 && (
+            <div className="bg-white rounded-2xl border card-shadow p-6" data-testid="pkg-features">
+              <h3 className="font-head font-bold text-[#0A2540] mb-4 flex items-center gap-2"><CheckCircle2 className="w-4 h-4" /> مميزات البرنامج</h3>
+              <div className="grid sm:grid-cols-2 gap-3">
+                {pkg.features.map((f, i) => (
+                  <div key={i} className="flex items-start gap-2 text-sm">
+                    <CheckCircle2 className="w-4 h-4 text-[#15803D] shrink-0 mt-0.5" />
+                    <span className="text-[#0A2540]">{f}</span>
                   </div>
                 ))}
               </div>
