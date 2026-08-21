@@ -1,0 +1,40 @@
+{
+  "summary": "Backend-only verification of the Rahal inbound webhook bug fix (deactivated/deleted packages must disappear from the Meraaj market). Created 24 new targeted tests in /app/backend/tests/test_rahal_inbound_sync.py — ALL PASS — plus 3 robustness probes in test_rahal_webhook_edges.py (2 minor defects found). Full existing suite re-run: 104/104 passed, no regressions. Verified against the public preview URL and confirmed each result directly in MongoDB (packages.status, rahal_inbound_log).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/integrations/rahal/webhooks", "issue": "Malformed JSON body with a VALID signature returns 500 Internal Server Error (json.loads called before try/except). Should be 400/422. Repro: POST raw b'{not-json' with correct HMAC."},
+      {"endpoint": "POST /api/integrations/rahal/webhooks", "issue": "Audit-log handled flag is unreliable on retries: the final `db.rahal_inbound_log.update_one({\"body\": event}, ...)` matches by body, so a duplicate delivery (identical body, e.g. Rahal retry) updates the FIRST log row and the newest row stays handled=false even though it was processed. Fix: capture the inserted_id from insert_one and update by _id."},
+      {"endpoint": "POST /api/integrations/rahal/webhooks", "issue": "Events for an unknown package_ref return handled=true even though matched_count==0 (nothing updated). Consider reporting matched_count / handled=false so missing-package sync gaps are visible in the log."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_rahal_inbound_sync.py",
+    "/app/backend/tests/test_rahal_webhook_edges.py",
+    "/app/test_reports/pytest/rahal_inbound.xml",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Wrap json.loads(raw) in the webhook handler and return HTTP 400 for malformed bodies instead of 500.",
+    "Update rahal_inbound_log by the inserted _id (not by body) so the handled flag is correct for duplicate/retried deliveries.",
+    "Optionally set handled=false (or log matched_count) when package_ref matches no package."
+  ],
+  "critical_code_review_comments": [
+    "Verified fix is correct: package.deactivated/deleted/removed/disabled -> status 'unlisted', package.activated -> 'listed', and package.updated normalizes active/status into listed/unlisted while stripping foreign 'status'/'active' from the $set — no foreign status can leak into packages.status.",
+    "Signature enforcement is solid: missing, invalid, and tampered-body signatures all return 401 and leave the package untouched (hmac.compare_digest over exact raw bytes).",
+    "share_package auto-provisions the seller office and upserts by rahal_ref; note it $sets status back to 'listed' on every re-share, so a Rahal re-push of a previously deleted package will silently re-list it — confirm this is intended business behaviour.",
+    "integration.py is 300 lines and readable; no _id leakage observed (serialize used)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_rahal_inbound_sync.py",
+    "/app/backend/tests/test_rahal_webhook_edges.py"
+  ],
+  "success_rate": {"backend": "97% (104/104 functional suite passed; 2/3 extra robustness probes failed as minor defects)", "frontend": "not tested (backend-only request)"},
+  "seed_data_creation": "Ephemeral rahal packages with refs prefixed TEST-QA-* under office_ref RHL-OFF-QA-TEST; every package and its rahal_inbound_log rows are deleted in fixture teardown. No seeded/production data touched.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "abuzay84@gmail.com / Meraaj@2026 (admin, unused for these tests); RAHAL_SHARED_SECRET from /app/backend/.env",
+  "context_for_next_testing_agent": "New suite /app/backend/tests/test_rahal_inbound_sync.py covers the full inbound sync matrix (4 disable events, activate, 9 status-normalization cases, field-only update, foreign status, inventory, 3 signature-rejection cases, unknown event/ref, e2e share->market->delete, share api-key). Run serially with `-n 0` when debugging (pytest.ini forces -n 2 --dist loadscope; `-p no:xdist` errors). DB assertions use pymongo with MONGO_URL/DB_NAME from backend/.env. test_rahal_webhook_edges.py intentionally documents 2 open minor defects (500 on malformed JSON, handled-flag on duplicate bodies) and will keep failing until fixed.",
+  "rca_of_the_issue": "Original bug: the webhook had no branch for package.deleted/removed/disabled, and package.updated copied Rahal's foreign 'status' verbatim into packages.status, so market.py's {status:'listed'} filter kept showing deleted packages. Current code adds the missing event branches, normalizes active/status into listed/unlisted, and excludes status/active from the raw $set. Verified end-to-end: shared package appears in GET /api/packages, and after a signed package.deleted webhook its DB status is 'unlisted' and it is absent from GET /api/packages."
+}

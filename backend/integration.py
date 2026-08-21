@@ -202,19 +202,50 @@ async def rahal_webhook(request: Request, x_rahal_signature: str = Header(defaul
     raw = await request.body()
     if not _verify_hmac(raw, x_rahal_signature):
         raise HTTPException(status_code=401, detail="Invalid signature")
-    event = json.loads(raw)
+    try:
+        event = json.loads(raw)
+    except (ValueError, json.JSONDecodeError):
+        raise HTTPException(status_code=400, detail="Malformed JSON body")
     etype = event.get("event")
     ref = event.get("package_ref")
+    # Always log what arrives so inbound sync is fully diagnosable
+    log_res = await db.rahal_inbound_log.insert_one({
+        "event": etype, "package_ref": ref, "body": event,
+        "handled": False, "matched_count": 0, "received_at": now_iso(),
+    })
+    recognized = True
+    matched_count = 0
     if etype == "inventory.updated" and ref:
-        await db.packages.update_one({"rahal_ref": ref},
-                                     {"$set": {"available_seats": event.get("available_seats", 0)}})
-    elif etype == "package.deactivated" and ref:
-        await db.packages.update_one({"rahal_ref": ref}, {"$set": {"status": "unlisted"}})
+        r = await db.packages.update_one({"rahal_ref": ref},
+                                         {"$set": {"available_seats": event.get("available_seats", 0)}})
+        matched_count = r.matched_count
+    elif etype in ("package.deactivated", "package.deleted", "package.removed", "package.disabled") and ref:
+        # Hide from the Meraaj market on deactivation OR deletion
+        r = await db.packages.update_one({"rahal_ref": ref}, {"$set": {"status": "unlisted"}})
+        matched_count = r.matched_count
+    elif etype == "package.activated" and ref:
+        r = await db.packages.update_one({"rahal_ref": ref}, {"$set": {"status": "listed"}})
+        matched_count = r.matched_count
     elif etype == "package.updated" and ref:
-        updates = {k: v for k, v in event.items() if k not in ("event", "event_id", "package_ref", "occurred_at")}
+        updates = {k: v for k, v in event.items()
+                   if k not in ("event", "event_id", "package_ref", "occurred_at", "status", "active")}
+        # Normalize any status/active flag coming from Rahal to our listed/unlisted
+        raw_status = str(event.get("status", "")).lower()
+        if event.get("active") is False or raw_status in ("inactive", "deleted", "disabled", "cancelled", "removed"):
+            updates["status"] = "unlisted"
+        elif event.get("active") is True or raw_status in ("active", "listed"):
+            updates["status"] = "listed"
         if updates:
-            await db.packages.update_one({"rahal_ref": ref}, {"$set": updates})
-    return {"received": True, "event": etype}
+            r = await db.packages.update_one({"rahal_ref": ref}, {"$set": updates})
+            matched_count = r.matched_count
+    else:
+        recognized = False
+    # handled = event recognized AND (non-ref event OR a package was actually matched)
+    handled = recognized and (matched_count > 0 if ref else True)
+    await db.rahal_inbound_log.update_one(
+        {"_id": log_res.inserted_id},
+        {"$set": {"handled": handled, "matched_count": matched_count}})
+    return {"received": True, "event": etype, "handled": handled, "matched_count": matched_count}
 
 
 class SSOInput(BaseModel):
