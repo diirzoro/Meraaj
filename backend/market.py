@@ -58,6 +58,28 @@ async def create_package(payload: PackageInput, user: dict = Depends(require_off
     })
     res = await db.packages.insert_one(doc)
     doc["_id"] = res.inserted_id
+    pkg_id = str(res.inserted_id)
+    # Sync the newly published program to the Meraaj Network (reliable outbox → Rahal)
+    await notify_rahal("package.published", {
+        "package_ref": pkg_id,
+        "source_office_ref": user.get("rahal_office_ref"),
+        "office_name": user["office_name"],
+        "title": doc["title"],
+        "type": doc.get("type"),
+        "departure_date": doc.get("departure_date"),
+        "return_date": doc.get("return_date"),
+        "images": doc.get("images", []),
+        "features": doc.get("features", []),
+        "hotels": doc.get("hotels", []),
+        "available_seats": doc.get("available_seats", 0),
+        "pricing": {
+            "net_cost_per_seat": doc.get("net_cost_per_seat", 0),
+            "final_sale_price": doc.get("final_sale_price", 0),
+            "buyer_office_commission": doc.get("buyer_office_commission", 0),
+            "currency": doc.get("currency", "USD"),
+        },
+        "status": "listed",
+    })
     return serialize(doc)
 
 
@@ -93,6 +115,11 @@ async def toggle_package(pkg_id: str, user: dict = Depends(require_office)):
         raise HTTPException(404, "البرنامج غير موجود")
     new_status = "unlisted" if pkg["status"] == "listed" else "listed"
     await db.packages.update_one({"_id": oid(pkg_id)}, {"$set": {"status": new_status}})
+    # Keep the Meraaj Network in sync when an office lists/unlists a manual program
+    if pkg.get("source") != "rahal":
+        await notify_rahal(
+            "package.activated" if new_status == "listed" else "package.deactivated",
+            {"package_ref": pkg_id, "status": new_status})
     return {"status": new_status}
 
 

@@ -49,6 +49,11 @@ B2B marketplace ("Meraaj Network" by Target Media) connecting travel/Umrah offic
 ## Verified (iteration 4)
 - 80/80 pytest pass; all money-safety fixes confirmed (marketer escrow no-overdraft, ledger reconciliation, no self-referral, cancellation fees recorded, individual P2P, B2B platform fee logged). Frontend flows all pass.
 
+## Meraaj Network outbound sync (June 2026)
+- `create_package` now enqueues `package.published` to the reliable outbox (`notify_rahal`) so publishing a program from the app/web auto-syncs to the Meraaj Network/Rahal (includes title, dates, images[], features[], hotels[], pricing, seats).
+- `toggle_package` on manual programs enqueues `package.activated`/`package.deactivated`. Rahal-sourced programs are not echoed back. Delivery requires `RAHAL_WEBHOOK_URL`; otherwise events queue for admin retry.
+- Verified via curl (publish → pending outbox entry; toggle → deactivate entry). Rahal suites 27/27 still pass.
+
 ## Android App — Phase 1 (Capacitor native shell) — DONE June 2026
 - Capacitor **v7** stack (Node-20 compatible; v8 CLI needs Node ≥22). Packages: @capacitor/core,app,status-bar,splash-screen,keyboard + dev cli,android,assets. Config `frontend/capacitor.config.json` (appId `network.meraaj.app`, appName «معراج نتورك», webDir `build`).
 - Native code under `frontend/src/native/` (all guarded by `Capacitor.isNativePlatform()` → zero effect on web): `useAndroidBackButton.js` (router-aware back, double-back-to-exit on root routes), `useNativeChrome.js` (status bar navy #0A2540 + light icons, splash hide, sets `cap-native` body class), `NativeBridge.jsx` (mounted once inside BrowserRouter).

@@ -39,6 +39,11 @@ cd frontend/android
 - **الأيقونة وشاشة البداية:** مولّدة من `assets/icon-only.png` و`assets/splash.png` (بالهوية الكحلي/الذهبي). لإعادة التوليد: `npx capacitor-assets generate --android`.
 - كل الكود الأصلي محميّ بـ `Capacitor.isNativePlatform()` فلا يؤثّر إطلاقاً على نسخة الويب.
 
+## المزامنة مع شبكة معراج (Meraaj Network)
+- عند **نشر برنامج** من داخل التطبيق/الموقع، يُرسَل تلقائياً حدث `package.published` عبر نظام الـ Outbox الموثوق إلى شبكة معراج/رحال (لا يُفقد أبداً؛ يُعاد الإرسال عند الفشل).
+- عند **إيقاف/إعادة عرض** برنامج يدوي، تُرسَل أحداث `package.deactivated` / `package.activated`.
+- يتطلب ضبط `RAHAL_WEBHOOK_URL` في backend/.env للتسليم الفوري؛ وإلا تبقى الأحداث في قائمة الانتظار وتُسلَّم عند إعادة المحاولة من لوحة الأدمن.
+
 ## ملاحظات
 - التطبيق يستدعي الـ backend عبر `REACT_APP_BACKEND_URL` (HTTPS). لا تضع أي أسرار في الواجهة.
 - المراحل القادمة: إشعارات Firebase FCM (تحتاج مشروع Firebase + `google-services.json`) وتحديثات OTA عبر Capgo (تحتاج حساب Capgo + مفتاح).
