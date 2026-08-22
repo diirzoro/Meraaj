@@ -72,12 +72,20 @@ export default function Market() {
                 </div>
                 <div className="flex items-end justify-between mt-4 pt-4 border-t">
                   <div>
-                    <div className="text-[11px] text-muted-foreground">سعر البيع للزبون</div>
-                    <div className="flex items-center gap-2">
-                      <div className="tabular text-xl font-bold text-[#0A2540]" data-testid={`pkg-price-${p.id}`}>{money(p.final_sale_price, p.currency)}</div>
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${p.currency === "USD" ? "bg-[#ECFDF5] text-[#047857]" : "bg-[#EFF6FF] text-[#1D4ED8]"}`}>{p.currency === "USD" ? "USD" : "SAR"}</span>
-                    </div>
-                    {p.currency === "SAR" && <div className="text-[10px] text-muted-foreground tabular">{equiv(p.final_sale_price, "SAR")}</div>}
+                    {(() => {
+                      const rooms = Array.isArray(p.room_pricing) ? p.room_pricing.filter((r) => r && r.customer != null) : [];
+                      const start = rooms.length ? Math.min(...rooms.map((r) => Number(r.customer))) : p.final_sale_price;
+                      return (
+                        <>
+                          <div className="text-[11px] text-muted-foreground">{rooms.length ? "يبدأ من" : "سعر البيع للزبون"}</div>
+                          <div className="flex items-center gap-2">
+                            <div className="tabular text-xl font-bold text-[#0A2540]" data-testid={`pkg-price-${p.id}`}>{money(start, p.currency)}</div>
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${p.currency === "USD" ? "bg-[#ECFDF5] text-[#047857]" : "bg-[#EFF6FF] text-[#1D4ED8]"}`}>{p.currency === "USD" ? "USD" : "SAR"}</span>
+                          </div>
+                          {p.currency === "SAR" && <div className="text-[10px] text-muted-foreground tabular">{equiv(start, "SAR")}</div>}
+                        </>
+                      );
+                    })()}
                   </div>
                   <span className="text-xs font-semibold text-[#15803D] bg-[#F0FDF4] px-2 py-1 rounded-md">
                     {p.buyer_office_commission != null ? `عمولتك ${money(p.buyer_office_commission, p.currency)}` : "احجز مباشرة"}
