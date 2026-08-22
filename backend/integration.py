@@ -181,7 +181,8 @@ def _adapt_package(body: dict) -> dict:
         if net is None:
             net = base.get("net", 0)
         if sale is None:
-            sale = base.get("customer", 0)
+            cust = base.get("customer", 0)
+            sale = cust.get("adult", 0) if isinstance(cust, dict) else cust
         if comm is None:
             comm = base.get("commission", 0)
     currency = pricing.get("currency") or body.get("currency") or "USD"
@@ -357,7 +358,8 @@ async def rahal_webhook(request: Request, x_rahal_signature: str = Header(defaul
     except (ValueError, json.JSONDecodeError):
         raise HTTPException(status_code=400, detail="Malformed JSON body")
     data = event.get("data") if isinstance(event.get("data"), dict) else event
-    etype = event.get("event")
+    # Rahal sends the envelope as {id, type, timestamp, data}; older payloads use "event".
+    etype = event.get("event") or event.get("type")
     ref = event.get("package_ref") or data.get("package_ref") or data.get("rahal_ref")
     event_id = event.get("id") or event.get("event_id")
     # Idempotency: a webhook carrying the same event id is applied at most once

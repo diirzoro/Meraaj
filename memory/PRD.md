@@ -86,6 +86,14 @@ B2B marketplace ("Meraaj Network" by Target Media) connecting travel/Umrah offic
 - Display already existed: `PackageDetail.js` renders أسعار الغرف table + مميزات checklist; Market card computes "يبدأ من" from lowest room `customer`. `_view_package` hides net/commission from non-office & strips room_pricing to {room_type,customer}.
 - Verified: curl (create with 2 rooms + 3 features → stored & returned; guest GET hides net/commission, keeps customer+features) + create-form screenshot (both sections render, layout intact).
 
+## Production-verified pricing + webhook fixes — DONE Aug 2026
+- **Room pricing NaN fix (frontend)**: Rahal now sends `room_pricing[].customer` as an OBJECT `{adult, child, infant}` (not a scalar). Added `roomCustomer(customer, cat)` helper in `format.js` (handles BOTH object=Rahal and scalar=manual Meraaj programs). `PackageDetail.js` room table shows سعر البالغ/الطفل/الرضيع columns; main sidebar price = `roomCustomer(room_pricing[0].customer,'adult') || Number(final_sale_price) || 0`. `Market.js` "يبدأ من" = min adult across rooms, fallback `final_sale_price`. Booking engine UNCHANGED.
+- **Backend safety**: `_adapt_package` base-room derivation now extracts `.adult` when `customer` is an object, so `final_sale_price`/net/comm remain valid scalars (booking/admin math intact). `room_pricing` still stored RAW (object customer preserved for FE).
+- **Webhook event type (backend)**: `rahal_webhook` reads `event.get("event") or event.get("type")` — Rahal envelope `{id, type, timestamp, data}` now yields handled:true / matched_count:1 (was event:null / handled:false).
+- **Activation/Deactivation**: already implemented (package.activated→listed, package.deactivated/deleted/removed/disabled→unlisted); confirmed preserved E2E.
+- Items NOT in Meraaj repo (Rahal ERP-side): professional confirmation dialogs (askConfirm/ConfirmHost), Delete Package action — no Meraaj changes. **IMAGE ISSUE LEFT OPEN per user (not touched).**
+- Verified E2E via signed HMAC curl: SHARE(object customer)→stored, guest sees customer object + scalar final_sale_price + net hidden; UPDATE(type-envelope)→handled 1; DEACTIVATE→hidden; ACTIVATE→visible. Frontend screenshot: 1,600/1,250/550 render, no literal NaN.
+
 ## Backlog (P1/P2)
 - P1 (mobile next): Firebase FCM push (needs Firebase project + `google-services.json`; add `device_tokens` model + triggers on booking/wallet events) — Phase 3. Capgo OTA updates (needs Capgo account/key) — Phase 4.
 - P1: Real Rahal SSO + embedded signed-iframe (awaiting Rahal APIs). Atomic booking debit (transactions/optimistic locking) to prevent oversell/overdraw under concurrency.

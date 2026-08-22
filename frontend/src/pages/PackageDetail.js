@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import api, { apiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { PageHeader } from "@/components/Layout";
-import { money, equiv, fmtDate, PKG_TYPE } from "@/lib/format";
+import { money, equiv, fmtDate, PKG_TYPE, roomCustomer } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -112,7 +112,10 @@ export default function PackageDetail() {
             {pkg.description && <p className="text-sm text-muted-foreground mt-5 leading-relaxed">{pkg.description}</p>}
           </div>
 
-          {pkg.room_pricing?.length > 0 && (
+          {pkg.room_pricing?.length > 0 && (() => {
+            const anyChild = pkg.room_pricing.some((r) => roomCustomer(r?.customer, "child") != null);
+            const anyInfant = pkg.room_pricing.some((r) => roomCustomer(r?.customer, "infant") != null);
+            return (
             <div className="bg-white rounded-2xl border card-shadow p-6" data-testid="pkg-room-pricing">
               <h3 className="font-head font-bold text-[#0A2540] mb-4 flex items-center gap-2"><BedDouble className="w-4 h-4" /> أسعار الغرف</h3>
               <div className="overflow-x-auto">
@@ -121,22 +124,27 @@ export default function PackageDetail() {
                     <th className="text-start py-2">نوع الغرفة</th>
                     {isOffice && <th className="text-start py-2">الصافي</th>}
                     {isOffice && <th className="text-start py-2">العمولة</th>}
-                    <th className="text-start py-2">سعر العميل</th>
+                    <th className="text-start py-2">سعر البالغ</th>
+                    {anyChild && <th className="text-start py-2">سعر الطفل</th>}
+                    {anyInfant && <th className="text-start py-2">سعر الرضيع</th>}
                   </tr></thead>
                   <tbody>
                     {pkg.room_pricing.map((r, i) => (
-                      <tr key={i} className="border-b last:border-0">
+                      <tr key={i} className="border-b last:border-0" data-testid={`room-row-${i}`}>
                         <td className="py-2 font-semibold text-[#0A2540]">{roomAr(r.room_type)}</td>
                         {isOffice && <td className="py-2 tabular">{money(r.net, pkg.currency)}</td>}
                         {isOffice && <td className="py-2 tabular text-[#15803D]">{money(r.commission, pkg.currency)}</td>}
-                        <td className="py-2 tabular font-bold">{money(r.customer, pkg.currency)}</td>
+                        <td className="py-2 tabular font-bold" data-testid={`room-adult-${i}`}>{money(roomCustomer(r?.customer, "adult") || 0, pkg.currency)}</td>
+                        {anyChild && <td className="py-2 tabular" data-testid={`room-child-${i}`}>{roomCustomer(r?.customer, "child") != null ? money(roomCustomer(r?.customer, "child"), pkg.currency) : "—"}</td>}
+                        {anyInfant && <td className="py-2 tabular" data-testid={`room-infant-${i}`}>{roomCustomer(r?.customer, "infant") != null ? money(roomCustomer(r?.customer, "infant"), pkg.currency) : "—"}</td>}
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             </div>
-          )}
+            );
+          })()}
 
           {pkg.transports?.length > 0 && (
             <div className="bg-white rounded-2xl border card-shadow p-6" data-testid="pkg-transports">
@@ -198,9 +206,14 @@ export default function PackageDetail() {
 
         <div className="space-y-5">
           <div className="bg-white rounded-2xl border card-shadow p-6 sticky top-8">
-            <div className="text-sm text-muted-foreground">سعر البيع النهائي للزبون</div>
-            <div className="tabular text-3xl font-bold text-[#0A2540] mt-1">{money(pkg.final_sale_price, pkg.currency)}</div>
-            {pkg.currency === "SAR" && <div className="text-xs text-muted-foreground tabular mt-0.5">{equiv(pkg.final_sale_price, "SAR")}</div>}
+            {(() => {
+              const mainPrice = roomCustomer(pkg.room_pricing?.[0]?.customer, "adult") || Number(pkg.final_sale_price) || 0;
+              return (<>
+                <div className="text-sm text-muted-foreground">سعر البيع النهائي للزبون</div>
+                <div className="tabular text-3xl font-bold text-[#0A2540] mt-1" data-testid="pkg-main-price">{money(mainPrice, pkg.currency)}</div>
+                {pkg.currency === "SAR" && <div className="text-xs text-muted-foreground tabular mt-0.5">{equiv(mainPrice, "SAR")}</div>}
+              </>);
+            })()}
             {(CATS.child.offered || CATS.infant.offered) && (
               <div className="mt-3 space-y-1 text-xs bg-[#F4F6F8] rounded-lg p-3" data-testid="tier-prices">
                 {CATS.child.offered && <div className="flex justify-between"><span className="text-muted-foreground">سعر الطفل</span><span className="tabular font-semibold">{money(chargeOf("child"), pkg.currency)}</span></div>}

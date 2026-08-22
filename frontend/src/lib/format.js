@@ -21,6 +21,17 @@ export const STATUS = {
 
 export const PKG_TYPE = { umrah: "عمرة", tourism: "سياحة" };
 
+// Rahal sends room_pricing[].customer as an object {adult, child, infant}.
+// Manual (Meraaj) programs store it as a plain number (adult only). Support both.
+export const roomCustomer = (customer, cat = "adult") => {
+  if (customer == null) return null;
+  if (typeof customer === "object") {
+    const v = customer[cat];
+    return v == null ? null : Number(v);
+  }
+  return cat === "adult" ? Number(customer) : null;
+};
+
 export const fmtDate = (s) => {
   if (!s) return "-";
   try { return new Date(s).toLocaleDateString("ar-EG", { year: "numeric", month: "short", day: "numeric" }); }
