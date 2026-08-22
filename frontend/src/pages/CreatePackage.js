@@ -19,7 +19,7 @@ export default function CreatePackage() {
   const navigate = useNavigate();
   const [f, setF] = useState({
     type: "umrah", title: "", description: "", departure_date: "", return_date: "",
-    departure_city: "", transport: "", currency: "USD",
+    departure_city: "", transport: "", currency: "SAR",
     net_cost_per_seat: "", final_sale_price: "", buyer_office_commission: "", total_seats: "",
   });
   const [hotels, setHotels] = useState([{ city: "", name: "", nights: "" }]);
@@ -94,6 +94,14 @@ export default function CreatePackage() {
         <div className="space-y-6">
           <div className="bg-white rounded-2xl border card-shadow p-6 space-y-4 sticky top-8">
             <h3 className="font-head font-bold text-[#0A2540]">التسعير والمقاعد</h3>
+            <div>
+              <Label className="mb-2 block">عملة البرنامج</Label>
+              <select data-testid="pkg-currency" value={f.currency} onChange={set("currency")} className="w-full h-9 rounded-md border border-input bg-transparent px-3 text-sm">
+                <option value="SAR">ريال سعودي (SAR)</option>
+                <option value="USD">دولار أمريكي (USD)</option>
+              </select>
+              <p className="text-[11px] text-muted-foreground mt-1">كل الأسعار أدناه بعملة البرنامج المختارة، وستظهر بها في السوق.</p>
+            </div>
             <div><Label className="mb-2 block">التكلفة الصافية / مقعد</Label><Input data-testid="pkg-net" type="number" step="0.01" required value={f.net_cost_per_seat} onChange={set("net_cost_per_seat")} /></div>
             <div><Label className="mb-2 block">عمولة المكتب المشتري</Label><Input data-testid="pkg-comm" type="number" step="0.01" required value={f.buyer_office_commission} onChange={set("buyer_office_commission")} /></div>
             <div><Label className="mb-2 block">سعر البيع النهائي للزبون</Label><Input data-testid="pkg-sale" type="number" step="0.01" required value={f.final_sale_price} onChange={set("final_sale_price")} /></div>
