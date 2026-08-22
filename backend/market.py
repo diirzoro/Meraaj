@@ -20,6 +20,9 @@ def _view_package(doc, user):
         d.pop("child_commission", None)
         d.pop("infant_net_cost", None)
         d.pop("infant_commission", None)
+        if isinstance(d.get("room_pricing"), list):
+            d["room_pricing"] = [{"room_type": r.get("room_type"), "customer": r.get("customer")}
+                                 for r in d["room_pricing"]]
     return d
 
 

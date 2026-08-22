@@ -49,6 +49,14 @@ B2B marketplace ("Meraaj Network" by Target Media) connecting travel/Umrah offic
 ## Verified (iteration 4)
 - 80/80 pytest pass; all money-safety fixes confirmed (marketer escrow no-overdraft, ledger reconciliation, no self-referral, cancellation fees recorded, individual P2P, B2B platform fee logged). Frontend flows all pass.
 
+## Rahaal Contract v2 Adapter (June 2026) — Preview/Test only (NOT deployed)
+- `integration.py._adapt_package(body)` normalizes Rahaal Contract v2 AND legacy flat payloads into Meraaj canonical fields: `package_type→type`, `name→title`, `start_date→departure_date`, `end_date→return_date`, `pricing.currency|currency→currency`, stores `room_pricing[]` ({room_type,net,commission,customer}), `package_transports[]→transports`, `components[]`, `hotels[]`, `features[]`, `image_url|images→images[]`. Flat pricing derived from the base (double) room for backward-compatible booking math.
+- `share_package` matches by `meraaj_package_id → rahal_ref` (never title) and mirrors the raw payload + v2 fields into `rahal_packages`.
+- `rahal_webhook`: `package.updated` routes through `_adapt_partial(data)` — updates ONLY keys present in the delta (no blanking of description/city/transport); refreshes the `rahal_packages` mirror; matching precedence id→ref; Idempotency via `event.id`/`event_id` (dup delivery ACKed once); `handled=false` when a targeted event matches nothing.
+- `_view_package` sanitizes for non-office: hides net/commission (incl. child/infant) and strips `room_pricing` to `{room_type,customer}` only.
+- Frontend `PackageDetail.js`: renders أسعار الغرف (office sees net+commission), النقل والمواصلات, مكونات البرنامج, hotels, features, gallery; Arabic labels for room_type (ثنائية/ثلاثية/رباعية) and transport (باص/طيران).
+- Verified: testing_agent iteration_7 (20/20 v2 + 27/27 regression + UI); local 47/47 pytest + 4/4 partial-update/idempotency/mirror/unmatched checks. Deploy order pending user: review → publish v2 in Rahaal → E2E → backup → test server → production.
+
 ## Tiered pricing — Adult / Child / Infant (June 2026)
 - Programs carry optional per-tier prices: `child_net_cost/child_sale_price/child_commission` and `infant_*` (null = fall back to adult). Set in CreatePackage under "أسعار الفئات (اختياري)".
 - Booking (`create_booking`) sums net/sale/commission per registrant `category` (adult|child|infant) via `_tier_prices`. Registrant gains `category` + optional `photo` (infant photo, base64). Card keeps showing adult price; booking dialog has add-buttons (بالغ/طفل/رضيع), per-traveler price, infant photo upload, and a live per-category total.

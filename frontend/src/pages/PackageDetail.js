@@ -10,7 +10,12 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
-import { MapPin, Users, CalendarDays, Building2, Plane, Hotel, Plus, Trash2, ShoppingCart, Landmark, CheckCircle2 } from "lucide-react";
+import { MapPin, Users, CalendarDays, Building2, Plane, Hotel, Plus, Trash2, ShoppingCart, Landmark, CheckCircle2, Bus, BedDouble, ListChecks } from "lucide-react";
+
+const ROOM_AR = { double: "ثنائية", twin: "ثنائية", triple: "ثلاثية", quad: "رباعية", quint: "خماسية", single: "فردية" };
+const TRANSPORT_AR = { bus: "باص", flight: "طيران", air: "طيران", train: "قطار", car: "سيارة" };
+const roomAr = (v) => ROOM_AR[String(v || "").toLowerCase()] || v;
+const transAr = (v) => TRANSPORT_AR[String(v || "").toLowerCase()] || v || "-";
 import { toast } from "sonner";
 
 export default function PackageDetail() {
@@ -99,13 +104,69 @@ export default function PackageDetail() {
             <div className="grid sm:grid-cols-2 gap-4 text-sm">
               <Info icon={CalendarDays} label="تاريخ الانطلاق" value={fmtDate(pkg.departure_date)} />
               <Info icon={CalendarDays} label="تاريخ العودة" value={fmtDate(pkg.return_date)} />
-              <Info icon={MapPin} label="مدينة الانطلاق" value={pkg.departure_city || "-"} />
-              <Info icon={Plane} label="النقل" value={pkg.transport || "-"} />
+              {pkg.departure_city && <Info icon={MapPin} label="مدينة الانطلاق" value={pkg.departure_city} />}
+              <Info icon={Plane} label="النقل" value={transAr(pkg.transport)} />
               <Info icon={Users} label="المقاعد المتاحة" value={`${pkg.available_seats} / ${pkg.total_seats}`} />
               <Info icon={Building2} label="البائع" value={pkg.seller_office_name} />
             </div>
             {pkg.description && <p className="text-sm text-muted-foreground mt-5 leading-relaxed">{pkg.description}</p>}
           </div>
+
+          {pkg.room_pricing?.length > 0 && (
+            <div className="bg-white rounded-2xl border card-shadow p-6" data-testid="pkg-room-pricing">
+              <h3 className="font-head font-bold text-[#0A2540] mb-4 flex items-center gap-2"><BedDouble className="w-4 h-4" /> أسعار الغرف</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-muted-foreground text-xs border-b"><tr>
+                    <th className="text-start py-2">نوع الغرفة</th>
+                    {isOffice && <th className="text-start py-2">الصافي</th>}
+                    {isOffice && <th className="text-start py-2">العمولة</th>}
+                    <th className="text-start py-2">سعر العميل</th>
+                  </tr></thead>
+                  <tbody>
+                    {pkg.room_pricing.map((r, i) => (
+                      <tr key={i} className="border-b last:border-0">
+                        <td className="py-2 font-semibold text-[#0A2540]">{roomAr(r.room_type)}</td>
+                        {isOffice && <td className="py-2 tabular">{money(r.net, pkg.currency)}</td>}
+                        {isOffice && <td className="py-2 tabular text-[#15803D]">{money(r.commission, pkg.currency)}</td>}
+                        <td className="py-2 tabular font-bold">{money(r.customer, pkg.currency)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {pkg.transports?.length > 0 && (
+            <div className="bg-white rounded-2xl border card-shadow p-6" data-testid="pkg-transports">
+              <h3 className="font-head font-bold text-[#0A2540] mb-4 flex items-center gap-2"><Bus className="w-4 h-4" /> النقل والمواصلات</h3>
+              <div className="space-y-2 text-sm">
+                {pkg.transports.map((t, i) => (
+                  <div key={i} className="flex flex-wrap gap-x-4 gap-y-1 border-b last:border-0 pb-2 last:pb-0">
+                    <span className="font-semibold text-[#0A2540]">{transAr(t.type || t.bus_type || t.name)}</span>
+                    {t.company && <span className="text-muted-foreground">الشركة: {t.company}</span>}
+                    {t.seats != null && <span className="text-muted-foreground">مقاعد: {t.seats}</span>}
+                    {t.route && <span className="text-muted-foreground">المسار: {t.route}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {pkg.components?.length > 0 && (
+            <div className="bg-white rounded-2xl border card-shadow p-6" data-testid="pkg-components">
+              <h3 className="font-head font-bold text-[#0A2540] mb-4 flex items-center gap-2"><ListChecks className="w-4 h-4" /> مكونات البرنامج</h3>
+              <div className="grid sm:grid-cols-2 gap-2 text-sm">
+                {pkg.components.map((c, i) => (
+                  <div key={i} className="flex items-start gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-[#15803D] shrink-0 mt-0.5" />
+                    <span className="text-[#0A2540]">{typeof c === "string" ? c : (c.name || c.title || c.label || JSON.stringify(c))}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {pkg.hotels?.length > 0 && (
             <div className="bg-white rounded-2xl border card-shadow p-6">
