@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 8 — ran ONLY the two remaining inbound Rahaal->Meraaj tests with the SHARED HMAC secret (backend/.env MERAAJ_SHARED_SECRET, len 67 / d812.../...0168). TEST 1 (full Contract v2 share) and TEST 2 (package.updated webhook: partial delta, no-duplicate, match by ref/id, idempotency, 401 on bad signature) both PASS. 11/11 pytest API checks passed + full UI verification of /market/{id} as a freshly registered OFFICE user. E2E result: 15/15 PASS.",
+  "checkpoints": {
+    "package_type_mapped_to_type": "PASS (package_type=umrah -> type=umrah)",
+    "3_room_types_with_net_commission_customer": "PASS (double 1000/100/1200, triple 900/90/1080, quad 800/80/960; office sees net+commission, non-office stripped to room_type+customer)",
+    "buses_transports": "PASS (package_transports[] -> transports[] len=2; flat transport string derived = 'bus')",
+    "hotels": "PASS (2 hotels persisted and rendered)",
+    "components": "PASS (3 component objects persisted and rendered by name)",
+    "features": "PASS (3 features)",
+    "images_in_DB": "PASS (image_url list -> images[] with both URLs, order preserved)",
+    "image_url_returns_200": "PASS (both stored unsplash URLs fetched -> HTTP 200, content-type image/*; browser hero img naturalWidth=1200 i.e. really rendered)",
+    "dates_mapped": "PASS (start_date->departure_date 2026-09-01, end_date->return_date 2026-09-11; UI shows ١ سبتمبر ٢٠٢٦ / ١١ سبتمبر ٢٠٢٦ Arabic-Indic numerals)",
+    "currency": "PASS (SAR, UI renders ر.س with USD approximation)",
+    "DB_stored_and_ids_returned": "PASS (share returns remote_id == meraaj_package_id, status listed; mirror doc in rahal_packages)",
+    "UI_shows_sections": "PASS (pkg-room-pricing 3 rows, pkg-transports, pkg-components, hotels section, pkg-features, hero image + gallery thumb)",
+    "no_duplicate_on_update": "PASS (exactly ONE package with that rahal_ref after webhook update and after a full re-share of the same ref)",
+    "matching_by_ref_or_id_not_name": "PASS (name changed with same package_ref -> same record updated; separate event matched by meraaj_package_id -> matched_count=1 on same record)",
+    "idempotency": "PASS (re-POST with same event id -> {handled:true, idempotent:true}, available_seats unchanged at 30 i.e. the 999 delta was NOT applied)",
+    "partial_update_no_blank": "PASS (delta with only name+one room price+available_seats: description/departure_city/transport/transports/hotels/components/features/images/currency/dates/type and the other 2 room rows all intact)",
+    "bad_signature_401": "PASS (401 on both /packages/share and /webhooks with wrong signature)"
+  },
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "PackageDetail /market/{id}", "issues": ["Hotels section is the only detail block without a data-testid (siblings use pkg-room-pricing / pkg-transports / pkg-components / pkg-features). Suggest data-testid=\"pkg-hotels\" for stable automation. Not modified per 'do not modify code' instruction."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_rahal_inbound_e2e8.py", "/app/test_reports/pytest/e2e8_inbound.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "integration.py _adapt_partial: available_seats delta sets both available_seats and total_seats — verified intentional, but it silently resets total capacity; confirm this is the desired contract with Rahaal.",
+    "Optional: add data-testid=\"pkg-hotels\" to the hotels block in PackageDetail.js for parity with the other sections."
+  ],
+  "updated_files": ["/app/backend/tests/test_rahal_inbound_e2e8.py"],
+  "success_rate": {"backend": "100% (11/11 assertions groups)", "frontend": "100% (all UI sections rendered with correct data)"},
+  "seed_data_creation": "Created and then DELETED: package rahal_ref TEST-E2E8-*, mirror doc in rahal_packages, auto-provisioned rahal office TEST-RHL-OFF-*, and office user test_e2e8_office_*@qa-example.com. Verified 0 residual docs. Only rahal_inbound_log rows (audit log, event ids evt-*) remain by design.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": false,
+  "test_credentials": "Office created on the fly per run (password Test@1234) and deleted after; shared HMAC secret read from backend/.env MERAAJ_SHARED_SECRET.",
+  "context_for_next_testing_agent": "Run /app/backend/tests/test_rahal_inbound_e2e8.py with -n 0 (module-level shared `state` dict breaks under xdist loadscope across classes). It is self-cleaning: run without -k first, then the last test (test_99_cleanup) purges TEST-E2E8 data. For the UI check, look up the created package _id from mongo (rahal_ref regex ^TEST-E2E8-) before cleanup.",
+  "rca_of_the_issue": "No defects reproduced. Both inbound flows behave exactly per Contract v2: HMAC verified over exact raw bytes with MERAAJ_SHARED_SECRET, matching precedence meraaj_package_id -> rahal_ref (never title), _adapt_partial only $sets keys present in the delta, and idempotency short-circuits on rahal_inbound_log {event_id, handled:true}."
+}

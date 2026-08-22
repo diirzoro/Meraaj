@@ -49,6 +49,12 @@ B2B marketplace ("Meraaj Network" by Target Media) connecting travel/Umrah offic
 ## Verified (iteration 4)
 - 80/80 pytest pass; all money-safety fixes confirmed (marketer escrow no-overdraft, ledger reconciliation, no self-referral, cancellation fees recorded, individual P2P, B2B platform fee logged). Frontend flows all pass.
 
+## Real bidirectional E2E — Rahaal Test ↔ Meraaj Preview (June 2026)
+- Shared TEMPORARY HMAC secret set in Preview `backend/.env` MERAAJ_SHARED_SECRET (fingerprint len67/d812…0168); Rahaal Test holds the same. RAHAL_WEBHOOK_URL (outbound Meraaj→Rahaal) pointed at Rahaal Test: https://visa-booking-5.preview.emergentagent.com/api/meraaj/webhooks (that endpoint is live and enforces HMAC — 401 on unsigned ping).
+- testing_agent iteration_8: **E2E 15/15 PASS** — inbound SHARE (v2: package_type, 3 room types w/ net+commission+customer, 2 buses, 2 hotels, components, features, images, dates, currency → DB + UI) and package.updated (partial no-blank, no-duplicate, match by rahal_ref/meraaj_package_id not name, idempotency via event id, 401 on bad signature). CRITICAL image check: stored image URLs fetched → HTTP 200 and rendered (hero naturalWidth=1200).
+- NOTE: temporary secret is for Preview E2E only; real production secret to be set via the platform Secrets (deployment) at Production time. No production deploy done. No further code changes per user directive.
+- Deploy order pending: docs → Backup → Rahaal Test → Production Backup → Production Deploy → Prod verify + set prod Secrets.
+
 ## Rahaal Contract v2 Adapter (June 2026) — Preview/Test only (NOT deployed)
 - `integration.py._adapt_package(body)` normalizes Rahaal Contract v2 AND legacy flat payloads into Meraaj canonical fields: `package_type→type`, `name→title`, `start_date→departure_date`, `end_date→return_date`, `pricing.currency|currency→currency`, stores `room_pricing[]` ({room_type,net,commission,customer}), `package_transports[]→transports`, `components[]`, `hotels[]`, `features[]`, `image_url|images→images[]`. Flat pricing derived from the base (double) room for backward-compatible booking math.
 - `share_package` matches by `meraaj_package_id → rahal_ref` (never title) and mirrors the raw payload + v2 fields into `rahal_packages`.
