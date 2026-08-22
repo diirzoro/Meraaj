@@ -49,6 +49,11 @@ B2B marketplace ("Meraaj Network" by Target Media) connecting travel/Umrah offic
 ## Verified (iteration 4)
 - 80/80 pytest pass; all money-safety fixes confirmed (marketer escrow no-overdraft, ledger reconciliation, no self-referral, cancellation fees recorded, individual P2P, B2B platform fee logged). Frontend flows all pass.
 
+## Tiered pricing — Adult / Child / Infant (June 2026)
+- Programs carry optional per-tier prices: `child_net_cost/child_sale_price/child_commission` and `infant_*` (null = fall back to adult). Set in CreatePackage under "أسعار الفئات (اختياري)".
+- Booking (`create_booking`) sums net/sale/commission per registrant `category` (adult|child|infant) via `_tier_prices`. Registrant gains `category` + optional `photo` (infant photo, base64). Card keeps showing adult price; booking dialog has add-buttons (بالغ/طفل/رضيع), per-traveler price, infant photo upload, and a live per-category total.
+- `_view_package` also hides child/infant net & commission from non-office viewers. Verified e2e (adult+child+infant total, wallet debit, seller escrow in program currency, categories+photo stored, no net leak). Dual-currency suites 22/22 still pass.
+
 ## Meraaj Network outbound sync (June 2026)
 - `create_package` now enqueues `package.published` to the reliable outbox (`notify_rahal`) so publishing a program from the app/web auto-syncs to the Meraaj Network/Rahal (includes title, dates, images[], features[], hotels[], pricing, seats).
 - `toggle_package` on manual programs enqueues `package.activated`/`package.deactivated`. Rahal-sourced programs are not echoed back. Delivery requires `RAHAL_WEBHOOK_URL`; otherwise events queue for admin retry.

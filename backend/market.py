@@ -16,6 +16,10 @@ def _view_package(doc, user):
     if not user or user.get("role") != "office":
         d.pop("net_cost_per_seat", None)
         d.pop("buyer_office_commission", None)
+        d.pop("child_net_cost", None)
+        d.pop("child_commission", None)
+        d.pop("infant_net_cost", None)
+        d.pop("infant_commission", None)
     return d
 
 
@@ -40,6 +44,12 @@ class PackageInput(BaseModel):
     net_cost_per_seat: float
     final_sale_price: float
     buyer_office_commission: float
+    child_net_cost: Optional[float] = None
+    child_sale_price: Optional[float] = None
+    child_commission: Optional[float] = None
+    infant_net_cost: Optional[float] = None
+    infant_sale_price: Optional[float] = None
+    infant_commission: Optional[float] = None
     currency: CurrencyField = "USD"
     total_seats: int
 
@@ -128,12 +138,31 @@ class RegistrantInput(BaseModel):
     name: str
     passport_no: str
     age: int
+    category: str = "adult"  # adult | child | infant
+    photo: Optional[str] = None
 
 
 class BookingInput(BaseModel):
     package_id: str
     registrants: List[RegistrantInput]
     ref: Optional[str] = None  # affiliate code
+
+
+def _tier_prices(pkg: dict, category: str):
+    """Return (net, sale, commission) for a traveler category. Child/Infant fall back
+    to adult pricing when the seller did not define a special price for that tier."""
+    adult = (round(float(pkg["net_cost_per_seat"]), 2),
+             round(float(pkg["final_sale_price"]), 2),
+             round(float(pkg.get("buyer_office_commission") or 0), 2))
+    if category == "child":
+        n, s, c = pkg.get("child_net_cost"), pkg.get("child_sale_price"), pkg.get("child_commission")
+    elif category == "infant":
+        n, s, c = pkg.get("infant_net_cost"), pkg.get("infant_sale_price"), pkg.get("infant_commission")
+    else:
+        return adult
+    return (round(float(n), 2) if n is not None else adult[0],
+            round(float(s), 2) if s is not None else adult[1],
+            round(float(c), 2) if c is not None else adult[2])
 
 
 @router.post("/bookings")
@@ -151,10 +180,18 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
 
     cur = pkg.get("currency", "USD")
     cur = "SAR" if cur == "SAR" else "USD"
-    net_seat = round(float(pkg["net_cost_per_seat"]), 2)
-    comm_seat = round(float(pkg.get("buyer_office_commission", 0)), 2)
-    sale_seat = round(float(pkg["final_sale_price"]), 2)
-    net_total = round(net_seat * seats, 2)
+    # Sum prices per traveler category (adult / child / infant)
+    net_total = 0.0
+    sale_total = 0.0
+    comm_total = 0.0
+    for r in payload.registrants:
+        n, s, c = _tier_prices(pkg, r.category)
+        net_total += n
+        sale_total += s
+        comm_total += c
+    net_total = round(net_total, 2)
+    sale_total = round(sale_total, 2)
+    comm_total = round(comm_total, 2)
     is_office = user["role"] == "office"
     marketer_id = None
     marketer_commission = 0.0
@@ -162,15 +199,15 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
 
     if is_office:
         # B2B: office pays net + platform fee (double commission); keeps margin offline
-        buyer_commission_total = round(comm_seat * seats, 2)
+        buyer_commission_total = comm_total
         platform_fee = round(buyer_commission_total * platform_pct(), 2)
         required = round(net_total + platform_fee, 2)
     else:
         # B2C: consumer pays full retail; seller gets net; margin => platform (+marketer)
         buyer_commission_total = 0.0
         platform_fee = 0.0
-        required = round(sale_seat * seats, 2)
-        margin_total = round((sale_seat - net_seat) * seats, 2)
+        required = sale_total
+        margin_total = round(sale_total - net_total, 2)
         if payload.ref:
             m = await db.users.find_one({"affiliate_code": payload.ref, "is_marketer": True})
             if m and str(m["_id"]) not in (pkg["seller_id"], str(user["_id"])):

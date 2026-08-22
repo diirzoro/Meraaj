@@ -21,6 +21,8 @@ export default function CreatePackage() {
     type: "umrah", title: "", description: "", departure_date: "", return_date: "",
     departure_city: "", transport: "", currency: "SAR",
     net_cost_per_seat: "", final_sale_price: "", buyer_office_commission: "", total_seats: "",
+    child_net_cost: "", child_sale_price: "", child_commission: "",
+    infant_net_cost: "", infant_sale_price: "", infant_commission: "",
   });
   const [hotels, setHotels] = useState([{ city: "", name: "", nights: "" }]);
   const [busy, setBusy] = useState(false);
@@ -30,12 +32,19 @@ export default function CreatePackage() {
     e.preventDefault();
     setBusy(true);
     try {
+      const num = (v) => (v === "" || v == null ? undefined : Number(v));
       await api.post("/packages", {
         ...f,
         net_cost_per_seat: Number(f.net_cost_per_seat),
         final_sale_price: Number(f.final_sale_price),
         buyer_office_commission: Number(f.buyer_office_commission),
         total_seats: Number(f.total_seats),
+        child_net_cost: num(f.child_net_cost),
+        child_sale_price: num(f.child_sale_price),
+        child_commission: num(f.child_commission),
+        infant_net_cost: num(f.infant_net_cost),
+        infant_sale_price: num(f.infant_sale_price),
+        infant_commission: num(f.infant_commission),
         images: [IMG[f.type]],
         hotels: hotels.filter((h) => h.name).map((h) => ({ ...h, nights: Number(h.nights) || 0 })),
       });
@@ -106,6 +115,22 @@ export default function CreatePackage() {
             <div><Label className="mb-2 block">عمولة المكتب المشتري</Label><Input data-testid="pkg-comm" type="number" step="0.01" required value={f.buyer_office_commission} onChange={set("buyer_office_commission")} /></div>
             <div><Label className="mb-2 block">سعر البيع النهائي للزبون</Label><Input data-testid="pkg-sale" type="number" step="0.01" required value={f.final_sale_price} onChange={set("final_sale_price")} /></div>
             <div><Label className="mb-2 block">عدد المقاعد</Label><Input data-testid="pkg-seats" type="number" required value={f.total_seats} onChange={set("total_seats")} /></div>
+
+            <div className="border-t pt-3 space-y-2">
+              <div className="text-xs font-semibold text-[#0A2540]">أسعار الفئات (اختياري — الفارغ = بسعر البالغ)</div>
+              <div className="text-[11px] text-muted-foreground">الطفل: صافي / عمولة / بيع</div>
+              <div className="grid grid-cols-3 gap-2">
+                <Input data-testid="child-net" type="number" placeholder="صافي" value={f.child_net_cost} onChange={set("child_net_cost")} />
+                <Input data-testid="child-comm" type="number" placeholder="عمولة" value={f.child_commission} onChange={set("child_commission")} />
+                <Input data-testid="child-sale" type="number" placeholder="بيع" value={f.child_sale_price} onChange={set("child_sale_price")} />
+              </div>
+              <div className="text-[11px] text-muted-foreground">الرضيع: صافي / عمولة / بيع</div>
+              <div className="grid grid-cols-3 gap-2">
+                <Input data-testid="infant-net" type="number" placeholder="صافي" value={f.infant_net_cost} onChange={set("infant_net_cost")} />
+                <Input data-testid="infant-comm" type="number" placeholder="عمولة" value={f.infant_commission} onChange={set("infant_commission")} />
+                <Input data-testid="infant-sale" type="number" placeholder="بيع" value={f.infant_sale_price} onChange={set("infant_sale_price")} />
+              </div>
+            </div>
 
             <div className="bg-[#F4F6F8] rounded-lg p-3 text-xs space-y-1">
               <div className="flex justify-between"><span className="text-muted-foreground">هامش المشتري</span><span className="tabular font-semibold text-[#15803D]">{money(sale - net, f.currency)}</span></div>

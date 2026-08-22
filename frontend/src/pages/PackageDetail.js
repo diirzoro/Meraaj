@@ -19,7 +19,7 @@ export default function PackageDetail() {
   const { user } = useAuth();
   const [pkg, setPkg] = useState(null);
   const [open, setOpen] = useState(false);
-  const [regs, setRegs] = useState([{ name: "", passport_no: "", age: "" }]);
+  const [regs, setRegs] = useState([{ name: "", passport_no: "", age: "", category: "adult", photo: "" }]);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => { api.get(`/packages/${id}`).then((r) => setPkg(r.data)).catch(() => toast.error("تعذّر تحميل البرنامج")); }, [id]);
@@ -28,23 +28,43 @@ export default function PackageDetail() {
 
   const isOwner = pkg.seller_id === user?.id;
   const isOffice = user?.role === "office";
+  const CATS = {
+    adult: { label: "بالغ", offered: true },
+    child: { label: "طفل", offered: pkg.child_sale_price != null || pkg.child_net_cost != null },
+    infant: { label: "رضيع", offered: pkg.infant_sale_price != null || pkg.infant_net_cost != null },
+  };
   const setReg = (i, k) => (e) => { const c = [...regs]; c[i][k] = e.target.value; setRegs(c); };
-  const addReg = () => setRegs([...regs, { name: "", passport_no: "", age: "" }]);
+  const addReg = (category = "adult") => setRegs([...regs, { name: "", passport_no: "", age: "", category, photo: "" }]);
   const rmReg = (i) => setRegs(regs.filter((_, x) => x !== i));
+  const onPhoto = (i) => (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    if (file.size > 3 * 1024 * 1024) { toast.error("حجم الصورة يتجاوز 3 ميجابايت"); return; }
+    const reader = new FileReader();
+    reader.onload = () => { const c = [...regs]; c[i].photo = reader.result; setRegs(c); };
+    reader.readAsDataURL(file);
+  };
+
+  // Per-traveler charge on the buyer's wallet, by category (child/infant fall back to adult if unset)
+  const pick = (cat, childKey, infantKey, adultVal) =>
+    cat === "child" ? (pkg[childKey] ?? adultVal) : cat === "infant" ? (pkg[infantKey] ?? adultVal) : adultVal;
+  const chargeOf = (cat) => {
+    if (isOffice) {
+      const net = Number(pick(cat, "child_net_cost", "infant_net_cost", pkg.net_cost_per_seat || 0));
+      const comm = Number(pick(cat, "child_commission", "infant_commission", pkg.buyer_office_commission || 0));
+      return +(net + comm * 0.1).toFixed(2);
+    }
+    return +Number(pick(cat, "child_sale_price", "infant_sale_price", pkg.final_sale_price || 0)).toFixed(2);
+  };
 
   const seats = regs.length;
-  const netTotal = (pkg.net_cost_per_seat || 0) * seats;
-  const platformFee = isOffice ? +((pkg.buyer_office_commission || 0) * seats * 0.1).toFixed(2) : 0;
-  const required = isOffice
-    ? +(netTotal + platformFee).toFixed(2)
-    : +((pkg.final_sale_price || 0) * seats).toFixed(2);
+  const required = +regs.reduce((s, r) => s + chargeOf(r.category), 0).toFixed(2);
 
   const book = async () => {
     setBusy(true);
     try {
       await api.post("/bookings", {
         package_id: id,
-        registrants: regs.map((r) => ({ name: r.name, passport_no: r.passport_no, age: Number(r.age) })),
+        registrants: regs.map((r) => ({ name: r.name, passport_no: r.passport_no, age: Number(r.age), category: r.category, photo: r.photo || undefined })),
         ref: localStorage.getItem("meraaj_ref") || undefined,
       });
       toast.success("تم إنشاء الحجز وتجميد الرصيد بنجاح");
@@ -119,7 +139,13 @@ export default function PackageDetail() {
           <div className="bg-white rounded-2xl border card-shadow p-6 sticky top-8">
             <div className="text-sm text-muted-foreground">سعر البيع النهائي للزبون</div>
             <div className="tabular text-3xl font-bold text-[#0A2540] mt-1">{money(pkg.final_sale_price, pkg.currency)}</div>
-            <div className="text-xs text-muted-foreground tabular mt-0.5">{equiv(pkg.final_sale_price, pkg.currency)} — الخصم من المحفظة بالدولار</div>
+            {pkg.currency === "SAR" && <div className="text-xs text-muted-foreground tabular mt-0.5">{equiv(pkg.final_sale_price, "SAR")}</div>}
+            {(CATS.child.offered || CATS.infant.offered) && (
+              <div className="mt-3 space-y-1 text-xs bg-[#F4F6F8] rounded-lg p-3" data-testid="tier-prices">
+                {CATS.child.offered && <div className="flex justify-between"><span className="text-muted-foreground">سعر الطفل</span><span className="tabular font-semibold">{money(chargeOf("child"), pkg.currency)}</span></div>}
+                {CATS.infant.offered && <div className="flex justify-between"><span className="text-muted-foreground">سعر الرضيع</span><span className="tabular font-semibold">{money(chargeOf("infant"), pkg.currency)}</span></div>}
+              </div>
+            )}
             {isOffice && (
               <div className="mt-4 space-y-2 text-sm">
                 <Row label="التكلفة الصافية (تدفعها أنت)" value={money(pkg.net_cost_per_seat, pkg.currency)} />
@@ -142,7 +168,7 @@ export default function PackageDetail() {
                     {regs.map((r, i) => (
                       <div key={i} className="border rounded-xl p-4 relative">
                         <div className="flex items-center justify-between mb-3">
-                          <span className="text-xs font-semibold text-muted-foreground">مسجّل #{i + 1}</span>
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded bg-[#EFF6FF] text-[#1D4ED8]" data-testid={`reg-cat-${i}`}>{CATS[r.category]?.label || "بالغ"} — {money(chargeOf(r.category), pkg.currency)}</span>
                           {regs.length > 1 && (
                             <button onClick={() => rmReg(i)} data-testid={`remove-reg-${i}`} className="text-destructive"><Trash2 className="w-4 h-4" /></button>
                           )}
@@ -160,23 +186,32 @@ export default function PackageDetail() {
                             <Label className="mb-1.5 block text-xs">العمر</Label>
                             <Input data-testid={`reg-age-${i}`} type="number" value={r.age} onChange={setReg(i, "age")} />
                           </div>
+                          {r.category === "infant" && (
+                            <div className="col-span-2">
+                              <Label className="mb-1.5 block text-xs">صورة الرضيع (اختياري)</Label>
+                              <input type="file" accept="image/*" data-testid={`reg-photo-${i}`} onChange={onPhoto(i)}
+                                     className="w-full text-xs file:me-2 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-[#0A2540] file:text-white file:cursor-pointer" />
+                              {r.photo && <span className="text-[11px] text-[#15803D] mt-1 inline-block">✓ تم إرفاق الصورة</span>}
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))}
-                    <Button variant="outline" onClick={addReg} data-testid="add-reg-btn" className="w-full"><Plus className="w-4 h-4" /> إضافة مسجّل</Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" size="sm" onClick={() => addReg("adult")} data-testid="add-adult-btn"><Plus className="w-4 h-4" /> بالغ</Button>
+                      {CATS.child.offered && <Button variant="outline" size="sm" onClick={() => addReg("child")} data-testid="add-child-btn"><Plus className="w-4 h-4" /> طفل</Button>}
+                      {CATS.infant.offered && <Button variant="outline" size="sm" onClick={() => addReg("infant")} data-testid="add-infant-btn"><Plus className="w-4 h-4" /> رضيع</Button>}
+                    </div>
 
                     <div className="bg-[#F4F6F8] rounded-xl p-4 text-sm space-y-2">
-                      {isOffice ? (
-                        <>
-                          <Row label={`التكلفة الصافية × ${seats}`} value={money(netTotal, pkg.currency)} />
-                          <Row label="عمولة المنصة (10% من عمولتك)" value={money(platformFee, pkg.currency)} />
-                        </>
-                      ) : (
-                        <Row label={`سعر البيع × ${seats}`} value={money((pkg.final_sale_price || 0) * seats, pkg.currency)} />
-                      )}
+                      {["adult", "child", "infant"].map((cat) => {
+                        const items = regs.filter((r) => r.category === cat);
+                        if (items.length === 0) return null;
+                        return <Row key={cat} label={`${CATS[cat].label} × ${items.length}`} value={money(items.length * chargeOf(cat), pkg.currency)} />;
+                      })}
                       <div className="border-t pt-2 flex justify-between font-bold text-[#0A2540]">
                         <span>الإجمالي المخصوم من رصيدك المتاح</span>
-                        <span className="tabular">{money(required, pkg.currency)}</span>
+                        <span className="tabular" data-testid="booking-total">{money(required, pkg.currency)}</span>
                       </div>
                     </div>
                   </div>
