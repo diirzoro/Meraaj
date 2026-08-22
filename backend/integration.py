@@ -243,7 +243,7 @@ def _adapt_partial(data: dict) -> dict:
         upd["hotels"] = m["hotels"]
     if has("features"):
         upd["features"] = m["features"]
-    if has("images", "image_url"):
+    if has("images", "image_url") and m["images"]:
         upd["images"] = m["images"]
     if has("room_pricing") or "pricing" in data:
         upd["net_cost_per_seat"] = m["net_cost_per_seat"]
@@ -320,6 +320,9 @@ async def share_package(request: Request,
         "seller_office_name": seller["office_name"] if seller else (body.get("office_name") or "مكتب رحال"),
     }
     if existing:
+        # Never overwrite a previously-stored valid images[] with an empty incoming array.
+        if not doc["images"] and existing.get("images"):
+            doc["images"] = existing["images"]
         await db.packages.update_one({"_id": existing["_id"]}, {"$set": doc})
         pkg_id = str(existing["_id"])
     else:
@@ -333,7 +336,7 @@ async def share_package(request: Request,
             "rahal_ref": ref_v,
             "office_ref": office_ref,
             "payload": body,
-            "images": mapped["images"],
+            "images": doc["images"],
             "features": mapped["features"],
             "room_pricing": mapped["room_pricing"],
             "transports": mapped["transports"],

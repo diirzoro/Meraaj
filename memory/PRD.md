@@ -94,6 +94,12 @@ B2B marketplace ("Meraaj Network" by Target Media) connecting travel/Umrah offic
 - Items NOT in Meraaj repo (Rahal ERP-side): professional confirmation dialogs (askConfirm/ConfirmHost), Delete Package action — no Meraaj changes. **IMAGE ISSUE LEFT OPEN per user (not touched).**
 - Verified E2E via signed HMAC curl: SHARE(object customer)→stored, guest sees customer object + scalar final_sale_price + net hidden; UPDATE(type-envelope)→handled 1; DEACTIVATE→hidden; ACTIVATE→visible. Frontend screenshot: 1,600/1,250/550 render, no literal NaN.
 
+## Image receiving hardening — DONE Aug 2026
+- `_adapt_package` already accepts `images[]` and normalizes a single `image_url` string → `[image_url]` (also handles `image_url` as list).
+- **Anti-wipe guard added**: `_adapt_partial` now only sets `images` when the incoming list is non-empty (`has(...) and m["images"]`); `share_package` re-share preserves `existing.images` when the incoming payload has no images. Prevents an empty payload from wiping a valid stored image. Mirror `rahal_packages.images` uses the preserved `doc["images"]`.
+- Frontend renders the Rahal URL `https://rahaal.targetmediagrp.com/api/meraaj/packages/<id>/image` directly as `<img src>` (Market/PackageDetail/EmbedMarket). Verified src is set correctly (image only appears broken inside the preview sandbox because that external prod domain is unreachable there; loads in production).
+- Verified E2E (signed HMAC curl): share(image_url string)→[url]; update(no images)→preserved; re-share(no images)→preserved; share(images[])→stored as-is. No frontend NaN.
+
 ## Backlog (P1/P2)
 - P1 (mobile next): Firebase FCM push (needs Firebase project + `google-services.json`; add `device_tokens` model + triggers on booking/wallet events) — Phase 3. Capgo OTA updates (needs Capgo account/key) — Phase 4.
 - P1: Real Rahal SSO + embedded signed-iframe (awaiting Rahal APIs). Atomic booking debit (transactions/optimistic locking) to prevent oversell/overdraw under concurrency.
