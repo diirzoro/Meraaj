@@ -25,6 +25,8 @@ export default function CreatePackage() {
     infant_net_cost: "", infant_sale_price: "", infant_commission: "",
   });
   const [hotels, setHotels] = useState([{ city: "", name: "", nights: "" }]);
+  const [rooms, setRooms] = useState([{ room_type: "double", net: "", commission: "", customer: "" }]);
+  const [features, setFeatures] = useState([""]);
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
 
@@ -47,6 +49,15 @@ export default function CreatePackage() {
         infant_commission: num(f.infant_commission),
         images: [IMG[f.type]],
         hotels: hotels.filter((h) => h.name).map((h) => ({ ...h, nights: Number(h.nights) || 0 })),
+        features: features.map((x) => x.trim()).filter(Boolean),
+        room_pricing: rooms
+          .filter((r) => r.customer !== "")
+          .map((r) => ({
+            room_type: r.room_type,
+            net: num(r.net),
+            commission: num(r.commission),
+            customer: Number(r.customer),
+          })),
       });
       toast.success("تم نشر البرنامج في السوق");
       navigate("/packages");
@@ -95,6 +106,83 @@ export default function CreatePackage() {
                 <div className="col-span-4"><Label className="mb-1.5 block text-xs">المدينة</Label><Input value={h.city} onChange={(e) => { const c = [...hotels]; c[i].city = e.target.value; setHotels(c); }} /></div>
                 <div className="col-span-2"><Label className="mb-1.5 block text-xs">ليالٍ</Label><Input type="number" value={h.nights} onChange={(e) => { const c = [...hotels]; c[i].nights = e.target.value; setHotels(c); }} /></div>
                 <div className="col-span-1">{hotels.length > 1 && <button type="button" onClick={() => setHotels(hotels.filter((_, x) => x !== i))} className="text-destructive p-2"><Trash2 className="w-4 h-4" /></button>}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="bg-white rounded-2xl border card-shadow p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-head font-bold text-[#0A2540]">تسعير الغرف</h3>
+                <p className="text-[11px] text-muted-foreground mt-1">للعرض فقط كمرجع للزبون — لا يؤثر على الخصم عند الحجز.</p>
+              </div>
+              <Button type="button" variant="outline" size="sm" data-testid="add-room-btn"
+                      onClick={() => setRooms([...rooms, { room_type: "double", net: "", commission: "", customer: "" }])}>
+                <Plus className="w-4 h-4" /> غرفة
+              </Button>
+            </div>
+            {rooms.map((r, i) => (
+              <div key={i} className="grid grid-cols-12 gap-2 items-end" data-testid={`room-row-${i}`}>
+                <div className="col-span-4 sm:col-span-3">
+                  <Label className="mb-1.5 block text-xs">نوع الغرفة</Label>
+                  <select data-testid={`room-type-${i}`} value={r.room_type}
+                          onChange={(e) => { const c = [...rooms]; c[i].room_type = e.target.value; setRooms(c); }}
+                          className="w-full h-9 rounded-md border border-input bg-transparent px-2 text-sm">
+                    <option value="double">ثنائية</option>
+                    <option value="triple">ثلاثية</option>
+                    <option value="quad">رباعية</option>
+                    <option value="quint">خماسية</option>
+                    <option value="single">فردية</option>
+                  </select>
+                </div>
+                <div className="col-span-3 sm:col-span-3">
+                  <Label className="mb-1.5 block text-xs">الصافي</Label>
+                  <Input data-testid={`room-net-${i}`} type="number" step="0.01" value={r.net}
+                         onChange={(e) => { const c = [...rooms]; c[i].net = e.target.value; setRooms(c); }} />
+                </div>
+                <div className="col-span-3 sm:col-span-3">
+                  <Label className="mb-1.5 block text-xs">العمولة</Label>
+                  <Input data-testid={`room-comm-${i}`} type="number" step="0.01" value={r.commission}
+                         onChange={(e) => { const c = [...rooms]; c[i].commission = e.target.value; setRooms(c); }} />
+                </div>
+                <div className="col-span-2 sm:col-span-2">
+                  <Label className="mb-1.5 block text-xs">سعر العميل</Label>
+                  <Input data-testid={`room-customer-${i}`} type="number" step="0.01" value={r.customer}
+                         onChange={(e) => { const c = [...rooms]; c[i].customer = e.target.value; setRooms(c); }} />
+                </div>
+                <div className="col-span-12 sm:col-span-1 flex justify-end">
+                  {rooms.length > 1 && (
+                    <button type="button" data-testid={`remove-room-${i}`}
+                            onClick={() => setRooms(rooms.filter((_, x) => x !== i))} className="text-destructive p-2">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="bg-white rounded-2xl border card-shadow p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-head font-bold text-[#0A2540]">مميزات البرنامج</h3>
+                <p className="text-[11px] text-muted-foreground mt-1">مثل: فطور مجاني، واي فاي، مواصلات VIP…</p>
+              </div>
+              <Button type="button" variant="outline" size="sm" data-testid="add-feature-btn"
+                      onClick={() => setFeatures([...features, ""])}>
+                <Plus className="w-4 h-4" /> ميزة
+              </Button>
+            </div>
+            {features.map((ft, i) => (
+              <div key={i} className="flex items-center gap-2" data-testid={`feature-row-${i}`}>
+                <Input data-testid={`feature-input-${i}`} value={ft} placeholder="اكتب الميزة"
+                       onChange={(e) => { const c = [...features]; c[i] = e.target.value; setFeatures(c); }} />
+                {features.length > 1 && (
+                  <button type="button" data-testid={`remove-feature-${i}`}
+                          onClick={() => setFeatures(features.filter((_, x) => x !== i))} className="text-destructive p-2">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             ))}
           </div>

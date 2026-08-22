@@ -80,6 +80,12 @@ B2B marketplace ("Meraaj Network" by Target Media) connecting travel/Umrah offic
 - Icon+splash generated (navy/gold brand) from `frontend/assets/` → 56 Android resources. Android project scaffolded at `frontend/android/`. Web build unaffected (verified 200 + clean console + landing screenshot).
 - Local build steps documented in `frontend/ANDROID_BUILD.md` (yarn build → cap sync → cap open android; gradlew assembleDebug/bundleRelease). APK/AAB built on user's machine (no Android SDK in server env).
 
+## Manual room pricing & features in CreatePackage — DONE Aug 2026
+- Per user request (Option a: display-only, no booking-engine impact): offices can now add **room pricing** (نوع الغرفة double/triple/quad/quint/single + net + commission + customer) and **program features** (نصية) directly in `CreatePackage.js` (previously these only arrived via Rahal). Dynamic add/remove rows.
+- Backend `PackageInput` gained `room_pricing: List[RoomPricingInput]` ({room_type, net?, commission?, customer}) and `features: List[str]`; persisted via `payload.model_dump()`. Booking/wallet engine UNCHANGED (still adult/child/infant tier pricing).
+- Display already existed: `PackageDetail.js` renders أسعار الغرف table + مميزات checklist; Market card computes "يبدأ من" from lowest room `customer`. `_view_package` hides net/commission from non-office & strips room_pricing to {room_type,customer}.
+- Verified: curl (create with 2 rooms + 3 features → stored & returned; guest GET hides net/commission, keeps customer+features) + create-form screenshot (both sections render, layout intact).
+
 ## Backlog (P1/P2)
 - P1 (mobile next): Firebase FCM push (needs Firebase project + `google-services.json`; add `device_tokens` model + triggers on booking/wallet events) — Phase 3. Capgo OTA updates (needs Capgo account/key) — Phase 4.
 - P1: Real Rahal SSO + embedded signed-iframe (awaiting Rahal APIs). Atomic booking debit (transactions/optimistic locking) to prevent oversell/overdraw under concurrency.

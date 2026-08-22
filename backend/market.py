@@ -34,6 +34,13 @@ class HotelInput(BaseModel):
     distance_m: Optional[int] = None
 
 
+class RoomPricingInput(BaseModel):
+    room_type: str  # double | triple | quad | quint | single
+    net: Optional[float] = None
+    commission: Optional[float] = None
+    customer: float
+
+
 class PackageInput(BaseModel):
     type: str  # umrah | tourism
     title: str
@@ -44,6 +51,8 @@ class PackageInput(BaseModel):
     transport: str = ""
     hotels: List[HotelInput] = []
     images: List[str] = []
+    features: List[str] = []
+    room_pricing: List[RoomPricingInput] = []
     net_cost_per_seat: float
     final_sale_price: float
     buyer_office_commission: float
