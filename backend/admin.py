@@ -1,8 +1,46 @@
 from fastapi import APIRouter, HTTPException, Depends
 from db import db, serialize, oid, now_iso, adjust_wallet, log_txn, wallet_available
 from security import require_admin
+from market import _room_customer_price, _room_num
+from integration import notify_rahal
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+@router.post("/packages/resync")
+async def resync_packages(admin: dict = Depends(require_admin)):
+    """Batch re-sync: re-derive flat scalar pricing (final_sale_price / net / commission)
+    from each package's room_pricing (adult) so corrected prices show in the market, and
+    push an outbound update to Rahal for Rahal-origin packages."""
+    docs = await db.packages.find({}).to_list(5000)
+    updated, notified = 0, 0
+    for d in docs:
+        rooms = d.get("room_pricing") or []
+        if not rooms:
+            continue
+        base = rooms[0]
+        upd = {}
+        def _needs(v):
+            return v is None or isinstance(v, dict) or not v
+        sale = _room_customer_price(base.get("customer"), "adult")
+        net = _room_num(base.get("net"), "adult")
+        comm = _room_num(base.get("commission"), "adult")
+        if sale is not None and _needs(d.get("final_sale_price")):
+            upd["final_sale_price"] = round(sale, 2)
+        if net is not None and _needs(d.get("net_cost_per_seat")):
+            upd["net_cost_per_seat"] = round(net, 2)
+        if comm is not None and (d.get("buyer_office_commission") is None or isinstance(d.get("buyer_office_commission"), dict)):
+            upd["buyer_office_commission"] = round(comm, 2)
+        if upd:
+            await db.packages.update_one({"_id": d["_id"]}, {"$set": upd})
+            updated += 1
+        if d.get("rahal_ref"):
+            await notify_rahal("package.updated", {
+                "meraaj_package_id": str(d["_id"]), "package_ref": d.get("rahal_ref"),
+                "room_pricing": rooms,
+            })
+            notified += 1
+    return {"ok": True, "total": len(docs), "updated": updated, "rahal_notified": notified}
 
 
 @router.get("/dashboard")

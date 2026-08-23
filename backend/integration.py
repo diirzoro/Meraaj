@@ -261,6 +261,30 @@ def _adapt_partial(data: dict) -> dict:
     return upd
 
 
+def _price_warnings(mapped: dict, ref: str):
+    """Data-quality warnings for incoming Rahal pricing (logged, never blocks)."""
+    warns = []
+    rooms = mapped.get("room_pricing") or []
+    if not rooms:
+        warns.append("لا توجد أسعار غرف (room_pricing فارغ)")
+    for r in rooms:
+        rt = r.get("room_type", "?")
+        cust = r.get("customer")
+        adult_missing = cust is None or (isinstance(cust, dict) and cust.get("adult") is None)
+        if adult_missing:
+            warns.append(f"غرفة {rt}: سعر البالغ للعميل مفقود")
+        if isinstance(cust, dict):
+            if cust.get("child") is None:
+                warns.append(f"غرفة {rt}: سعر الطفل مفقود")
+            if cust.get("infant") is None:
+                warns.append(f"غرفة {rt}: سعر الرضيع مفقود")
+        if r.get("net") is None:
+            warns.append(f"غرفة {rt}: الصافي (net) مفقود")
+        if r.get("commission") is None:
+            warns.append(f"غرفة {rt}: العمولة (commission) مفقودة")
+    return warns
+
+
 @router.post("/packages/share")
 async def share_package(request: Request,
                         x_rahal_api_key: str = Header(default=""),
@@ -349,7 +373,17 @@ async def share_package(request: Request,
         }, "$setOnInsert": {"created_at": now_iso()}},
         upsert=True,
     )
+    # Data-quality audit: log a warning when incoming prices are incomplete (never blocks)
+    warns = _price_warnings(mapped, ref_v)
+    await db.rahal_packages.update_one({"rahal_ref": ref_v}, {"$set": {"price_warnings": warns}})
+    if warns:
+        await db.rahal_inbound_log.insert_one({
+            "event": "data.warning", "event_id": None, "rahal_ref": ref_v,
+            "meraaj_package_id": pkg_id, "warnings": warns, "handled": True,
+            "created_at": now_iso(),
+        })
     return {"remote_id": pkg_id, "meraaj_package_id": pkg_id, "status": "listed",
+            "price_warnings": warns,
             "market_url": f"{os.environ.get('FRONTEND_URL','')}/market/{pkg_id}"}
 
 

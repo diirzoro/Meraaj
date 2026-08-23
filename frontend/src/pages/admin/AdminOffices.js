@@ -3,13 +3,23 @@ import api, { apiError } from "@/lib/api";
 import { PageHeader } from "@/components/Layout";
 import { money, fmtDate } from "@/lib/format";
 import { Button } from "@/components/ui/button";
-import { MessageCircle } from "lucide-react";
+import { MessageCircle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
 export default function AdminOffices() {
   const [offices, setOffices] = useState([]);
+  const [resyncing, setResyncing] = useState(false);
   const load = () => api.get("/admin/offices").then((r) => setOffices(r.data));
   useEffect(() => { load(); }, []);
+
+  const resync = async () => {
+    if (resyncing) return;
+    setResyncing(true);
+    try {
+      const r = await api.post("/admin/packages/resync");
+      toast.success(`تمت إعادة المزامنة — حُدّث ${r.data.updated} برنامج، وأُرسل ${r.data.rahal_notified} إلى رحال`);
+    } catch (e) { toast.error(apiError(e)); } finally { setResyncing(false); }
+  };
 
   const setStatus = async (id, status) => {
     try { await api.patch(`/admin/offices/${id}/status`, { status }); toast.success(status === "active" ? "تم التفعيل" : "تم الإيقاف"); load(); }
@@ -24,7 +34,8 @@ export default function AdminOffices() {
 
   return (
     <>
-      <PageHeader title="إدارة المكاتب" subtitle="تفعيل، إيقاف، ومراقبة أرصدة المكاتب" />
+      <PageHeader title="إدارة المكاتب" subtitle="تفعيل، إيقاف، ومراقبة أرصدة المكاتب"
+        action={<Button onClick={resync} disabled={resyncing} data-testid="batch-resync-btn" className="bg-[#0A2540] hover:bg-[#061A2E]"><RefreshCw className={`w-4 h-4 ${resyncing ? "animate-spin" : ""}`} /> {resyncing ? "جارٍ المزامنة..." : "إعادة مزامنة الأسعار"}</Button>} />
       <div className="bg-white rounded-2xl border card-shadow overflow-x-auto">
         {offices.length === 0 ? <div className="p-10 text-center text-muted-foreground text-sm">لا توجد مكاتب</div> : (
           <table className="w-full text-sm min-w-[760px]">
