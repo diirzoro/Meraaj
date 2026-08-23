@@ -4,6 +4,7 @@ import api from "@/lib/api";
 import { PageHeader } from "@/components/Layout";
 import { money, equiv, fmtDate, PKG_TYPE, roomCustomer } from "@/lib/format";
 import { MapPin, Users, CalendarDays, Search, Landmark, Bus, Wifi, Coffee, RotateCcw, Clock, TrendingUp } from "lucide-react";
+import { PkgImage } from "@/components/PkgImage";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
@@ -181,9 +182,7 @@ export default function Market() {
               <Link key={p.id} to={`/market/${p.id}`} data-testid={`pkg-card-${p.id}`}
                     className="hover-lift bg-white rounded-2xl border overflow-hidden card-shadow group">
                 <div className="aspect-[4/3] bg-[#0A2540] relative overflow-hidden">
-                  {p.images?.[0]
-                    ? <img src={p.images[0]} alt={p.title} className="w-full h-full object-cover" />
-                    : <div className="w-full h-full flex items-center justify-center"><Landmark className="w-12 h-12 text-white/15" /></div>}
+                  <PkgImage src={p.images?.[0]} alt={p.title} />
                   <span className="absolute top-3 start-3 bg-white/90 text-[#0A2540] text-xs font-semibold px-3 py-1 rounded-full">
                     {PKG_TYPE[p.type] || p.type}
                   </span>

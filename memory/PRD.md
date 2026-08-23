@@ -148,6 +148,15 @@ Files: NEW `frontend/src/lib/imageOptimizer.js`; edited `CreatePackage.js` (imag
 - **Rahaal**: images arrive as external URLs — untouched, still displayed (contract unchanged).
 - Verified (Playwright): 5.1 MB JPEG upload → optimized **WebP ~588 KB (~89% smaller)**, `data:image/webp` confirmed; create form renders; large landscape resized. Portrait/small handled by the same ratio logic.
 
+## Full responsive pass + image fallback — DONE Aug 2026 (testing iteration_9: 100%)
+Smallest compatible fixes (no redesign, no backend/contract/HMAC/booking/pricing/wallet change):
+- `dialog.jsx`: DialogContent now `w-[calc(100%-2rem)] max-w-lg max-h-[90vh] overflow-y-auto rounded-lg` → every modal fits inside the viewport (gutters + internal scroll + visible close) down to 320px.
+- `index.css`: global `html,body,#root { max-width:100%; overflow-x:hidden }` + `img { max-width:100% }` → no accidental horizontal overflow.
+- Cards already `aspect-[4/3]` + `object-cover` (Market/Landing/Embed); PackageDetail hero unchanged.
+- NEW `components/PkgImage.js`: package image with graceful fallback — shows placeholder when src is missing OR the image fails to load (fixes dead external Rahaal image URLs rendering a broken-image glyph). Used in Market/Landing/PackageDetail/Embed.
+- Verified by testing agent (real Playwright viewport emulation) at 320/360/375/390/412/430 mobile + 1024/1280/1440/1920 desktop across all major screens: no horizontal overflow anywhere; booking & topup dialogs fit at 360 & 320; cards/images responsive; RTL correct; market filters work at mobile & desktop; room-pricing (double 1500 / quad 1100) correct; guest browsing + booking→login guard; **regressions all green**: idle auto-lock + resume, hard-refresh→dashboard, manual-logout no-restore, admin WhatsApp column. Post-fix: 0 broken card images.
+- Note (from testing): mobile sidebar nav is off-canvas — open via `menu-open-btn` before nav-* links at <1024px (existing behavior, not a bug). Office-role booking total is intentionally net+10% commission.
+
 ## Backlog (P1/P2)
 - P1 (mobile next): Firebase FCM push (needs Firebase project + `google-services.json`; add `device_tokens` model + triggers on booking/wallet events) — Phase 3. Capgo OTA updates (needs Capgo account/key) — Phase 4.
 - P1: Real Rahal SSO + embedded signed-iframe (awaiting Rahal APIs). Atomic booking debit (transactions/optimistic locking) to prevent oversell/overdraw under concurrency.

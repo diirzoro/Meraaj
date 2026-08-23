@@ -2,10 +2,11 @@ import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { money, fmtDate, PKG_TYPE, roomCustomer } from "@/lib/format";
+import { PkgImage } from "@/components/PkgImage";
 import { Button } from "@/components/ui/button";
 import {
   Network, Store, Wallet, ShieldCheck, ArrowLeft, CheckCircle2,
-  Building2, RefreshCw, TrendingUp, Lock, Users, Sparkles, CalendarDays, MapPin, Landmark,
+  Building2, RefreshCw, TrendingUp, Lock, Users, Sparkles, CalendarDays, MapPin,
 } from "lucide-react";
 
 const HERO = "https://images.unsplash.com/photo-1592326871020-04f58c1a52f3?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDZ8MHwxfHNlYXJjaHwxfHxLYWFiYSUyME1lY2NhJTIwcGlsZ3JpbWFnZSUyMGNyb3dkfGVufDB8fHx8MTc4NzI0OTU0Mnww&ixlib=rb-4.1.0&q=85";
@@ -128,9 +129,7 @@ export default function Landing() {
                 <Link key={p.id} to={`/market/${p.id}`} data-testid={`landing-pkg-${p.id}`}
                       className="hover-lift bg-white rounded-2xl border overflow-hidden card-shadow group">
                   <div className="aspect-[4/3] bg-[#0A2540] relative overflow-hidden">
-                    {p.images?.[0]
-                      ? <img src={p.images[0]} alt={p.title} className="w-full h-full object-cover" />
-                      : <div className="w-full h-full flex items-center justify-center"><Landmark className="w-12 h-12 text-white/15" /></div>}
+                    <PkgImage src={p.images?.[0]} alt={p.title} />
                     <span className="absolute top-3 start-3 bg-white/90 text-[#0A2540] text-xs font-semibold px-3 py-1 rounded-full">{PKG_TYPE[p.type] || p.type}</span>
                   </div>
                   <div className="p-5">

@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
-import { MapPin, Users, CalendarDays, Building2, Plane, Hotel, Plus, Trash2, ShoppingCart, Landmark, CheckCircle2, Bus, BedDouble, ListChecks } from "lucide-react";
+import { MapPin, Users, CalendarDays, Building2, Plane, Hotel, Plus, Trash2, ShoppingCart, CheckCircle2, Bus, BedDouble, ListChecks } from "lucide-react";
 
 const ROOM_AR = { double: "ثنائية", twin: "ثنائية", triple: "ثلاثية", quad: "رباعية", quint: "خماسية", single: "فردية" };
 const TRANSPORT_AR = { bus: "باص", flight: "طيران", air: "طيران", train: "قطار", car: "سيارة" };
@@ -97,10 +97,8 @@ export default function PackageDetail() {
 
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
-          <div className="rounded-2xl overflow-hidden border card-shadow h-72 bg-[#0A2540] flex items-center justify-center">
-            {pkg.images?.[0]
-              ? <img src={pkg.images[0]} alt={pkg.title} className="w-full h-full object-cover" data-testid="pkg-hero-image" />
-              : <Landmark className="w-16 h-16 text-white/15" />}
+          <div className="rounded-2xl overflow-hidden border card-shadow h-72 bg-[#0A2540] flex items-center justify-center" data-testid="pkg-hero-image">
+            <PkgImage src={pkg.images?.[0]} alt={pkg.title} iconClass="w-16 h-16 text-white/15" />
           </div>
           {pkg.images?.length > 1 && (
             <div className="grid grid-cols-4 gap-3" data-testid="pkg-gallery">

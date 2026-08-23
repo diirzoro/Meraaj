@@ -71,6 +71,10 @@ h1, h2, h3, h4, .font-head {
 
 ::selection { background: #0A2540; color: #fff; }
 
+/* Responsive safety: prevent accidental horizontal overflow on narrow devices */
+html, body, #root { max-width: 100%; overflow-x: hidden; }
+img { max-width: 100%; }
+
 @layer base {
     body { @apply bg-background text-foreground; }
 }

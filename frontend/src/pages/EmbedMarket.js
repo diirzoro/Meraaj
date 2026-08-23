@@ -97,7 +97,7 @@ export default function EmbedMarket() {
             <button key={p.id} onClick={() => setSel(p)} data-testid={`embed-pkg-${p.id}`}
                     className="text-start bg-white rounded-2xl border overflow-hidden hover:shadow-lg transition-shadow">
               <div className="aspect-[4/3] bg-[#0A2540] relative overflow-hidden">
-                {p.images?.[0] && <img src={p.images[0]} alt={p.title} className="w-full h-full object-cover" />}
+                <PkgImage src={p.images?.[0]} alt={p.title} />
                 <span className="absolute top-2 start-2 bg-white/90 text-[#0A2540] text-xs font-semibold px-2 py-0.5 rounded-full">{PKG_TYPE[p.type] || p.type}</span>
               </div>
               <div className="p-4">
