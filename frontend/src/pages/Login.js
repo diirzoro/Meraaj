@@ -28,7 +28,9 @@ export default function Login() {
     try {
       const u = await login(email, password);
       toast.success("مرحباً بعودتك");
-      navigate(u.role === "super_admin" ? "/admin" : "/dashboard");
+      const next = new URLSearchParams(window.location.search).get("next");
+      if (next && u.role !== "super_admin") navigate(next);
+      else navigate(u.role === "super_admin" ? "/admin" : "/dashboard");
     } catch (err) {
       toast.error(apiError(err));
     } finally {

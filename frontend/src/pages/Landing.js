@@ -1,9 +1,11 @@
 import { Link, useNavigate } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import api from "@/lib/api";
+import { money, fmtDate, PKG_TYPE, roomCustomer } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import {
   Network, Store, Wallet, ShieldCheck, ArrowLeft, CheckCircle2,
-  Building2, RefreshCw, TrendingUp, Lock, Users, Sparkles,
+  Building2, RefreshCw, TrendingUp, Lock, Users, Sparkles, CalendarDays, MapPin, Landmark,
 } from "lucide-react";
 
 const HERO = "https://images.unsplash.com/photo-1592326871020-04f58c1a52f3?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDZ8MHwxfHNlYXJjaHwxfHxLYWFiYSUyME1lY2NhJTIwcGlsZ3JpbWFnZSUyMGNyb3dkfGVufDB8fHx8MTc4NzI0OTU0Mnww&ixlib=rb-4.1.0&q=85";
@@ -30,9 +32,11 @@ const lifecycle = [
 
 export default function Landing() {
   const navigate = useNavigate();
+  const [programs, setPrograms] = useState([]);
   useEffect(() => {
     const ref = new URLSearchParams(window.location.search).get("ref");
     if (ref) localStorage.setItem("meraaj_ref", ref);
+    api.get("/packages").then((r) => setPrograms((r.data || []).slice(0, 6))).catch(() => {});
   }, []);
   return (
     <div className="min-h-screen bg-[#F4F6F8]" dir="rtl">
@@ -101,6 +105,56 @@ export default function Landing() {
           </div>
         </div>
       </section>
+
+      {/* Latest programs (public browsing) */}
+      {programs.length > 0 && (
+        <section className="max-w-6xl mx-auto px-5 sm:px-8 py-20" data-testid="landing-programs">
+          <div className="flex items-end justify-between mb-10 gap-4 flex-wrap">
+            <div>
+              <h2 className="font-head text-3xl sm:text-4xl font-bold text-[#0A2540] mb-3">أحدث البرامج المتاحة</h2>
+              <p className="text-muted-foreground">تصفّح أحدث عروض العمرة والسياحة من المكاتب — دون تسجيل دخول.</p>
+            </div>
+            <Button variant="outline" onClick={() => navigate("/market")} data-testid="landing-view-all-btn"
+                    className="border-[#0A2540] text-[#0A2540] hover:bg-[#0A2540]/5 h-11 px-6">
+              تصفّح كل البرامج <ArrowLeft className="w-4 h-4" />
+            </Button>
+          </div>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {programs.map((p) => {
+              const rooms = Array.isArray(p.room_pricing) ? p.room_pricing : [];
+              const adults = rooms.map((r) => roomCustomer(r?.customer, "adult")).filter((v) => v != null && !isNaN(v) && v > 0);
+              const start = adults.length ? Math.min(...adults) : (Number(p.final_sale_price) || 0);
+              return (
+                <Link key={p.id} to={`/market/${p.id}`} data-testid={`landing-pkg-${p.id}`}
+                      className="hover-lift bg-white rounded-2xl border overflow-hidden card-shadow group">
+                  <div className="h-44 bg-[#0A2540] relative overflow-hidden">
+                    {p.images?.[0]
+                      ? <img src={p.images[0]} alt={p.title} className="w-full h-full object-cover" />
+                      : <div className="w-full h-full flex items-center justify-center"><Landmark className="w-12 h-12 text-white/15" /></div>}
+                    <span className="absolute top-3 start-3 bg-white/90 text-[#0A2540] text-xs font-semibold px-3 py-1 rounded-full">{PKG_TYPE[p.type] || p.type}</span>
+                  </div>
+                  <div className="p-5">
+                    <h3 className="font-head font-bold text-[#0A2540] line-clamp-1">{p.title}</h3>
+                    <p className="text-xs text-muted-foreground mt-1">{p.seller_office_name}</p>
+                    <div className="flex flex-wrap gap-3 mt-3 text-xs text-muted-foreground">
+                      <span className="flex items-center gap-1"><CalendarDays className="w-3.5 h-3.5" /> {fmtDate(p.departure_date)}</span>
+                      <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" /> {p.departure_city || "-"}</span>
+                      <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" /> {p.available_seats} مقعد</span>
+                    </div>
+                    <div className="mt-4 pt-4 border-t">
+                      <div className="text-[11px] text-muted-foreground">{adults.length ? "يبدأ من" : "سعر البيع للزبون"}</div>
+                      <div className="flex items-center gap-2">
+                        <div className="tabular text-xl font-bold text-[#0A2540]">{money(start, p.currency)}</div>
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${p.currency === "USD" ? "bg-[#ECFDF5] text-[#047857]" : "bg-[#EFF6FF] text-[#1D4ED8]"}`}>{p.currency === "USD" ? "USD" : "SAR"}</span>
+                      </div>
+                    </div>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* Features */}
       <section className="max-w-6xl mx-auto px-5 sm:px-8 py-20">

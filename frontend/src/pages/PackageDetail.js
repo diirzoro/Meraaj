@@ -229,6 +229,11 @@ export default function PackageDetail() {
 
             {isOwner ? (
               <div className="mt-5 text-center text-sm bg-[#F4F6F8] rounded-lg py-3 text-muted-foreground">هذا البرنامج من إضافتك</div>
+            ) : !user ? (
+              <Button data-testid="open-booking-btn" onClick={() => navigate(`/login?next=/market/${id}`)}
+                      className="w-full mt-5 h-11 bg-[#0A2540] hover:bg-[#061A2E]">
+                <ShoppingCart className="w-4 h-4" /> احجز الآن
+              </Button>
             ) : (
               <Dialog open={open} onOpenChange={setOpen}>
                 <DialogTrigger asChild>

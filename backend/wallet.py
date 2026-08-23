@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from db import db, serialize, oid, now_iso, adjust_wallet, log_txn, wallet_available, CurrencyField
 from security import require_buyer
+from datetime import datetime, timezone
 
 router = APIRouter(prefix="/api/wallet", tags=["wallet"])
 
@@ -28,6 +29,22 @@ class TopupInput(BaseModel):
 @router.post("/topups")
 async def create_topup(payload: TopupInput, user: dict = Depends(require_buyer)):
     currency = payload.currency
+    # Guard against duplicate submissions (flaky network / repeated clicks):
+    # reject an identical pending topup (same amount+currency) created within the last 2 minutes.
+    recent = await db.topups.find_one(
+        {"office_id": str(user["_id"]), "amount": round(payload.amount, 2),
+         "currency": currency, "status": "pending"},
+        sort=[("created_at", -1)])
+    if recent and recent.get("created_at"):
+        try:
+            prev = datetime.fromisoformat(recent["created_at"])
+            if prev.tzinfo is None:
+                prev = prev.replace(tzinfo=timezone.utc)
+            within = (datetime.now(timezone.utc) - prev).total_seconds() < 120
+        except (ValueError, TypeError):
+            within = True
+        if within:
+            raise HTTPException(409, "لديك طلب شحن بنفس المبلغ قيد المعالجة")
     doc = {
         "office_id": str(user["_id"]),
         "office_name": user["office_name"],

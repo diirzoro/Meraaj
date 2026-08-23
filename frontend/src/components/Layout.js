@@ -125,3 +125,32 @@ export function PageHeader({ title, subtitle, action }) {
     </div>
   );
 }
+
+
+export function PublicLayout({ children }) {
+  const navigate = useNavigate();
+  return (
+    <div className="min-h-screen bg-[#F4F6F8]" dir="rtl">
+      <header className="sticky top-0 z-40 bg-[#0A2540] border-b border-white/10">
+        <div className="max-w-6xl mx-auto px-5 sm:px-8 h-16 flex items-center justify-between">
+          <button onClick={() => navigate("/")} className="flex items-center gap-3" data-testid="public-logo-btn">
+            <div className="w-9 h-9 rounded-xl bg-[#D4AF37] flex items-center justify-center"><Network className="w-5 h-5 text-[#0A2540]" /></div>
+            <div className="text-white text-start">
+              <div className="font-head font-bold leading-tight">معراج نتورك</div>
+              <div className="text-[10px] text-white/50">Meraaj Network</div>
+            </div>
+          </button>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <NavLink to="/market" data-testid="public-nav-market"
+                     className="text-white/80 hover:text-white text-sm font-medium hidden sm:block">سوق البرامج</NavLink>
+            <button onClick={() => navigate("/login")} data-testid="public-login-btn"
+                    className="text-white hover:bg-white/10 h-9 px-4 rounded-md text-sm">تسجيل الدخول</button>
+            <button onClick={() => navigate("/register")} data-testid="public-register-btn"
+                    className="bg-[#D4AF37] hover:bg-[#c39f2f] text-[#0A2540] font-semibold h-9 px-4 rounded-md text-sm">إنشاء حساب</button>
+          </div>
+        </div>
+      </header>
+      <main className="max-w-6xl mx-auto px-5 sm:px-8 py-8 animate-fade-up">{children}</main>
+    </div>
+  );
+}

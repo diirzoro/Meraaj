@@ -122,6 +122,8 @@ function CurrencySelect({ value, onChange, testid }) {
 
 function TopupDialog({ onDone }) {
   const [open, setOpen] = useState(false);
+  const [successOpen, setSuccessOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [f, setF] = useState({ amount: "", currency: "SAR", method: "حوالة بنكية", receipt_url: "" });
   const [fileName, setFileName] = useState("");
   const onFile = (e) => {
@@ -134,39 +136,63 @@ function TopupDialog({ onDone }) {
     reader.readAsDataURL(file);
   };
   const submit = async () => {
+    if (busy) return; // prevent double submission
+    setBusy(true);
     try {
       await api.post("/wallet/topups", { amount: Number(f.amount), currency: f.currency, method: f.method, receipt_url: f.receipt_url });
-      toast.success("أُرسل طلب الشحن للإدارة للمراجعة");
-      setOpen(false); setF({ amount: "", currency: "SAR", method: "حوالة بنكية", receipt_url: "" }); setFileName(""); onDone();
-    } catch (e) { toast.error(apiError(e)); }
+      setOpen(false);
+      setF({ amount: "", currency: "SAR", method: "حوالة بنكية", receipt_url: "" }); setFileName("");
+      setSuccessOpen(true);
+      onDone();
+    } catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
   };
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild><Button className="bg-[#0A2540] hover:bg-[#061A2E]" data-testid="open-topup-btn"><Upload className="w-4 h-4" /> شحن المحفظة</Button></DialogTrigger>
-      <DialogContent dir="rtl">
-        <DialogHeader><DialogTitle className="font-head text-[#0A2540]">شحن المحفظة برفع إشعار حوالة</DialogTitle></DialogHeader>
-        <div className="space-y-4">
-          <div><Label className="mb-2 block">العملة (تُضاف كما هي دون تحويل)</Label>
-            <CurrencySelect value={f.currency} onChange={(v) => setF({ ...f, currency: v })} testid="topup-currency" />
+    <>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogTrigger asChild><Button className="bg-[#0A2540] hover:bg-[#061A2E]" data-testid="open-topup-btn"><Upload className="w-4 h-4" /> شحن المحفظة</Button></DialogTrigger>
+        <DialogContent dir="rtl">
+          <DialogHeader><DialogTitle className="font-head text-[#0A2540]">شحن المحفظة برفع إشعار حوالة</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <div><Label className="mb-2 block">العملة (تُضاف كما هي دون تحويل)</Label>
+              <CurrencySelect value={f.currency} onChange={(v) => setF({ ...f, currency: v })} testid="topup-currency" />
+            </div>
+            <div><Label className="mb-2 block">المبلغ</Label>
+              <Input data-testid="topup-amount" type="number" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} />
+              {f.amount && <p className="text-xs text-muted-foreground mt-1 tabular">{money(f.amount, f.currency)} {equiv(f.amount, f.currency)}</p>}
+            </div>
+            <div><Label className="mb-2 block">طريقة الدفع</Label>
+              <select data-testid="topup-method" value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })} className="w-full h-9 rounded-md border border-input bg-transparent px-3 text-sm">
+                <option>حوالة بنكية</option><option>صرافة</option><option>نقداً</option>
+              </select>
+            </div>
+            <div><Label className="mb-2 block">إشعار الحوالة (صورة أو PDF)</Label>
+              <input data-testid="topup-receipt-file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" onChange={onFile}
+                     className="w-full text-sm file:me-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-[#0A2540] file:text-white file:cursor-pointer" />
+              {fileName && <p className="text-xs text-[#15803D] mt-2">✓ تم اختيار: {fileName}</p>}
+            </div>
           </div>
-          <div><Label className="mb-2 block">المبلغ</Label>
-            <Input data-testid="topup-amount" type="number" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} />
-            {f.amount && <p className="text-xs text-muted-foreground mt-1 tabular">{money(f.amount, f.currency)} {equiv(f.amount, f.currency)}</p>}
+          <DialogFooter>
+            <Button className="bg-[#0A2540] hover:bg-[#061A2E]" onClick={submit} disabled={busy || !f.amount || !f.receipt_url} data-testid="submit-topup-btn">
+              {busy ? "جارٍ الإرسال..." : "إرسال الطلب"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={successOpen} onOpenChange={setSuccessOpen}>
+        <DialogContent dir="rtl" className="max-w-sm" data-testid="topup-success-dialog">
+          <DialogHeader><DialogTitle className="sr-only">تم إرسال طلب الشحن</DialogTitle></DialogHeader>
+          <div className="flex flex-col items-center text-center py-4">
+            <div className="w-16 h-16 rounded-full bg-[#F0FDF4] flex items-center justify-center mb-4">
+              <CheckCircle2 className="w-9 h-9 text-[#15803D]" />
+            </div>
+            <h3 className="font-head text-xl font-bold text-[#0A2540] mb-2">تم إرسال طلب الشحن بنجاح</h3>
+            <p className="text-sm text-muted-foreground leading-relaxed">طلبك الآن قيد المراجعة من الإدارة، وسيُضاف الرصيد إلى محفظتك فور اعتماده.</p>
+            <Button className="mt-6 w-full h-11 bg-[#0A2540] hover:bg-[#061A2E]" onClick={() => setSuccessOpen(false)} data-testid="topup-success-ok-btn">تمام</Button>
           </div>
-          <div><Label className="mb-2 block">طريقة الدفع</Label>
-            <select data-testid="topup-method" value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })} className="w-full h-9 rounded-md border border-input bg-transparent px-3 text-sm">
-              <option>حوالة بنكية</option><option>صرافة</option><option>نقداً</option>
-            </select>
-          </div>
-          <div><Label className="mb-2 block">إشعار الحوالة (صورة أو PDF)</Label>
-            <input data-testid="topup-receipt-file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" onChange={onFile}
-                   className="w-full text-sm file:me-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-[#0A2540] file:text-white file:cursor-pointer" />
-            {fileName && <p className="text-xs text-[#15803D] mt-2">✓ تم اختيار: {fileName}</p>}
-          </div>
-        </div>
-        <DialogFooter><Button className="bg-[#0A2540] hover:bg-[#061A2E]" onClick={submit} disabled={!f.amount || !f.receipt_url} data-testid="submit-topup-btn">إرسال الطلب</Button></DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

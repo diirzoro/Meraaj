@@ -100,6 +100,19 @@ B2B marketplace ("Meraaj Network" by Target Media) connecting travel/Umrah offic
 - Frontend renders the Rahal URL `https://rahaal.targetmediagrp.com/api/meraaj/packages/<id>/image` directly as `<img src>` (Market/PackageDetail/EmbedMarket). Verified src is set correctly (image only appears broken inside the preview sandbox because that external prod domain is unreachable there; loads in production).
 - Verified E2E (signed HMAC curl): share(image_url string)→[url]; update(no images)→preserved; re-share(no images)→preserved; share(images[])→stored as-is. No frontend NaN.
 
+## Prominent topup popup + duplicate guard + public browsing — DONE Aug 2026
+**1. Wallet topup UX (`Wallet.js` TopupDialog + `wallet.py`):**
+- Success now shows a **centered popup dialog** (`topup-success-dialog`) with a large green check + reassurance message + "تمام" button, instead of a small toast.
+- Submit button disabled immediately with "جارٍ الإرسال..." loading state (`busy` guard) to prevent double-submit on click.
+- **Backend duplicate guard** in `create_topup`: rejects an identical pending topup (same office+amount+currency) created within the last 120s → HTTP 409 "لديك طلب شحن بنفس المبلغ قيد المعالجة". Verified: 200 → 409(identical) → 200(different amount).
+
+**2. Public browsing before login:**
+- Landing page now fetches `GET /api/packages` and renders a **"أحدث البرامج المتاحة"** section (6 newest cards, `landing-programs`) with "تصفّح كل البرامج" → `/market`. No login required.
+- `/market` and `/market/:id` moved out of `<Protected>` into `PublicOrMember` wrapper: authenticated users get the app `Layout`; guests get new `PublicLayout` shell (header with login/register + market link).
+- Booking is still gated: guest clicking "احجز الآن" (`open-booking-btn`) → redirect to `/login?next=/market/:id`; `Login.js` now honors `?next=` after successful login (non-admin).
+- Backend `GET /packages(/{id})` already anonymous via `get_optional_user`; `_view_package` hides net/commission from guests.
+- Verified (screenshots): landing 6 cards render (no NaN), public market 39 cards + guest header, book→login redirect, topup success popup.
+
 ## Backlog (P1/P2)
 - P1 (mobile next): Firebase FCM push (needs Firebase project + `google-services.json`; add `device_tokens` model + triggers on booking/wallet events) — Phase 3. Capgo OTA updates (needs Capgo account/key) — Phase 4.
 - P1: Real Rahal SSO + embedded signed-iframe (awaiting Rahal APIs). Atomic booking debit (transactions/optimistic locking) to prevent oversell/overdraw under concurrency.

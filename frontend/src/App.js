@@ -3,7 +3,7 @@ import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "sonner";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
-import Layout from "@/components/Layout";
+import Layout, { PublicLayout } from "@/components/Layout";
 import NativeBridge from "@/native/NativeBridge";
 
 import Login from "@/pages/Login";
@@ -50,6 +50,14 @@ function Landing() {
   return <LandingPage />;
 }
 
+// Public pages that logged-in members also use: show the app Layout when authenticated,
+// otherwise a lightweight public shell (browse market/details without logging in).
+function PublicOrMember({ children }) {
+  const { user, loading } = useAuth();
+  if (loading || user === null) return <Loader />;
+  return user ? <Layout>{children}</Layout> : <PublicLayout>{children}</PublicLayout>;
+}
+
 function AppRoutes() {
   return (
     <Routes>
@@ -59,8 +67,8 @@ function AppRoutes() {
       <Route path="/register" element={<Register />} />
 
       <Route path="/dashboard" element={<Protected role="member"><Dashboard /></Protected>} />
-      <Route path="/market" element={<Protected role="member"><Market /></Protected>} />
-      <Route path="/market/:id" element={<Protected role="member"><PackageDetail /></Protected>} />
+      <Route path="/market" element={<PublicOrMember><Market /></PublicOrMember>} />
+      <Route path="/market/:id" element={<PublicOrMember><PackageDetail /></PublicOrMember>} />
       <Route path="/packages" element={<Protected role="office"><MyPackages /></Protected>} />
       <Route path="/packages/new" element={<Protected role="office"><CreatePackage /></Protected>} />
       <Route path="/bookings" element={<Protected role="member"><Bookings /></Protected>} />
