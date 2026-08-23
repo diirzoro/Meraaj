@@ -26,17 +26,25 @@ export default function PackageDetail() {
   const [open, setOpen] = useState(false);
   const [regs, setRegs] = useState([{ name: "", passport_no: "", age: "", category: "adult", photo: "" }]);
   const [busy, setBusy] = useState(false);
+  const [selectedRoom, setSelectedRoom] = useState(null);
 
-  useEffect(() => { api.get(`/packages/${id}`).then((r) => setPkg(r.data)).catch(() => toast.error("تعذّر تحميل البرنامج")); }, [id]);
+  useEffect(() => {
+    api.get(`/packages/${id}`).then((r) => {
+      setPkg(r.data);
+      if (r.data?.room_pricing?.length) setSelectedRoom(r.data.room_pricing[0].room_type);
+    }).catch(() => toast.error("تعذّر تحميل البرنامج"));
+  }, [id]);
 
   if (!pkg) return <div className="text-center py-20 text-muted-foreground">جارٍ التحميل...</div>;
 
   const isOwner = pkg.seller_id === user?.id;
   const isOffice = user?.role === "office";
+  const selRoom = (pkg.room_pricing || []).find((r) => r.room_type === selectedRoom) || null;
+  const roomHas = (cat) => (selRoom ? roomCustomer(selRoom.customer, cat) != null : false);
   const CATS = {
     adult: { label: "بالغ", offered: true },
-    child: { label: "طفل", offered: pkg.child_sale_price != null || pkg.child_net_cost != null },
-    infant: { label: "رضيع", offered: pkg.infant_sale_price != null || pkg.infant_net_cost != null },
+    child: { label: "طفل", offered: pkg.child_sale_price != null || pkg.child_net_cost != null || roomHas("child") },
+    infant: { label: "رضيع", offered: pkg.infant_sale_price != null || pkg.infant_net_cost != null || roomHas("infant") },
   };
   const setReg = (i, k) => (e) => { const c = [...regs]; c[i][k] = e.target.value; setRegs(c); };
   const addReg = (category = "adult") => setRegs([...regs, { name: "", passport_no: "", age: "", category, photo: "" }]);
@@ -54,9 +62,13 @@ export default function PackageDetail() {
     cat === "child" ? (pkg[childKey] ?? adultVal) : cat === "infant" ? (pkg[infantKey] ?? adultVal) : adultVal;
   const chargeOf = (cat) => {
     if (isOffice) {
-      const net = Number(pick(cat, "child_net_cost", "infant_net_cost", pkg.net_cost_per_seat || 0));
-      const comm = Number(pick(cat, "child_commission", "infant_commission", pkg.buyer_office_commission || 0));
+      const net = Number(selRoom?.net ?? pick(cat, "child_net_cost", "infant_net_cost", pkg.net_cost_per_seat || 0));
+      const comm = Number(selRoom?.commission ?? pick(cat, "child_commission", "infant_commission", pkg.buyer_office_commission || 0));
       return +(net + comm * 0.1).toFixed(2);
+    }
+    if (selRoom) {
+      const rc = roomCustomer(selRoom.customer, cat) ?? roomCustomer(selRoom.customer, "adult");
+      if (rc != null) return +Number(rc).toFixed(2);
     }
     return +Number(pick(cat, "child_sale_price", "infant_sale_price", pkg.final_sale_price || 0)).toFixed(2);
   };
@@ -69,6 +81,7 @@ export default function PackageDetail() {
     try {
       await api.post("/bookings", {
         package_id: id,
+        room_type: selectedRoom || undefined,
         registrants: regs.map((r) => ({ name: r.name, passport_no: r.passport_no, age: Number(r.age), category: r.category, photo: r.photo || undefined })),
         ref: localStorage.getItem("meraaj_ref") || undefined,
       });
@@ -117,10 +130,12 @@ export default function PackageDetail() {
             const anyInfant = pkg.room_pricing.some((r) => roomCustomer(r?.customer, "infant") != null);
             return (
             <div className="bg-white rounded-2xl border card-shadow p-6" data-testid="pkg-room-pricing">
-              <h3 className="font-head font-bold text-[#0A2540] mb-4 flex items-center gap-2"><BedDouble className="w-4 h-4" /> أسعار الغرف</h3>
+              <h3 className="font-head font-bold text-[#0A2540] mb-1 flex items-center gap-2"><BedDouble className="w-4 h-4" /> أسعار الغرف</h3>
+              {!isOwner && <p className="text-xs text-muted-foreground mb-4">اختر نوع الغرفة ليُحسب سعر الحجز تلقائياً حسب اختيارك.</p>}
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="text-muted-foreground text-xs border-b"><tr>
+                    {!isOwner && <th className="py-2 w-8"></th>}
                     <th className="text-start py-2">نوع الغرفة</th>
                     {isOffice && <th className="text-start py-2">الصافي</th>}
                     {isOffice && <th className="text-start py-2">العمولة</th>}
@@ -129,8 +144,17 @@ export default function PackageDetail() {
                     {anyInfant && <th className="text-start py-2">سعر الرضيع</th>}
                   </tr></thead>
                   <tbody>
-                    {pkg.room_pricing.map((r, i) => (
-                      <tr key={i} className="border-b last:border-0" data-testid={`room-row-${i}`}>
+                    {pkg.room_pricing.map((r, i) => {
+                      const selected = r.room_type === selectedRoom;
+                      return (
+                      <tr key={i} data-testid={`room-row-${i}`} onClick={() => !isOwner && setSelectedRoom(r.room_type)}
+                          className={`border-b last:border-0 ${!isOwner ? "cursor-pointer" : ""} ${selected && !isOwner ? "bg-[#F0F7FF]" : ""}`}>
+                        {!isOwner && (
+                          <td className="py-2">
+                            <input type="radio" name="room-select" checked={selected} readOnly
+                                   data-testid={`room-select-${r.room_type}`} className="accent-[#0A2540] w-4 h-4 align-middle" />
+                          </td>
+                        )}
                         <td className="py-2 font-semibold text-[#0A2540]">{roomAr(r.room_type)}</td>
                         {isOffice && <td className="py-2 tabular">{money(r.net, pkg.currency)}</td>}
                         {isOffice && <td className="py-2 tabular text-[#15803D]">{money(r.commission, pkg.currency)}</td>}
@@ -138,7 +162,8 @@ export default function PackageDetail() {
                         {anyChild && <td className="py-2 tabular" data-testid={`room-child-${i}`}>{roomCustomer(r?.customer, "child") != null ? money(roomCustomer(r?.customer, "child"), pkg.currency) : "—"}</td>}
                         {anyInfant && <td className="py-2 tabular" data-testid={`room-infant-${i}`}>{roomCustomer(r?.customer, "infant") != null ? money(roomCustomer(r?.customer, "infant"), pkg.currency) : "—"}</td>}
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -207,9 +232,9 @@ export default function PackageDetail() {
         <div className="space-y-5">
           <div className="bg-white rounded-2xl border card-shadow p-6 sticky top-8">
             {(() => {
-              const mainPrice = roomCustomer(pkg.room_pricing?.[0]?.customer, "adult") || Number(pkg.final_sale_price) || 0;
+              const mainPrice = (selRoom ? roomCustomer(selRoom.customer, "adult") : null) || Number(pkg.final_sale_price) || 0;
               return (<>
-                <div className="text-sm text-muted-foreground">سعر البيع النهائي للزبون</div>
+                <div className="text-sm text-muted-foreground">سعر البيع النهائي للزبون{selRoom ? ` — ${roomAr(selRoom.room_type)}` : ""}</div>
                 <div className="tabular text-3xl font-bold text-[#0A2540] mt-1" data-testid="pkg-main-price">{money(mainPrice, pkg.currency)}</div>
                 {pkg.currency === "SAR" && <div className="text-xs text-muted-foreground tabular mt-0.5">{equiv(mainPrice, "SAR")}</div>}
               </>);
@@ -283,6 +308,7 @@ export default function PackageDetail() {
                     </div>
 
                     <div className="bg-[#F4F6F8] rounded-xl p-4 text-sm space-y-2">
+                      {selRoom && <Row label="نوع الغرفة المختارة" value={roomAr(selRoom.room_type)} />}
                       {["adult", "child", "infant"].map((cat) => {
                         const items = regs.filter((r) => r.category === cat);
                         if (items.length === 0) return null;

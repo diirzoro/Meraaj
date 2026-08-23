@@ -113,6 +113,13 @@ B2B marketplace ("Meraaj Network" by Target Media) connecting travel/Umrah offic
 - Backend `GET /packages(/{id})` already anonymous via `get_optional_user`; `_view_package` hides net/commission from guests.
 - Verified (screenshots): landing 6 cards render (no NaN), public market 39 cards + guest header, book→login redirect, topup success popup.
 
+## Room selection drives booking price (Option b) — DONE Aug 2026
+Per user: booking must charge the **selected room's** customer price dynamically (not display-only).
+- **Frontend `PackageDetail.js`**: radio selector on each row of "أسعار الغرف" (`room-select-<type>`, row clickable, first room selected by default). Main sidebar price, tier box, per-traveler charges, and booking total all recompute from the selected room. Selected room shown in booking dialog ("نوع الغرفة المختارة"). Sends `room_type` to `POST /bookings`.
+- **Backend `market.py` booking engine**: `BookingInput.room_type` (optional). New `_find_room`, `_room_customer_price`, `_booking_prices` — when a room is selected, B2C sale = room `customer[category]` (obj {adult,child,infant}) with fallback to room adult; office net/commission = room net/commission; falls back to package-level tier pricing when no room. Unknown `room_type` → 400. `room_type` stored on the booking. Wallet/escrow logic otherwise UNCHANGED.
+- **Child/infant from Rahal**: `RoomPricingInput.customer` relaxed to `Union[float, Dict[str,float]]` so object pricing (adult/child/infant) is accepted on the manual endpoint too; Rahal adapter already stores it raw. Room table + booking now consume child/infant prices accurately.
+- Verified: unit test of `_booking_prices` (double 1500/1300/700, quad 1100/900/300, office net/comm 700/150, scalar+child-fallback 900); UI screenshot (double 1500 → quad 1100 dynamic in main price + booking total); real E2E booking (quad, 1 adult) → amount_charged 1100 SAR, room_type=quad persisted.
+
 ## Backlog (P1/P2)
 - P1 (mobile next): Firebase FCM push (needs Firebase project + `google-services.json`; add `device_tokens` model + triggers on booking/wallet events) — Phase 3. Capgo OTA updates (needs Capgo account/key) — Phase 4.
 - P1: Real Rahal SSO + embedded signed-iframe (awaiting Rahal APIs). Atomic booking debit (transactions/optimistic locking) to prevent oversell/overdraw under concurrency.

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Union, Dict
 from db import (db, serialize, oid, now_iso, adjust_wallet, log_txn,
                 platform_pct, cancel_fee_pct, marketer_pct, log_platform_revenue,
                 plan_debit, wallet_available, CurrencyField)
@@ -38,7 +38,7 @@ class RoomPricingInput(BaseModel):
     room_type: str  # double | triple | quad | quint | single
     net: Optional[float] = None
     commission: Optional[float] = None
-    customer: float
+    customer: Union[float, Dict[str, float]]  # scalar (adult) OR {adult, child, infant}
 
 
 class PackageInput(BaseModel):
@@ -157,6 +157,7 @@ class RegistrantInput(BaseModel):
 class BookingInput(BaseModel):
     package_id: str
     registrants: List[RegistrantInput]
+    room_type: Optional[str] = None  # selected room drives per-traveler pricing when set
     ref: Optional[str] = None  # affiliate code
 
 
@@ -177,6 +178,50 @@ def _tier_prices(pkg: dict, category: str):
             round(float(c), 2) if c is not None else adult[2])
 
 
+def _room_customer_price(customer, category):
+    """A room's customer price for a traveler category. `customer` may be an object
+    {adult, child, infant} (Rahal) or a scalar (manual programs → adult only)."""
+    if customer is None:
+        return None
+    if isinstance(customer, dict):
+        v = customer.get(category)
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+    try:
+        return float(customer) if category == "adult" else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _find_room(pkg: dict, room_type):
+    if not room_type:
+        return None
+    for r in (pkg.get("room_pricing") or []):
+        if r.get("room_type") == room_type:
+            return r
+    return None
+
+
+def _booking_prices(pkg: dict, category: str, room: dict = None):
+    """(net, sale, commission) per traveler. When a room is selected, the customer sale
+    price comes from that room per category (falling back to the room's adult price), and
+    net/commission come from the room when provided; otherwise package-level tier pricing."""
+    n, s, c = _tier_prices(pkg, category)
+    if room:
+        if room.get("net") is not None:
+            n = round(float(room["net"]), 2)
+        if room.get("commission") is not None:
+            c = round(float(room["commission"]), 2)
+        rc = _room_customer_price(room.get("customer"), category)
+        if rc is None:
+            rc = _room_customer_price(room.get("customer"), "adult")
+        if rc is not None:
+            s = round(float(rc), 2)
+    return n, s, c
+
+
 @router.post("/bookings")
 async def create_booking(payload: BookingInput, user: dict = Depends(require_buyer)):
     pkg = await db.packages.find_one({"_id": oid(payload.package_id)})
@@ -192,12 +237,16 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
 
     cur = pkg.get("currency", "USD")
     cur = "SAR" if cur == "SAR" else "USD"
-    # Sum prices per traveler category (adult / child / infant)
+    # Resolve the selected room (drives per-traveler pricing); reject an unknown room type
+    room = _find_room(pkg, payload.room_type)
+    if payload.room_type and room is None:
+        raise HTTPException(400, "نوع الغرفة المختار غير متاح لهذا البرنامج")
+    # Sum prices per traveler category (adult / child / infant) using the selected room
     net_total = 0.0
     sale_total = 0.0
     comm_total = 0.0
     for r in payload.registrants:
-        n, s, c = _tier_prices(pkg, r.category)
+        n, s, c = _booking_prices(pkg, r.category, room)
         net_total += n
         sale_total += s
         comm_total += c
@@ -253,6 +302,7 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
         "seller_office_name": pkg["seller_office_name"],
         "departure_date": pkg["departure_date"],
         "seats": seats,
+        "room_type": payload.room_type,
         "registrants": [{**r.model_dump(), "visa_no": None, "visa_file": None} for r in payload.registrants],
         "net_cost_total": net_total,
         "buyer_commission_total": buyer_commission_total,
