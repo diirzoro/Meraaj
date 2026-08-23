@@ -5,6 +5,7 @@ import { Toaster } from "sonner";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import Layout, { PublicLayout } from "@/components/Layout";
 import NativeBridge from "@/native/NativeBridge";
+import SessionManager from "@/components/SessionManager";
 
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
@@ -91,6 +92,7 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <NativeBridge />
+        <SessionManager />
         <AppRoutes />
         <Toaster position="top-center" richColors dir="rtl" />
       </BrowserRouter>

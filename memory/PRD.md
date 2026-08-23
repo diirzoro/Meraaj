@@ -133,6 +133,13 @@ Rebuilt the market search bar (`Market.js`) + backend `list_packages` filtering/
 - Verified (screenshot as super_admin): column renders, buttons present, href correct with prefilled Arabic greeting.
 - Note: test offices store `0770000000` → shown as `770000000`. Real international numbers (e.g. 967781115482) render as-is once an office saves them.
 
+## Idle auto-lock + hard-refresh navigation — DONE Aug 2026
+Files: NEW `frontend/src/config.js`, NEW `frontend/src/components/SessionManager.js`; edited `App.js` (mount SessionManager inside BrowserRouter), `Login.js` (route restore), `Layout.js` (clear resume on manual logout). No backend/auth/SSO/booking/pricing/wallet/image changes.
+- **Idle auto-lock**: `SessionManager` (inside router) resets a timer on mousemove/mousedown/keydown/scroll/touchstart/click; on expiry it saves the current deep route to `localStorage.meraaj_resume_route`, calls the existing `logout()`, and routes to `/login`. Timeout centralized in `config.js` → `IDLE_TIMEOUT_MS = 15*60*1000`. QA override: `localStorage.meraaj_idle_ms`. Skips `/embed` (Rahaal SSO) and `/login`,`/register`.
+- **Route restore**: `Login.js` after login uses `?next=` (booking guard) → else `meraaj_resume_route` → else home (`/admin` or `/dashboard`), with role-sanity check; clears the key after use. Manual logout (`Layout.doLogout`) removes the key so a normal logout does NOT restore.
+- **Hard refresh**: on document `navigation.type === "reload"`, an authenticated user is sent to their home (`/dashboard` or `/admin`); guests keep public deep links (preserves shareable market links). SPA nav, deep links, back/forward, login redirects and SSO ("navigate"/"back_forward") are untouched.
+- Verified (Playwright): deep route + reload → /dashboard; idle (2.5s QA) → /login with resume saved → re-login → restored exact deep route; SSO embed excluded.
+
 ## Backlog (P1/P2)
 - P1 (mobile next): Firebase FCM push (needs Firebase project + `google-services.json`; add `device_tokens` model + triggers on booking/wallet events) — Phase 3. Capgo OTA updates (needs Capgo account/key) — Phase 4.
 - P1: Real Rahal SSO + embedded signed-iframe (awaiting Rahal APIs). Atomic booking debit (transactions/optimistic locking) to prevent oversell/overdraw under concurrency.

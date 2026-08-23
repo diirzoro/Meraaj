@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { apiError } from "@/lib/api";
+import { RESUME_KEY } from "@/config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,9 +29,17 @@ export default function Login() {
     try {
       const u = await login(email, password);
       toast.success("مرحباً بعودتك");
-      const next = new URLSearchParams(window.location.search).get("next");
-      if (next && u.role !== "super_admin") navigate(next);
-      else navigate(u.role === "super_admin" ? "/admin" : "/dashboard");
+      const params = new URLSearchParams(window.location.search);
+      const next = params.get("next");
+      const resume = localStorage.getItem(RESUME_KEY);
+      localStorage.removeItem(RESUME_KEY);
+      const roleOk = (p) => !!p && !p.startsWith("/login") && !p.startsWith("/register") && !p.startsWith("/embed")
+        && (p.startsWith("/admin") ? u.role === "super_admin" : u.role !== "super_admin");
+      let dest;
+      if (next && roleOk(next)) dest = next;             // booking guard (?next=) takes priority
+      else if (resume && roleOk(resume)) dest = resume;  // restore route saved on idle logout
+      else dest = u.role === "super_admin" ? "/admin" : "/dashboard";
+      navigate(dest, { replace: true });
     } catch (err) {
       toast.error(apiError(err));
     } finally {

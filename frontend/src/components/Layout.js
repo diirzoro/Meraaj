@@ -42,7 +42,7 @@ export default function Layout({ children }) {
   const [open, setOpen] = useState(false);
   const nav = navFor(user?.role);
 
-  const doLogout = async () => { await logout(); navigate("/login"); };
+  const doLogout = async () => { localStorage.removeItem("meraaj_resume_route"); await logout(); navigate("/login"); };
 
   return (
     <div className="min-h-screen bg-[#F4F6F8]">
