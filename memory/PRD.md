@@ -128,6 +128,11 @@ Rebuilt the market search bar (`Market.js`) + backend `list_packages` filtering/
 - Backend returns computed `start_price`, `duration_days`, `seller_deals` per package. Debounced (350ms) auto-apply on the frontend; result count shown; reset button clears all.
 - Verified: curl (price_asc/desc ordering, min/max range all-in-range, best_selling desc, features=breakfast returns only matching) + UI screenshot (40→1 result after price+duration+feature+sort; filter bar renders cleanly, public/guest accessible).
 
+## Admin offices — WhatsApp contact column — DONE Aug 2026
+- `AdminOffices.js`: added a **"واتساب"** column showing each office's normalized number + a green direct-contact button (`whatsapp-<id>`) that opens `https://wa.me/<number>?text=<greeting>` in a new tab. Number normalized (digits only, strips leading zeros/+); offices without a valid number show "—". No backend change (office `phone` already returned by `GET /admin/offices`).
+- Verified (screenshot as super_admin): column renders, buttons present, href correct with prefilled Arabic greeting.
+- Note: test offices store `0770000000` → shown as `770000000`. Real international numbers (e.g. 967781115482) render as-is once an office saves them.
+
 ## Backlog (P1/P2)
 - P1 (mobile next): Firebase FCM push (needs Firebase project + `google-services.json`; add `device_tokens` model + triggers on booking/wallet events) — Phase 3. Capgo OTA updates (needs Capgo account/key) — Phase 4.
 - P1: Real Rahal SSO + embedded signed-iframe (awaiting Rahal APIs). Atomic booking debit (transactions/optimistic locking) to prevent oversell/overdraw under concurrency.

@@ -3,6 +3,7 @@ import api, { apiError } from "@/lib/api";
 import { PageHeader } from "@/components/Layout";
 import { money, fmtDate } from "@/lib/format";
 import { Button } from "@/components/ui/button";
+import { MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 
 export default function AdminOffices() {
@@ -15,6 +16,12 @@ export default function AdminOffices() {
     catch (e) { toast.error(apiError(e)); }
   };
 
+  // Normalize a stored phone into a wa.me-ready international number (digits only, no leading zeros/+)
+  const waNumber = (raw) => {
+    const digits = String(raw || "").replace(/\D/g, "").replace(/^0+/, "");
+    return digits.length >= 8 ? digits : null;
+  };
+
   return (
     <>
       <PageHeader title="إدارة المكاتب" subtitle="تفعيل، إيقاف، ومراقبة أرصدة المكاتب" />
@@ -22,7 +29,7 @@ export default function AdminOffices() {
         {offices.length === 0 ? <div className="p-10 text-center text-muted-foreground text-sm">لا توجد مكاتب</div> : (
           <table className="w-full text-sm min-w-[760px]">
             <thead className="text-muted-foreground text-xs border-b"><tr>
-              {["المكتب", "البريد", "المالك", "المحافظة", "الهاتف", "متاح (ريال)", "متاح (دولار)", "الحالة", ""].map((h, i) => <th key={i} className="text-start px-6 py-3 font-medium">{h}</th>)}
+              {["المكتب", "البريد", "المالك", "المحافظة", "الهاتف", "واتساب", "متاح (ريال)", "متاح (دولار)", "الحالة", ""].map((h, i) => <th key={i} className="text-start px-6 py-3 font-medium">{h}</th>)}
             </tr></thead>
             <tbody>
               {offices.map((o) => (
@@ -32,6 +39,15 @@ export default function AdminOffices() {
                   <td className="px-6 py-4">{o.owner_name}</td>
                   <td className="px-6 py-4">{o.governorate}</td>
                   <td className="px-6 py-4 text-xs">{o.phone}</td>
+                  <td className="px-6 py-4">
+                    {waNumber(o.phone) ? (
+                      <a href={`https://wa.me/${waNumber(o.phone)}?text=${encodeURIComponent(`مرحباً ${o.office_name || ""}، معك إدارة معراج نتورك`)}`}
+                         target="_blank" rel="noopener noreferrer" data-testid={`whatsapp-${o.id}`}
+                         className="inline-flex items-center gap-1.5 text-[#15803D] bg-[#F0FDF4] hover:bg-[#DCFCE7] border border-[#BBF7D0] px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors">
+                        <MessageCircle className="w-3.5 h-3.5" /> {waNumber(o.phone)}
+                      </a>
+                    ) : <span className="text-xs text-muted-foreground">—</span>}
+                  </td>
                   <td className="px-6 py-4 tabular font-semibold text-[#0A2540]">{money(o.wallet?.SAR?.available, "SAR")}</td>
                   <td className="px-6 py-4 tabular font-semibold text-[#0A2540]">{money(o.wallet?.USD?.available, "USD")}</td>
                   <td className="px-6 py-4">
