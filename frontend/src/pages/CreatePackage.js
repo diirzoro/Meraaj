@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Plus, Trash2 } from "lucide-react";
 import { money } from "@/lib/format";
+import { optimizeImage } from "@/lib/imageOptimizer";
 import { toast } from "sonner";
 
 const IMG = {
@@ -27,8 +28,25 @@ export default function CreatePackage() {
   const [hotels, setHotels] = useState([{ city: "", name: "", nights: "" }]);
   const [rooms, setRooms] = useState([{ room_type: "double", net: "", commission: "", customer: "" }]);
   const [features, setFeatures] = useState([""]);
+  const [images, setImages] = useState([]);
+  const [imgBusy, setImgBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  const onImages = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    setImgBusy(true);
+    try {
+      const out = [];
+      for (const file of files) {
+        const { dataUrl } = await optimizeImage(file);
+        out.push(dataUrl);
+      }
+      setImages((p) => [...p, ...out].slice(0, 6));
+    } catch (err) { toast.error(err.message || "تعذّر معالجة الصورة"); }
+    finally { setImgBusy(false); e.target.value = ""; }
+  };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -47,7 +65,7 @@ export default function CreatePackage() {
         infant_net_cost: num(f.infant_net_cost),
         infant_sale_price: num(f.infant_sale_price),
         infant_commission: num(f.infant_commission),
-        images: [IMG[f.type]],
+        images: images.length ? images : [IMG[f.type]],
         hotels: hotels.filter((h) => h.name).map((h) => ({ ...h, nights: Number(h.nights) || 0 })),
         features: features.map((x) => x.trim()).filter(Boolean),
         room_pricing: rooms
@@ -185,6 +203,28 @@ export default function CreatePackage() {
                 )}
               </div>
             ))}
+          </div>
+
+          <div className="bg-white rounded-2xl border card-shadow p-6 space-y-4">
+            <div>
+              <h3 className="font-head font-bold text-[#0A2540]">صور البرنامج</h3>
+              <p className="text-[11px] text-muted-foreground mt-1">تُحسَّن تلقائياً (تصغير حتى 1200px وضغط WebP بجودة ~82%) لتحميل أسرع. اتركها فارغة لاستخدام صورة افتراضية حسب النوع.</p>
+            </div>
+            <input type="file" accept="image/png,image/jpeg,image/webp" multiple data-testid="pkg-images-file"
+                   onChange={onImages} disabled={imgBusy}
+                   className="w-full text-sm file:me-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-[#0A2540] file:text-white file:cursor-pointer" />
+            {imgBusy && <p className="text-xs text-muted-foreground">جارٍ تحسين الصور...</p>}
+            {images.length > 0 && (
+              <div className="grid grid-cols-3 gap-3" data-testid="pkg-images-preview">
+                {images.map((src, i) => (
+                  <div key={i} className="relative aspect-[4/3] rounded-lg overflow-hidden border">
+                    <img src={src} alt={`صورة ${i + 1}`} className="w-full h-full object-cover" />
+                    <button type="button" data-testid={`remove-image-${i}`} onClick={() => setImages(images.filter((_, x) => x !== i))}
+                            className="absolute top-1 end-1 bg-white/90 rounded-full p-1 text-destructive"><Trash2 className="w-3.5 h-3.5" /></button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 

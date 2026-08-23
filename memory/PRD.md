@@ -140,6 +140,14 @@ Files: NEW `frontend/src/config.js`, NEW `frontend/src/components/SessionManager
 - **Hard refresh**: on document `navigation.type === "reload"`, an authenticated user is sent to their home (`/dashboard` or `/admin`); guests keep public deep links (preserves shareable market links). SPA nav, deep links, back/forward, login redirects and SSO ("navigate"/"back_forward") are untouched.
 - Verified (Playwright): deep route + reload → /dashboard; idle (2.5s QA) → /login with resume saved → re-login → restored exact deep route; SSO embed excluded.
 
+## Automatic image optimization + consistent card ratios — DONE Aug 2026
+Files: NEW `frontend/src/lib/imageOptimizer.js`; edited `CreatePackage.js` (image upload UI), `Market.js`/`Landing.js`/`EmbedMarket.js` (card aspect ratio). No backend/schema/contract/HMAC/auth/booking/pricing/wallet change.
+- **Client-side optimizer** (`optimizeImage`): validates JPG/PNG/WebP → canvas resize to max 1200px longest side (aspect ratio preserved, only downscales) → `toDataURL("image/webp", 0.82)` with JPEG fallback. Runs once at upload; the STORED data URL is already small (real payload reduction, not CSS).
+- **CreatePackage**: new optional multi-image upload (`pkg-images-file`) with previews + remove; optimized data URLs stored in `images` (max 6); falls back to default stock image per type when none uploaded.
+- **Cards**: consistent responsive `aspect-[4/3]` + `object-cover` across Market/Landing/Embed cards (no stretch, uniform desktop/tablet/mobile). PackageDetail hero already object-cover.
+- **Rahaal**: images arrive as external URLs — untouched, still displayed (contract unchanged).
+- Verified (Playwright): 5.1 MB JPEG upload → optimized **WebP ~588 KB (~89% smaller)**, `data:image/webp` confirmed; create form renders; large landscape resized. Portrait/small handled by the same ratio logic.
+
 ## Backlog (P1/P2)
 - P1 (mobile next): Firebase FCM push (needs Firebase project + `google-services.json`; add `device_tokens` model + triggers on booking/wallet events) — Phase 3. Capgo OTA updates (needs Capgo account/key) — Phase 4.
 - P1: Real Rahal SSO + embedded signed-iframe (awaiting Rahal APIs). Atomic booking debit (transactions/optimistic locking) to prevent oversell/overdraw under concurrency.

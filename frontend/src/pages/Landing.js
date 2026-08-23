@@ -127,7 +127,7 @@ export default function Landing() {
               return (
                 <Link key={p.id} to={`/market/${p.id}`} data-testid={`landing-pkg-${p.id}`}
                       className="hover-lift bg-white rounded-2xl border overflow-hidden card-shadow group">
-                  <div className="h-44 bg-[#0A2540] relative overflow-hidden">
+                  <div className="aspect-[4/3] bg-[#0A2540] relative overflow-hidden">
                     {p.images?.[0]
                       ? <img src={p.images[0]} alt={p.title} className="w-full h-full object-cover" />
                       : <div className="w-full h-full flex items-center justify-center"><Landmark className="w-12 h-12 text-white/15" /></div>}
