@@ -167,6 +167,12 @@ Root cause: Rahal unified its pricing UI so `room_pricing[].net`, `.commission` 
 - **Data-quality warnings**: `integration.py` `_price_warnings()` flags incomplete incoming Rahal pricing (missing adult/child/infant customer, net, or commission per room). On every share it stores `price_warnings` on the `rahal_packages` mirror and, when non-empty, inserts a `{event:"data.warning", rahal_ref, warnings}` record into `rahal_inbound_log` for admin oversight (never blocks the sync). Returned in the share response too. Verified: incomplete package → correct Arabic warnings list.
 - **Batch re-sync (admin)**: `POST /api/admin/packages/resync` (require_admin) re-derives flat scalar pricing (final_sale_price/net_cost_per_seat/buyer_office_commission) from each package's room_pricing adult when missing/object, and enqueues an outbound `package.updated` to Rahal for Rahal-origin packages via the outbox. Button `batch-resync-btn` in Admin Offices header. Verified: 53 pkgs scanned, 4 Rahal-origin notified.
 
+## FIX: Rahal re-open (no package.activated) — DONE Aug 2026
+Rahal contract confirmed by their team: it emits NO `package.activated`; on re-open it sends `package.updated` with NO `status` field (implicitly active). Meraaj previously only re-listed on an explicit status/active flag → a closed (unlisted) package stayed hidden on re-open. BUG FIXED:
+- `integration.py` `rahal_webhook` `package.updated` branch: now defaults to `status:"listed"` (re-list) UNLESS an explicit deactivation signal is present (`active:false` or status ∈ {inactive,deleted,disabled,cancelled,removed}), checked at BOTH envelope and `data` level.
+- `package.deactivated/deleted/removed/disabled` → unlisted (unchanged). `package.activated` still handled → listed (harmless, though Rahal never sends it).
+- Verified E2E (real Contract v2 shape, room_type Arabic "رباعي", base/net/commission/customer objects, images:[]): share→LISTED; deactivated(closed_by_office)→NOT in market; updated(reopen, no status)→LISTED; updated(active:false)→NOT in market.
+
 ## Backlog (P1/P2)
 - P1 (mobile next): Firebase FCM push (needs Firebase project + `google-services.json`; add `device_tokens` model + triggers on booking/wallet events) — Phase 3. Capgo OTA updates (needs Capgo account/key) — Phase 4.
 - P1: Real Rahal SSO + embedded signed-iframe (awaiting Rahal APIs). Atomic booking debit (transactions/optimistic locking) to prevent oversell/overdraw under concurrency.

@@ -435,10 +435,15 @@ async def rahal_webhook(request: Request, x_rahal_signature: str = Header(defaul
     elif etype == "package.updated" and match:
         # Same v2 Adapter as /share, but only touch fields present in the delta (no blanking)
         updates = _adapt_partial(data)
+        active_flag = event.get("active")
+        if active_flag is None:
+            active_flag = data.get("active")
         raw_status = str(event.get("status", data.get("status", ""))).lower()
-        if event.get("active") is False or raw_status in ("inactive", "deleted", "disabled", "cancelled", "removed"):
+        if active_flag is False or raw_status in ("inactive", "deleted", "disabled", "cancelled", "removed"):
             updates["status"] = "unlisted"
-        elif event.get("active") is True or raw_status in ("active", "listed"):
+        else:
+            # Rahal emits NO package.activated and sends NO status field on re-open;
+            # a package.updated for a known package implicitly means active -> re-list it.
             updates["status"] = "listed"
         if updates:
             r = await db.packages.update_one(match, {"$set": updates})
