@@ -120,6 +120,14 @@ Per user: booking must charge the **selected room's** customer price dynamically
 - **Child/infant from Rahal**: `RoomPricingInput.customer` relaxed to `Union[float, Dict[str,float]]` so object pricing (adult/child/infant) is accepted on the manual endpoint too; Rahal adapter already stores it raw. Room table + booking now consume child/infant prices accurately.
 - Verified: unit test of `_booking_prices` (double 1500/1300/700, quad 1100/900/300, office net/comm 700/150, scalar+child-fallback 900); UI screenshot (double 1500 → quad 1100 dynamic in main price + booking total); real E2E booking (quad, 1 adult) → amount_charged 1100 SAR, room_type=quad persisted.
 
+## Professional market filters & sorting — DONE Aug 2026
+Rebuilt the market search bar (`Market.js`) + backend `list_packages` filtering/sorting.
+- **Filters**: price range (`min_price`/`max_price` on "starts-from" adult price), departure date range (`date_from`/`date_to`), trip-duration quick chips (short ≤7 / mid 8–14 / long 15+ via `min_days`/`max_days`, computed from departure→return), quick-feature toggles (breakfast / near_haram / vip_transport / wifi — matched via `FEATURE_SYNONYMS` fuzzy AND), type tabs, and text search.
+- **Sort By** (`sort`): newest (default), price_asc, price_desc, date_asc (soonest departure), duration_asc, best_selling.
+- **Seller rating = Option (b) proxy**: `best_selling` sorts by completed-deals count per seller (bookings with status `green`, via `_seller_deals_map`); each card shows a gold "X صفقة" badge (`pkg-deals-<id>`). Real star ratings deferred.
+- Backend returns computed `start_price`, `duration_days`, `seller_deals` per package. Debounced (350ms) auto-apply on the frontend; result count shown; reset button clears all.
+- Verified: curl (price_asc/desc ordering, min/max range all-in-range, best_selling desc, features=breakfast returns only matching) + UI screenshot (40→1 result after price+duration+feature+sort; filter bar renders cleanly, public/guest accessible).
+
 ## Backlog (P1/P2)
 - P1 (mobile next): Firebase FCM push (needs Firebase project + `google-services.json`; add `device_tokens` model + triggers on booking/wallet events) — Phase 3. Capgo OTA updates (needs Capgo account/key) — Phase 4.
 - P1: Real Rahal SSO + embedded signed-iframe (awaiting Rahal APIs). Atomic booking debit (transactions/optimistic locking) to prevent oversell/overdraw under concurrency.

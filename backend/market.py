@@ -105,15 +105,111 @@ async def create_package(payload: PackageInput, user: dict = Depends(require_off
     return serialize(doc)
 
 
+FEATURE_SYNONYMS = {
+    "breakfast": ["فطور", "افطار", "إفطار", "بوفيه", "breakfast"],
+    "near_haram": ["الحرم", "حرم", "قريب من الحرم", "haram"],
+    "vip_transport": ["vip", "في اي بي", "فاخر", "نقل vip", "مواصلات vip"],
+    "wifi": ["واي فاي", "wifi", "wi-fi", "انترنت", "إنترنت"],
+}
+
+
+def _start_price(doc):
+    adults = []
+    for r in (doc.get("room_pricing") or []):
+        v = _room_customer_price(r.get("customer"), "adult")
+        if v is not None and v > 0:
+            adults.append(v)
+    if adults:
+        return round(min(adults), 2)
+    try:
+        return round(float(doc.get("final_sale_price") or 0), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _duration_days(doc):
+    from datetime import date as _date
+    try:
+        d1 = _date.fromisoformat(str(doc.get("departure_date"))[:10])
+        d2 = _date.fromisoformat(str(doc.get("return_date"))[:10])
+        return max((d2 - d1).days, 0)
+    except (ValueError, TypeError):
+        return None
+
+
+def _match_features(doc, selected_keys):
+    blob = " ".join(str(f).lower() for f in (doc.get("features") or []))
+    for key in selected_keys:
+        syns = FEATURE_SYNONYMS.get(key, [key])
+        if not any(s.lower() in blob for s in syns):
+            return False
+    return True
+
+
+async def _seller_deals_map():
+    """Completed-deals count per seller (proxy for reliability / best-selling)."""
+    out = {}
+    async for row in db.bookings.aggregate(
+        [{"$match": {"status": "green"}}, {"$group": {"_id": "$seller_id", "n": {"$sum": 1}}}]):
+        out[row["_id"]] = row["n"]
+    return out
+
+
 @router.get("/packages")
-async def list_packages(type: Optional[str] = None, q: Optional[str] = None, user=Depends(get_optional_user)):
+async def list_packages(type: Optional[str] = None, q: Optional[str] = None,
+                        min_price: Optional[float] = None, max_price: Optional[float] = None,
+                        date_from: Optional[str] = None, date_to: Optional[str] = None,
+                        min_days: Optional[int] = None, max_days: Optional[int] = None,
+                        features: Optional[str] = None, sort: str = "newest",
+                        user=Depends(get_optional_user)):
     query = {"status": "listed"}
     if type:
         query["type"] = type
     if q:
         query["title"] = {"$regex": q, "$options": "i"}
+    if date_from or date_to:
+        dr = {}
+        if date_from:
+            dr["$gte"] = date_from
+        if date_to:
+            dr["$lte"] = date_to
+        query["departure_date"] = dr
     docs = await db.packages.find(query).sort("created_at", -1).to_list(500)
-    return [_view_package(d, user) for d in docs]
+
+    selected_features = [f.strip() for f in (features or "").split(",") if f.strip()]
+    deals = await _seller_deals_map()
+
+    rows = []
+    for d in docs:
+        start = _start_price(d)
+        dur = _duration_days(d)
+        if min_price is not None and start < min_price:
+            continue
+        if max_price is not None and start > max_price:
+            continue
+        if min_days is not None and (dur is None or dur < min_days):
+            continue
+        if max_days is not None and (dur is None or dur > max_days):
+            continue
+        if selected_features and not _match_features(d, selected_features):
+            continue
+        view = _view_package(d, user)
+        view["start_price"] = start
+        view["duration_days"] = dur
+        view["seller_deals"] = deals.get(str(d.get("seller_id")), 0)
+        rows.append(view)
+
+    if sort == "price_asc":
+        rows.sort(key=lambda r: r.get("start_price") or 0)
+    elif sort == "price_desc":
+        rows.sort(key=lambda r: r.get("start_price") or 0, reverse=True)
+    elif sort == "date_asc":
+        rows.sort(key=lambda r: r.get("departure_date") or "")
+    elif sort == "duration_asc":
+        rows.sort(key=lambda r: (r.get("duration_days") is None, r.get("duration_days") or 0))
+    elif sort == "best_selling":
+        rows.sort(key=lambda r: r.get("seller_deals") or 0, reverse=True)
+    return rows
 
 
 @router.get("/packages/mine")
