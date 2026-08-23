@@ -25,11 +25,16 @@ export const PKG_TYPE = { umrah: "عمرة", tourism: "سياحة" };
 // Manual (Meraaj) programs store it as a plain number (adult only). Support both.
 export const roomCustomer = (customer, cat = "adult") => {
   if (customer == null) return null;
+  const toNum = (v) => {
+    if (v == null) return null;
+    const n = Number(v);
+    return Number.isNaN(n) ? null : n;
+  };
   if (typeof customer === "object") {
-    const v = customer[cat];
-    return v == null ? null : Number(v);
+    const v = customer[cat] != null ? customer[cat] : customer.adult; // fall back to adult
+    return toNum(v);
   }
-  return cat === "adult" ? Number(customer) : null;
+  return cat === "adult" ? toNum(customer) : null;
 };
 
 export const fmtDate = (s) => {

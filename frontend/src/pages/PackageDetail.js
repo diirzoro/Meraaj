@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import api, { apiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { PageHeader } from "@/components/Layout";
+import { PkgImage } from "@/components/PkgImage";
 import { money, equiv, fmtDate, PKG_TYPE, roomCustomer } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -62,15 +63,17 @@ export default function PackageDetail() {
     cat === "child" ? (pkg[childKey] ?? adultVal) : cat === "infant" ? (pkg[infantKey] ?? adultVal) : adultVal;
   const chargeOf = (cat) => {
     if (isOffice) {
-      const net = Number(selRoom?.net ?? pick(cat, "child_net_cost", "infant_net_cost", pkg.net_cost_per_seat || 0));
-      const comm = Number(selRoom?.commission ?? pick(cat, "child_commission", "infant_commission", pkg.buyer_office_commission || 0));
-      return +(net + comm * 0.1).toFixed(2);
+      const net = roomCustomer(selRoom?.net, cat)
+        ?? Number(pick(cat, "child_net_cost", "infant_net_cost", pkg.net_cost_per_seat || 0));
+      const comm = roomCustomer(selRoom?.commission, cat)
+        ?? Number(pick(cat, "child_commission", "infant_commission", pkg.buyer_office_commission || 0));
+      const v = Number(net) + Number(comm) * 0.1;
+      return Number.isNaN(v) ? 0 : +v.toFixed(2);
     }
-    if (selRoom) {
-      const rc = roomCustomer(selRoom.customer, cat) ?? roomCustomer(selRoom.customer, "adult");
-      if (rc != null) return +Number(rc).toFixed(2);
-    }
-    return +Number(pick(cat, "child_sale_price", "infant_sale_price", pkg.final_sale_price || 0)).toFixed(2);
+    const rc = selRoom ? roomCustomer(selRoom.customer, cat) : null;
+    if (rc != null) return +Number(rc).toFixed(2);
+    const f = Number(pick(cat, "child_sale_price", "infant_sale_price", pkg.final_sale_price || 0));
+    return Number.isNaN(f) ? 0 : +f.toFixed(2);
   };
 
   const seats = regs.length;
@@ -154,8 +157,8 @@ export default function PackageDetail() {
                           </td>
                         )}
                         <td className="py-2 font-semibold text-[#0A2540]">{roomAr(r.room_type)}</td>
-                        {isOffice && <td className="py-2 tabular">{money(r.net, pkg.currency)}</td>}
-                        {isOffice && <td className="py-2 tabular text-[#15803D]">{money(r.commission, pkg.currency)}</td>}
+                        {isOffice && <td className="py-2 tabular">{roomCustomer(r.net, "adult") != null ? money(roomCustomer(r.net, "adult"), pkg.currency) : "—"}</td>}
+                        {isOffice && <td className="py-2 tabular text-[#15803D]">{roomCustomer(r.commission, "adult") != null ? money(roomCustomer(r.commission, "adult"), pkg.currency) : "—"}</td>}
                         <td className="py-2 tabular font-bold" data-testid={`room-adult-${i}`}>{money(roomCustomer(r?.customer, "adult") || 0, pkg.currency)}</td>
                         {anyChild && <td className="py-2 tabular" data-testid={`room-child-${i}`}>{roomCustomer(r?.customer, "child") != null ? money(roomCustomer(r?.customer, "child"), pkg.currency) : "—"}</td>}
                         {anyInfant && <td className="py-2 tabular" data-testid={`room-infant-${i}`}>{roomCustomer(r?.customer, "infant") != null ? money(roomCustomer(r?.customer, "infant"), pkg.currency) : "—"}</td>}

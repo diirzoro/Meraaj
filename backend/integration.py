@@ -179,12 +179,14 @@ def _adapt_package(body: dict) -> dict:
     comm = pricing.get("buyer_office_commission")
     if base is not None:
         if net is None:
-            net = base.get("net", 0)
+            bn = base.get("net")
+            net = (bn.get("adult") if isinstance(bn, dict) else bn) or 0
         if sale is None:
             cust = base.get("customer", 0)
             sale = cust.get("adult", 0) if isinstance(cust, dict) else cust
         if comm is None:
-            comm = base.get("commission", 0)
+            bc = base.get("commission")
+            comm = (bc.get("adult") if isinstance(bc, dict) else bc) or 0
     currency = pricing.get("currency") or body.get("currency") or "USD"
     currency = "SAR" if currency == "SAR" else "USD"
     seats = body.get("available_seats")

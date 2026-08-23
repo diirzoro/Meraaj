@@ -36,8 +36,8 @@ class HotelInput(BaseModel):
 
 class RoomPricingInput(BaseModel):
     room_type: str  # double | triple | quad | quint | single
-    net: Optional[float] = None
-    commission: Optional[float] = None
+    net: Optional[Union[float, Dict[str, float]]] = None
+    commission: Optional[Union[float, Dict[str, float]]] = None
     customer: Union[float, Dict[str, float]]  # scalar (adult) OR {adult, child, infant}
 
 
@@ -291,6 +291,25 @@ def _room_customer_price(customer, category):
         return None
 
 
+def _room_num(field, category):
+    """Robust numeric for net/commission (unified Rahal schema): object {adult,child,infant}
+    → per category (else adult); scalar → applies to all categories; never raises / NaN."""
+    if field is None:
+        return None
+    if isinstance(field, dict):
+        v = field.get(category)
+        if v is None:
+            v = field.get("adult")
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+    try:
+        return float(field)
+    except (TypeError, ValueError):
+        return None
+
+
 def _find_room(pkg: dict, room_type):
     if not room_type:
         return None
@@ -301,20 +320,22 @@ def _find_room(pkg: dict, room_type):
 
 
 def _booking_prices(pkg: dict, category: str, room: dict = None):
-    """(net, sale, commission) per traveler. When a room is selected, the customer sale
-    price comes from that room per category (falling back to the room's adult price), and
-    net/commission come from the room when provided; otherwise package-level tier pricing."""
+    """(net, sale, commission) per traveler. Robust to Rahal's unified schema where
+    net/commission/customer may be objects {adult,child,infant} or scalars, or missing.
+    Missing/invalid values fall back to package-level tier pricing (never NaN)."""
     n, s, c = _tier_prices(pkg, category)
     if room:
-        if room.get("net") is not None:
-            n = round(float(room["net"]), 2)
-        if room.get("commission") is not None:
-            c = round(float(room["commission"]), 2)
-        rc = _room_customer_price(room.get("customer"), category)
-        if rc is None:
-            rc = _room_customer_price(room.get("customer"), "adult")
+        rn = _room_num(room.get("net"), category)
+        if rn is not None:
+            n = round(rn, 2)
+        rc = _room_num(room.get("commission"), category)
         if rc is not None:
-            s = round(float(rc), 2)
+            c = round(rc, 2)
+        rs = _room_customer_price(room.get("customer"), category)
+        if rs is None:
+            rs = _room_customer_price(room.get("customer"), "adult")
+        if rs is not None:
+            s = round(rs, 2)
     return n, s, c
 
 
