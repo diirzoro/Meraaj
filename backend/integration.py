@@ -80,7 +80,9 @@ async def _deliver(outbox_id, url: str, raw: bytes, sig: str):
 async def notify_rahal(event: str, payload: dict):
     """Persist the event to an outbox (never lost) then deliver in the background."""
     body = {"event": event, **payload, "occurred_at": now_iso()}
-    raw = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    # Compact separators to byte-match Node's JSON.stringify (no spaces) so the HMAC
+    # signature verifies on the Rahal side (fixes 401 Invalid HMAC signature).
+    raw = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     sig = hmac.new(_meraaj_secret().encode(), raw, hashlib.sha256).hexdigest()
     res = await db.rahal_outbox.insert_one({
         "event": event, "payload": body, "signature": sig,
@@ -339,6 +341,7 @@ async def share_package(request: Request,
         **mapped,
         "available_seats": mapped["total_seats"],
         "status": "listed",
+        "is_active": True,
         "source": "rahal",
         "rahal_ref": ref_v,
         "rahal_office_ref": office_ref,
@@ -427,10 +430,10 @@ async def rahal_webhook(request: Request, x_rahal_signature: str = Header(defaul
         r = await db.packages.update_one(match, {"$set": {"available_seats": data.get("available_seats", event.get("available_seats", 0))}})
         matched_count = r.matched_count
     elif etype in ("package.deactivated", "package.deleted", "package.removed", "package.disabled") and match:
-        r = await db.packages.update_one(match, {"$set": {"status": "unlisted"}})
+        r = await db.packages.update_one(match, {"$set": {"status": "unlisted", "is_active": False}})
         matched_count = r.matched_count
     elif etype == "package.activated" and match:
-        r = await db.packages.update_one(match, {"$set": {"status": "listed"}})
+        r = await db.packages.update_one(match, {"$set": {"status": "listed", "is_active": True}})
         matched_count = r.matched_count
     elif etype == "package.updated" and match:
         # Same v2 Adapter as /share, but only touch fields present in the delta (no blanking)
@@ -441,10 +444,12 @@ async def rahal_webhook(request: Request, x_rahal_signature: str = Header(defaul
         raw_status = str(event.get("status", data.get("status", ""))).lower()
         if active_flag is False or raw_status in ("inactive", "deleted", "disabled", "cancelled", "removed"):
             updates["status"] = "unlisted"
+            updates["is_active"] = False
         else:
             # Rahal emits NO package.activated and sends NO status field on re-open;
             # a package.updated for a known package implicitly means active -> re-list it.
             updates["status"] = "listed"
+            updates["is_active"] = True
         if updates:
             r = await db.packages.update_one(match, {"$set": updates})
             matched_count = r.matched_count

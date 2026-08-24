@@ -74,6 +74,7 @@ async def create_package(payload: PackageInput, user: dict = Depends(require_off
         "seller_office_name": user["office_name"],
         "available_seats": payload.total_seats,
         "status": "listed",
+        "is_active": True,
         "source": "manual",
         "rahal_ref": None,
         "created_at": now_iso(),
@@ -232,7 +233,7 @@ async def toggle_package(pkg_id: str, user: dict = Depends(require_office)):
     if not pkg:
         raise HTTPException(404, "البرنامج غير موجود")
     new_status = "unlisted" if pkg["status"] == "listed" else "listed"
-    await db.packages.update_one({"_id": oid(pkg_id)}, {"$set": {"status": new_status}})
+    await db.packages.update_one({"_id": oid(pkg_id)}, {"$set": {"status": new_status, "is_active": new_status == "listed"}})
     # Keep the Meraaj Network in sync when an office lists/unlists a manual program
     if pkg.get("source") != "rahal":
         await notify_rahal(

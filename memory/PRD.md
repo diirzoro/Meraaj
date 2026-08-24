@@ -173,6 +173,12 @@ Rahal contract confirmed by their team: it emits NO `package.activated`; on re-o
 - `package.deactivated/deleted/removed/disabled` → unlisted (unchanged). `package.activated` still handled → listed (harmless, though Rahal never sends it).
 - Verified E2E (real Contract v2 shape, room_type Arabic "رباعي", base/net/commission/customer objects, images:[]): share→LISTED; deactivated(closed_by_office)→NOT in market; updated(reopen, no status)→LISTED; updated(active:false)→NOT in market.
 
+## FIX: is_active default + outbound HMAC whitespace (401) — DONE Aug 2026
+Per Rahal dev diagnosis:
+- **is_active/status default**: packages now persist `is_active: true` + `status: "listed"` on Rahal share, `package.activated`, and re-list via `package.updated`; `is_active: false` + `unlisted` on deactivate. Also added to manual `create_package` and office `toggle_package` (`market.py`). Prevents packages staying hidden.
+- **Outbound HMAC 401 fix** (`integration.py` `notify_rahal`): serialize the webhook body with `json.dumps(..., separators=(",", ":"))` (compact, no spaces after `:`/`,`) so the signed bytes byte-match Node's `JSON.stringify`; the previous default (spaced) produced a different signature → Rahal returned 401 Invalid HMAC. `ensure_ascii=False` keeps unicode raw to match JS too.
+- Verified: compact bytes == JSON.stringify-style and signatures match (old spaced differs); freshly-shared Rahal package → `status:listed, is_active:True`.
+
 ## Backlog (P1/P2)
 - P1 (mobile next): Firebase FCM push (needs Firebase project + `google-services.json`; add `device_tokens` model + triggers on booking/wallet events) — Phase 3. Capgo OTA updates (needs Capgo account/key) — Phase 4.
 - P1: Real Rahal SSO + embedded signed-iframe (awaiting Rahal APIs). Atomic booking debit (transactions/optimistic locking) to prevent oversell/overdraw under concurrency.
