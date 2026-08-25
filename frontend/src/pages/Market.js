@@ -199,7 +199,7 @@ export default function Market() {
                   <div className="flex flex-wrap gap-3 mt-3 text-xs text-muted-foreground">
                     <span className="flex items-center gap-1"><CalendarDays className="w-3.5 h-3.5" /> {fmtDate(p.departure_date)}</span>
                     {p.duration_days != null && <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> {p.duration_days} يوم</span>}
-                    <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" /> {p.available_seats} مقعد</span>
+                    <span className={`flex items-center gap-1 font-semibold ${p.is_full ? "text-[#DC2626]" : "text-[#15803D]"}`} data-testid={`pkg-avail-${p.id}`}><Users className="w-3.5 h-3.5" /> {p.is_full ? "ممتلئ / تم التفويج" : "متاح"}</span>
                   </div>
                   <div className="flex items-end justify-between mt-4 pt-4 border-t">
                     <div>

@@ -13,6 +13,11 @@ router = APIRouter(prefix="/api", tags=["market"])
 def _view_package(doc, user):
     """Hide wholesale/net pricing from non-office viewers (individuals & guests)."""
     d = serialize(doc)
+    # Availability as a status only (no seat numbers exposed to the market/matcher)
+    seats = d.get("available_seats", 0) or 0
+    dispatched = d.get("status") == "dispatched" or bool(d.get("dispatched"))
+    d["is_full"] = dispatched or seats <= 0
+    d["availability"] = "full" if d["is_full"] else "available"
     if not user or user.get("role") != "office":
         d.pop("net_cost_per_seat", None)
         d.pop("buyer_office_commission", None)
@@ -48,6 +53,7 @@ class PackageInput(BaseModel):
     departure_date: str
     return_date: str
     departure_city: str = ""
+    route: str = ""
     transport: str = ""
     hotels: List[HotelInput] = []
     images: List[str] = []
@@ -163,7 +169,7 @@ async def list_packages(type: Optional[str] = None, q: Optional[str] = None,
                         min_days: Optional[int] = None, max_days: Optional[int] = None,
                         features: Optional[str] = None, sort: str = "newest",
                         user=Depends(get_optional_user)):
-    query = {"status": "listed"}
+    query = {"status": "listed", "available_seats": {"$gt": 0}}
     if type:
         query["type"] = type
     if q:

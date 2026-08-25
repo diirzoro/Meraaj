@@ -138,7 +138,7 @@ export default function Landing() {
                     <div className="flex flex-wrap gap-3 mt-3 text-xs text-muted-foreground">
                       <span className="flex items-center gap-1"><CalendarDays className="w-3.5 h-3.5" /> {fmtDate(p.departure_date)}</span>
                       <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" /> {p.departure_city || "-"}</span>
-                      <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" /> {p.available_seats} مقعد</span>
+                      <span className={`flex items-center gap-1 font-semibold ${p.is_full ? "text-[#DC2626]" : "text-[#15803D]"}`}><Users className="w-3.5 h-3.5" /> {p.is_full ? "ممتلئ" : "متاح"}</span>
                     </div>
                     <div className="mt-4 pt-4 border-t">
                       <div className="text-[11px] text-muted-foreground">{adults.length ? "يبدأ من" : "سعر البيع للزبون"}</div>

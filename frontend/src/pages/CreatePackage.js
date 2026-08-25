@@ -20,7 +20,7 @@ export default function CreatePackage() {
   const navigate = useNavigate();
   const [f, setF] = useState({
     type: "umrah", title: "", description: "", departure_date: "", return_date: "",
-    departure_city: "", transport: "", currency: "SAR",
+    departure_city: "", route: "", transport: "", currency: "SAR",
     net_cost_per_seat: "", final_sale_price: "", buyer_office_commission: "", total_seats: "",
     child_net_cost: "", child_sale_price: "", child_commission: "",
     infant_net_cost: "", infant_sale_price: "", infant_commission: "",
@@ -108,6 +108,7 @@ export default function CreatePackage() {
               <div><Label className="mb-2 block">تاريخ الانطلاق</Label><Input data-testid="pkg-dep" type="date" required value={f.departure_date} onChange={set("departure_date")} /></div>
               <div><Label className="mb-2 block">تاريخ العودة</Label><Input data-testid="pkg-ret" type="date" required value={f.return_date} onChange={set("return_date")} /></div>
               <div><Label className="mb-2 block">مدينة الانطلاق</Label><Input data-testid="pkg-city" value={f.departure_city} onChange={set("departure_city")} /></div>
+              <div className="sm:col-span-2"><Label className="mb-2 block">مسار الرحلة (نقاط المرور والتجميع)</Label><Input data-testid="pkg-route" value={f.route} onChange={set("route")} placeholder="مثال: الشحر - الريان - المكلا - جدة" /></div>
               <div><Label className="mb-2 block">وسيلة النقل</Label><Input data-testid="pkg-transport" value={f.transport} onChange={set("transport")} placeholder="طيران مباشر" /></div>
             </div>
             <div><Label className="mb-2 block">الوصف</Label><Textarea data-testid="pkg-desc" value={f.description} onChange={set("description")} rows={3} /></div>

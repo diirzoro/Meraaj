@@ -179,6 +179,11 @@ Per Rahal dev diagnosis:
 - **Outbound HMAC 401 fix** (`integration.py` `notify_rahal`): serialize the webhook body with `json.dumps(..., separators=(",", ":"))` (compact, no spaces after `:`/`,`) so the signed bytes byte-match Node's `JSON.stringify`; the previous default (spaced) produced a different signature → Rahal returned 401 Invalid HMAC. `ensure_ascii=False` keeps unicode raw to match JS too.
 - Verified: compact bytes == JSON.stringify-style and signatures match (old spaced differs); freshly-shared Rahal package → `status:listed, is_active:True`.
 
+## Seat-status + share link + route field — DONE Aug 2026
+- **Seats as status (no numbers)**: `_view_package` adds `is_full`/`availability`; Market/Landing/PackageDetail show green "متاح" or red "ممتلئ / تم التفويج" instead of seat counts. `list_packages` now filters `available_seats:{$gt:0}` so full/dispatched packages auto-disappear from the matcher. Verified: booking the last seat removes the package from `/packages`.
+- **Affiliate share (office)**: green "مشاركة الرحلة برابطك" button (`share-trip-btn`) on PackageDetail for the owner → builds ad text (title, route, dates, features, starts-from price) + `/market/:id?ref=<office_id>`; uses Web Share API with clipboard fallback. Ref flows via existing `meraaj_ref` → booking commission to that office.
+- **Route field**: `PackageInput.route` + create-form input (`pkg-route`, e.g. "الشحر - الريان - المكلا - جدة"); shown in PackageDetail trip details. Verified stored + returned.
+
 ## Backlog (P1/P2)
 - P1 (mobile next): Firebase FCM push (needs Firebase project + `google-services.json`; add `device_tokens` model + triggers on booking/wallet events) — Phase 3. Capgo OTA updates (needs Capgo account/key) — Phase 4.
 - P1: Real Rahal SSO + embedded signed-iframe (awaiting Rahal APIs). Atomic booking debit (transactions/optimistic locking) to prevent oversell/overdraw under concurrency.

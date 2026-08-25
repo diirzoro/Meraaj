@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
-import { MapPin, Users, CalendarDays, Building2, Plane, Hotel, Plus, Trash2, ShoppingCart, CheckCircle2, Bus, BedDouble, ListChecks } from "lucide-react";
+import { MapPin, Users, CalendarDays, Building2, Plane, Hotel, Plus, Trash2, ShoppingCart, CheckCircle2, Bus, BedDouble, ListChecks, Share2 } from "lucide-react";
 
 const ROOM_AR = { double: "ثنائية", twin: "ثنائية", triple: "ثلاثية", quad: "رباعية", quint: "خماسية", single: "فردية" };
 const TRANSPORT_AR = { bus: "باص", flight: "طيران", air: "طيران", train: "قطار", car: "سيارة" };
@@ -76,6 +76,23 @@ export default function PackageDetail() {
     return Number.isNaN(f) ? 0 : +f.toFixed(2);
   };
 
+  const shareTrip = async () => {
+    const link = `${window.location.origin}/market/${id}?ref=${user.id}`;
+    const price = roomCustomer(pkg.room_pricing?.[0]?.customer, "adult") || Number(pkg.final_sale_price) || 0;
+    const text = [
+      `🕋 ${pkg.title}`,
+      pkg.route ? `🚌 المسار: ${pkg.route}` : "",
+      `📅 ${fmtDate(pkg.departure_date)} ← ${fmtDate(pkg.return_date)}`,
+      pkg.features?.length ? `✨ ${pkg.features.join("، ")}` : "",
+      `💰 يبدأ من ${money(price, pkg.currency)}`,
+      `🔗 احجز الآن عبر رابطي: ${link}`,
+    ].filter(Boolean).join("\n");
+    try {
+      if (navigator.share) await navigator.share({ title: pkg.title, text });
+      else { await navigator.clipboard.writeText(text); toast.success("تم نسخ نص المشاركة مع رابطك المخصص"); }
+    } catch { /* user cancelled */ }
+  };
+
   const seats = regs.length;
   const required = +regs.reduce((s, r) => s + chargeOf(r.category), 0).toFixed(2);
 
@@ -119,8 +136,9 @@ export default function PackageDetail() {
               <Info icon={CalendarDays} label="تاريخ الانطلاق" value={fmtDate(pkg.departure_date)} />
               <Info icon={CalendarDays} label="تاريخ العودة" value={fmtDate(pkg.return_date)} />
               {pkg.departure_city && <Info icon={MapPin} label="مدينة الانطلاق" value={pkg.departure_city} />}
+              {pkg.route && <Info icon={MapPin} label="مسار الرحلة" value={pkg.route} />}
               <Info icon={Plane} label="النقل" value={transAr(pkg.transport)} />
-              <Info icon={Users} label="المقاعد المتاحة" value={`${pkg.available_seats} / ${pkg.total_seats}`} />
+              <Info icon={Users} label="التوفّر" value={pkg.is_full ? "ممتلئ / تم التفويج" : "متاح"} />
               <Info icon={Building2} label="البائع" value={pkg.seller_office_name} />
             </div>
             {pkg.description && <p className="text-sm text-muted-foreground mt-5 leading-relaxed">{pkg.description}</p>}
@@ -254,7 +272,10 @@ export default function PackageDetail() {
             )}
 
             {isOwner ? (
-              <div className="mt-5 text-center text-sm bg-[#F4F6F8] rounded-lg py-3 text-muted-foreground">هذا البرنامج من إضافتك</div>
+              <div className="mt-5 space-y-2">
+                <div className="text-center text-sm bg-[#F4F6F8] rounded-lg py-3 text-muted-foreground">هذا البرنامج من إضافتك</div>
+                <Button data-testid="share-trip-btn" onClick={shareTrip} className="w-full h-11 bg-[#25D366] hover:bg-[#1EBE57] text-white"><Share2 className="w-4 h-4" /> مشاركة الرحلة برابطك</Button>
+              </div>
             ) : !user ? (
               <Button data-testid="open-booking-btn" onClick={() => navigate(`/login?next=/market/${id}`)}
                       className="w-full mt-5 h-11 bg-[#0A2540] hover:bg-[#061A2E]">
