@@ -107,8 +107,13 @@ async def retry_outbox(admin: dict = Depends(require_admin)):
         raise HTTPException(400, "لم يتم ضبط عنوان Webhook الخاص برحال (RAHAL_WEBHOOK_URL)")
     pending = await db.rahal_outbox.find({"status": {"$in": ["pending", "failed"]}}).to_list(300)
     for d in pending:
-        raw = json.dumps(d["payload"], ensure_ascii=False).encode("utf-8")
-        await _deliver(d["_id"], url, raw, d["signature"])
+        # Re-serialize with the SAME compact separators used at signing time AND recompute the
+        # signature with the CURRENT secret, so the retried bytes byte-match the signed bytes
+        # (fixes invalid_signature — incl. events queued before an HMAC secret rotation).
+        raw = json.dumps(d["payload"], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        sig = hmac.new(_meraaj_secret().encode(), raw, hashlib.sha256).hexdigest()
+        await db.rahal_outbox.update_one({"_id": d["_id"]}, {"$set": {"signature": sig}})
+        await _deliver(d["_id"], url, raw, sig)
     return {"retried": len(pending)}
 
 
