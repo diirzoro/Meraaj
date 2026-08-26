@@ -62,7 +62,9 @@ async def _deliver(outbox_id, url: str, raw: bytes, sig: str):
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.post(url, content=raw, headers={
                 "Content-Type": "application/json",
-                "X-Meraaj-Signature": f"sha256={sig}",
+                # Rahaal's meraajVerify() compares the header verbatim to the raw hex digest
+                # (it does NOT strip a "sha256=" prefix), so send the bare lowercase hex.
+                "X-Meraaj-Signature": sig,
             })
         ok = 200 <= r.status_code < 300
         await db.rahal_outbox.update_one({"_id": outbox_id}, {
