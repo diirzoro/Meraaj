@@ -1,14 +1,19 @@
 import time
 import uuid
+import re
+from datetime import datetime, timezone
+from bson import ObjectId
+from pymongo.errors import BulkWriteError, DuplicateKeyError
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Body
 from pydantic import BaseModel, Field
 from typing import List, Optional, Union, Dict
 from db import (db, serialize, oid, now_iso, adjust_wallet, log_txn,
                 platform_pct, cancel_fee_pct, marketer_pct, log_platform_revenue,
-                plan_debit, wallet_available, CurrencyField)
+                plan_debit, wallet_available, CurrencyField,
+                approval_timeout_hours, iso_in_hours, audit)
 from security import get_current_user, get_optional_user, require_office, require_buyer
-from integration import notify_rahal
+from integration import notify_rahal, refund_and_release
 
 router = APIRouter(prefix="/api", tags=["market"])
 
@@ -416,6 +421,63 @@ def _booking_prices(pkg: dict, category: str, room: dict = None):
     return n, s, c
 
 
+def _norm_passport(p):
+    return re.sub(r"[\s\-]", "", str(p or "")).upper()
+
+
+async def _reconcile_delivery(docs):
+    """Compute delivery_status from the outbox WITHOUT touching _deliver/outbox internals.
+    Keeps Webhook delivery state separate from business (approval) state."""
+    pend = [str(d["_id"]) for d in docs
+            if d.get("delivery_status") in (None, "pending") and d.get("rahal_ref") and d.get("approval_status")]
+    if not pend:
+        return
+    obs = await db.rahal_outbox.find(
+        {"payload.type": "meraaj.booking.created", "payload.data.booking_ref": {"$in": pend}}).to_list(1000)
+    m = {}
+    for o in obs:
+        br = ((o.get("payload") or {}).get("data") or {}).get("booking_ref")
+        if br:
+            m[br] = o.get("status")
+    for d in docs:
+        st = m.get(str(d["_id"]))
+        if st and d.get("delivery_status") != st:
+            d["delivery_status"] = st
+            await db.bookings.update_one({"_id": d["_id"]}, {"$set": {"delivery_status": st}})
+
+
+async def _maybe_expire_pending(b):
+    """Lazy, safe, idempotent expiry of a pending approval past approval_expires_at
+    (no scheduler; runs on read/processing): unwind hold, restore seats, notify Rahal."""
+    if not b or b.get("approval_status") != "pending":
+        return b
+    exp = b.get("approval_expires_at")
+    if not exp:
+        return b
+    try:
+        expdt = datetime.fromisoformat(exp)
+        if expdt.tzinfo is None:
+            expdt = expdt.replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return b
+    if datetime.now(timezone.utc) < expdt:
+        return b
+    claimed = await db.bookings.find_one_and_update(
+        {"_id": b["_id"], "approval_status": "pending"},
+        {"$set": {"approval_status": "expired", "status": "cancelled",
+                  "cancellation_status": "expired", "expired_at": now_iso(),
+                  "cancellation": {"type": "auto_expired"}}})
+    if not claimed:
+        return await db.bookings.find_one({"_id": b["_id"]})
+    await refund_and_release(claimed)
+    await audit(str(b["_id"]), "auto_expired", "system")
+    if claimed.get("rahal_ref"):
+        await notify_rahal("meraaj.booking.cancelled", {
+            "package_ref": claimed["rahal_ref"], "meraaj_booking_id": str(b["_id"]),
+            "booking_ref": str(b["_id"]), "seats_released": claimed.get("seats", 0)})
+    return await db.bookings.find_one({"_id": b["_id"]})
+
+
 @router.post("/bookings")
 async def create_booking(payload: BookingInput, user: dict = Depends(require_buyer)):
     pkg = await db.packages.find_one({"_id": oid(payload.package_id)})
@@ -476,15 +538,35 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
     if split is None:
         raise HTTPException(400, f"الرصيد المتاح غير كافٍ. المطلوب: {required} {cur}")
 
-    # Debit buyer (program currency first, shortfall covered from the other currency at fixed rate)
+    is_rahal = pkg.get("source") == "rahal" and bool(pkg.get("rahal_ref"))
+
+    # --- Passport uniqueness within the SAME trip/package (atomic, backend-enforced) ---
+    new_id = ObjectId()
+    bid = str(new_id)
+    norms = [_norm_passport(r.passport_no) for r in payload.registrants]
+    if any(not n for n in norms):
+        raise HTTPException(400, "رقم الجواز مطلوب لكل مسافر")
+    if len(set(norms)) != len(norms):
+        raise HTTPException(400, "رقم الجواز مسجل مسبقاً في هذه الرحلة.")
+    try:
+        await db.trip_passports.insert_many(
+            [{"package_id": str(pkg["_id"]), "passport_norm": n, "booking_id": bid,
+              "created_at": now_iso()} for n in norms], ordered=True)
+    except (BulkWriteError, DuplicateKeyError):
+        raise HTTPException(400, "رقم الجواز مسجل مسبقاً في هذه الرحلة.")
+
+    # Debit buyer = HOLD (program currency first, shortfall from the other at fixed rate)
     for c, amt in split.items():
         if amt:
             await adjust_wallet(user["_id"], c, available=-amt, total=-amt)
-    # Escrow to seller in the program's own currency
-    await adjust_wallet(oid(pkg["seller_id"]), cur, pending=net_total, total=net_total)
+    # Seats reserved immediately (released on reject / withdraw / expiry)
     await db.packages.update_one({"_id": pkg["_id"]}, {"$inc": {"available_seats": -seats}})
+    # Rahal bookings: DEFER all seller/platform/marketer effects until booking.approved.
+    if not is_rahal:
+        await adjust_wallet(oid(pkg["seller_id"]), cur, pending=net_total, total=net_total)
 
     booking = {
+        "_id": new_id,
         "package_id": str(pkg["_id"]),
         "package_title": pkg["title"],
         "package_type": pkg["type"],
@@ -513,19 +595,27 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
         "cancellation": None,
         "created_at": now_iso(),
     }
-    res = await db.bookings.insert_one(booking)
-    bid = str(res.inserted_id)
+    if is_rahal:
+        booking["approval_status"] = "pending"
+        booking["cancellation_status"] = "none"
+        booking["approval_expires_at"] = iso_in_hours(approval_timeout_hours())
+        booking["delivery_status"] = "pending"
+    await db.bookings.insert_one(booking)
     await log_txn(user["_id"], "booking_debit", -required, f"حجز برنامج: {pkg['title']}", bid, currency=cur)
-    await log_txn(pkg["seller_id"], "booking_escrow", net_total, f"إيراد معلق من حجز: {pkg['title']}", bid, currency=cur)
-    if is_office and platform_fee:
-        await log_platform_revenue(platform_fee, f"عمولة منصة (حجز): {pkg['title']}", bid, currency=cur)
-    if not is_office:
-        if marketer_id and marketer_commission > 0:
-            await adjust_wallet(oid(marketer_id), cur, pending=marketer_commission, total=marketer_commission)
-            await log_txn(marketer_id, "marketer_commission", marketer_commission,
-                          f"عمولة تسويق (معلّقة): {pkg['title']}", bid, currency=cur)
-        if platform_profit:
-            await log_platform_revenue(platform_profit, f"أرباح المنصة من حجز مباشر: {pkg['title']}", bid, currency=cur)
+    await audit(bid, "booking_requested" if is_rahal else "booking_created", "buyer",
+                actor_id=str(user["_id"]), meta={"seats": seats, "amount": required, "currency": cur})
+    # Non-rahal (manual) bookings keep the immediate revenue recognition as before.
+    if not is_rahal:
+        await log_txn(pkg["seller_id"], "booking_escrow", net_total, f"إيراد معلق من حجز: {pkg['title']}", bid, currency=cur)
+        if is_office and platform_fee:
+            await log_platform_revenue(platform_fee, f"عمولة منصة (حجز): {pkg['title']}", bid, currency=cur)
+        if not is_office:
+            if marketer_id and marketer_commission > 0:
+                await adjust_wallet(oid(marketer_id), cur, pending=marketer_commission, total=marketer_commission)
+                await log_txn(marketer_id, "marketer_commission", marketer_commission,
+                              f"عمولة تسويق (معلّقة): {pkg['title']}", bid, currency=cur)
+            if platform_profit:
+                await log_platform_revenue(platform_profit, f"أرباح المنصة من حجز مباشر: {pkg['title']}", bid, currency=cur)
     if pkg.get("source") == "rahal" and pkg.get("rahal_ref"):
         # Rahaal Production v2 contract: {id, type, timestamp, data{...}}
         await notify_rahal("meraaj.booking.created", {}, envelope={
@@ -545,7 +635,6 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
                 "currency": cur,
             },
         })
-    booking["_id"] = res.inserted_id
     return serialize(booking)
 
 
@@ -553,7 +642,9 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
 async def list_bookings(role: str = "buyer", user: dict = Depends(require_buyer)):
     key = "buyer_id" if role == "buyer" else "seller_id"
     docs = await db.bookings.find({key: str(user["_id"])}).sort("created_at", -1).to_list(500)
-    return serialize(docs)
+    out = [await _maybe_expire_pending(d) for d in docs]
+    await _reconcile_delivery(out)
+    return serialize(out)
 
 
 @router.get("/bookings/{booking_id}")
@@ -561,7 +652,18 @@ async def get_booking(booking_id: str, user: dict = Depends(require_buyer)):
     b = await db.bookings.find_one({"_id": oid(booking_id)})
     if not b or str(user["_id"]) not in (b["buyer_id"], b["seller_id"]):
         raise HTTPException(404, "الحجز غير موجود")
+    b = await _maybe_expire_pending(b)
+    await _reconcile_delivery([b])
     return serialize(b)
+
+
+@router.get("/bookings/{booking_id}/timeline")
+async def booking_timeline(booking_id: str, user: dict = Depends(require_buyer)):
+    b = await db.bookings.find_one({"_id": oid(booking_id)})
+    if not b or str(user["_id"]) not in (b["buyer_id"], b["seller_id"]):
+        raise HTTPException(404, "الحجز غير موجود")
+    events = await db.booking_events.find({"booking_id": booking_id}).sort("at", 1).to_list(500)
+    return serialize(events)
 
 
 class VisaInput(BaseModel):
@@ -573,6 +675,8 @@ async def issue_visas(booking_id: str, payload: VisaInput, user: dict = Depends(
     b = await db.bookings.find_one({"_id": oid(booking_id)})
     if not b or b["seller_id"] != str(user["_id"]):
         raise HTTPException(404, "الحجز غير موجود")
+    if b.get("approval_status") in ("pending", "rejected", "expired"):
+        raise HTTPException(400, "لا يمكن إصدار التأشيرات قبل قبول الحجز من صاحب الباكيج")
     if b["status"] != "blue":
         raise HTTPException(400, "لا يمكن إصدار التأشيرات في هذه الحالة")
     registrants = b["registrants"]
@@ -635,10 +739,47 @@ async def settle_booking(booking_id: str, user: dict = Depends(require_office)):
 
 # ---------- Cancellation ----------
 @router.post("/bookings/{booking_id}/cancel-request")
-async def cancel_request(booking_id: str, user: dict = Depends(require_buyer)):
+async def cancel_request(booking_id: str, payload: Optional[Dict] = Body(default=None), user: dict = Depends(require_buyer)):
     b = await db.bookings.find_one({"_id": oid(booking_id)})
     if not b or b["buyer_id"] != str(user["_id"]):
         raise HTTPException(404, "الحجز غير موجود")
+    # New P2P approval lifecycle (rahal bookings carrying approval_status). Legacy/manual
+    # bookings (no approval_status) fall through to the existing behavior below unchanged.
+    ap = b.get("approval_status")
+    if ap in ("pending", "approved", "rejected", "expired"):
+        reason = (payload or {}).get("reason", "") if payload else ""
+        if ap == "pending":
+            claimed = await db.bookings.find_one_and_update(
+                {"_id": b["_id"], "approval_status": "pending"},
+                {"$set": {"approval_status": "rejected", "status": "cancelled",
+                          "cancellation_status": "withdrawn", "withdrawn_at": now_iso(),
+                          "cancellation": {"type": "buyer_withdrawal"}}})
+            if not claimed:
+                raise HTTPException(409, "تم تحديث حالة الطلب بالفعل")
+            await refund_and_release(claimed)
+            await audit(str(b["_id"]), "buyer_withdrew", "buyer", actor_id=str(user["_id"]))
+            if claimed.get("rahal_ref"):
+                await notify_rahal("meraaj.booking.cancelled", {
+                    "package_ref": claimed["rahal_ref"], "meraaj_booking_id": str(b["_id"]),
+                    "booking_ref": str(b["_id"]), "seats_released": claimed.get("seats", 0)})
+            return {"status": "cancelled", "approval_status": "rejected",
+                    "refund": claimed.get("amount_charged", 0), "withdrawn": True}
+        if ap == "approved":
+            if b.get("cancellation_status") == "requested":
+                raise HTTPException(400, "يوجد طلب إلغاء قيد المراجعة")
+            await db.bookings.update_one({"_id": b["_id"]}, {"$set": {
+                "cancellation_status": "requested", "cancellation_requested_at": now_iso(),
+                "cancellation_reason": reason}})
+            await audit(str(b["_id"]), "cancellation_requested", "buyer",
+                        actor_id=str(user["_id"]), reason=reason)
+            if b.get("rahal_ref"):
+                await notify_rahal("meraaj.booking.cancellation_requested", {}, envelope={
+                    "id": str(uuid.uuid4()), "type": "meraaj.booking.cancellation_requested",
+                    "timestamp": int(time.time()),
+                    "data": {"package_ref": b["rahal_ref"], "booking_ref": str(b["_id"]),
+                             "reason": reason, "buyer_office_name": user["office_name"]}})
+            return {"cancellation_status": "requested"}
+        raise HTTPException(400, "لا يمكن إلغاء هذا الحجز في حالته الحالية")
     if b["status"] == "green":
         raise HTTPException(400, "لا يمكن الإلغاء بعد التفويج")
     if b["status"] not in ("blue", "yellow"):
@@ -667,6 +808,7 @@ async def cancel_request(booking_id: str, user: dict = Depends(require_buyer)):
                 await log_platform_revenue(-b["platform_profit"], f"عكس أرباح إلغاء: {b['package_title']}", booking_id, currency=cur)
         await adjust_wallet(user["_id"], cur, available=refund, total=refund)
         await db.packages.update_one({"_id": oid(b["package_id"])}, {"$inc": {"available_seats": b["seats"]}})
+        await db.trip_passports.delete_many({"booking_id": booking_id})
         await db.bookings.update_one({"_id": b["_id"]}, {"$set": {"status": "cancelled",
                                      "cancellation": {"type": "auto_blue", "refund": refund, "admin_fee": admin_fee}}})
         await log_txn(user["_id"], "cancel_refund", refund, f"استرداد إلغاء: {b['package_title']}", booking_id, currency=cur)
@@ -717,6 +859,7 @@ async def cancel_accept(booking_id: str, user: dict = Depends(require_buyer)):
                         available=seller_keeps, total=-(b["net_cost_total"] - seller_keeps))
     await adjust_wallet(user["_id"], cur, available=refund, total=refund)
     await db.packages.update_one({"_id": oid(b["package_id"])}, {"$inc": {"available_seats": b["seats"]}})
+    await db.trip_passports.delete_many({"booking_id": booking_id})
     await db.bookings.update_one({"_id": b["_id"]}, {"$set": {"status": "cancelled",
                                  "cancellation": {"type": "yellow_settled", "deduction": deduction,
                                                   "seller_keeps": seller_keeps, "platform_cut": platform_cut,

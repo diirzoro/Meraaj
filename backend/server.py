@@ -54,6 +54,7 @@ logger = logging.getLogger(__name__)
 async def startup():
     await db.users.create_index("email", unique=True)
     await db.packages.create_index("rahal_ref")
+    await db.trip_passports.create_index([("package_id", 1), ("passport_norm", 1)], unique=True)
     await seed_admin()
     logger.info("Meraaj Network API started; admin seeded.")
 

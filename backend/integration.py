@@ -13,7 +13,7 @@ import jwt
 import httpx
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Request, Header, Depends
-from db import db, serialize, oid, now_iso
+from db import db, serialize, oid, now_iso, adjust_wallet, log_txn, log_platform_revenue, audit
 from security import create_access_token, require_admin
 
 def _empty_wallet():
@@ -400,6 +400,71 @@ async def share_package(request: Request,
             "market_url": f"{os.environ.get('FRONTEND_URL','')}/market/{pkg_id}"}
 
 
+async def apply_approval_financials(b):
+    """Establish DEFERRED effects at seller approval: seller escrow (pending) + platform
+    revenue + marketer commission. Does NOT release to seller available (settlement does)."""
+    cur = b.get("currency", "USD")
+    net_total = b.get("net_cost_total", 0) or 0
+    bid = str(b["_id"])
+    await adjust_wallet(oid(b["seller_id"]), cur, pending=net_total, total=net_total)
+    await log_txn(b["seller_id"], "booking_escrow", net_total, f"إيراد معلق (قبول): {b.get('package_title','')}", bid, currency=cur)
+    if b.get("buyer_type") == "office" and b.get("platform_fee"):
+        await log_platform_revenue(b["platform_fee"], f"عمولة منصة (قبول): {b.get('package_title','')}", bid, currency=cur)
+    if b.get("buyer_type") != "office":
+        if b.get("marketer_id") and (b.get("marketer_commission", 0) or 0) > 0:
+            await adjust_wallet(oid(b["marketer_id"]), cur, pending=b["marketer_commission"], total=b["marketer_commission"])
+            await log_txn(b["marketer_id"], "marketer_commission", b["marketer_commission"], f"عمولة تسويق (قبول): {b.get('package_title','')}", bid, currency=cur)
+        if b.get("platform_profit"):
+            await log_platform_revenue(b["platform_profit"], f"أرباح المنصة (قبول): {b.get('package_title','')}", bid, currency=cur)
+
+
+async def refund_and_release(b):
+    """Idempotent unwind of a HELD (pre-approval) booking: reverse the EXACT debit split
+    (per-currency, no leak), release seats, free passport reservations. No seller escrow
+    existed yet, so nothing to reverse there."""
+    cur = b.get("currency", "USD")
+    bid = str(b["_id"])
+    split = b.get("debit_split") or {cur: b.get("amount_charged", 0) or 0}
+    for c, amt in split.items():
+        if amt:
+            await adjust_wallet(oid(b["buyer_id"]), c, available=amt, total=amt)
+    await log_txn(b["buyer_id"], "hold_release", b.get("amount_charged", 0) or 0,
+                  f"فك حجز المبلغ: {b.get('package_title','')}", bid, currency=cur)
+    await db.packages.update_one({"_id": oid(b["package_id"])}, {"$inc": {"available_seats": b.get("seats", 0)}})
+    await db.trip_passports.delete_many({"booking_id": bid})
+
+
+async def _handle_booking_decision(etype, booking_ref, reason):
+    """Apply Rahal's approve/reject. Atomic state-claim => idempotent + race-safe."""
+    if not booking_ref:
+        return {"handled": False, "matched_count": 0}
+    try:
+        bid = oid(booking_ref)
+    except HTTPException:
+        return {"handled": False, "matched_count": 0}
+    if etype == "booking.approved":
+        b = await db.bookings.find_one_and_update(
+            {"_id": bid, "approval_status": "pending"},
+            {"$set": {"approval_status": "approved", "approved_at": now_iso()}})
+        if not b:
+            return {"handled": True, "matched_count": 0, "idempotent": True}
+        await apply_approval_financials(b)
+        await audit(str(bid), "seller_approved", "rahal_owner")
+        return {"handled": True, "matched_count": 1}
+    b = await db.bookings.find_one_and_update(
+        {"_id": bid, "approval_status": "pending"},
+        {"$set": {"approval_status": "rejected", "status": "cancelled",
+                  "rejected_at": now_iso(), "rejection_reason": reason,
+                  "cancellation_status": "none",
+                  "cancellation": {"type": "seller_rejected", "reason": reason}}})
+    if not b:
+        return {"handled": True, "matched_count": 0, "idempotent": True}
+    await refund_and_release(b)
+    await audit(str(bid), "seller_rejected", "rahal_owner", reason=reason)
+    return {"handled": True, "matched_count": 1}
+
+
+
 @router.post("/webhooks")
 async def rahal_webhook(request: Request, x_rahal_signature: str = Header(default="")):
     raw = await request.body()
@@ -424,6 +489,14 @@ async def rahal_webhook(request: Request, x_rahal_signature: str = Header(defaul
         "event": etype, "event_id": event_id, "package_ref": ref, "body": event,
         "handled": False, "matched_count": 0, "received_at": now_iso(),
     })
+    # --- Booking approval/rejection from Rahal (match by booking_ref = bookings._id) ---
+    if etype in ("booking.approved", "booking.rejected"):
+        bref = data.get("booking_ref") or data.get("meraaj_booking_id") or event.get("booking_ref")
+        reason = data.get("reason") or data.get("rejection_reason") or event.get("reason")
+        res = await _handle_booking_decision(etype, bref, reason)
+        await db.rahal_inbound_log.update_one({"_id": log_res.inserted_id},
+            {"$set": {"handled": res.get("handled", False), "matched_count": res.get("matched_count", 0)}})
+        return {"received": True, "event": etype, **res}
     # Matching precedence: meraaj_package_id -> rahal_ref (never by name)
     mid = event.get("meraaj_package_id") or data.get("meraaj_package_id")
     match = None

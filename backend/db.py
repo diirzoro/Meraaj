@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
 from bson.errors import InvalidId
@@ -142,4 +142,21 @@ async def log_platform_revenue(amount: float, description: str, ref: str = None,
         "description": description,
         "ref": ref,
         "created_at": now_iso(),
+    })
+
+
+
+def approval_timeout_hours() -> float:
+    return float(os.environ.get("APPROVAL_TIMEOUT_HOURS", "24"))
+
+
+def iso_in_hours(hours: float) -> str:
+    return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
+
+
+async def audit(booking_id, event: str, actor_type: str, *, actor_id=None, reason=None, meta=None):
+    """Append-only booking audit trail entry (Enterprise timeline)."""
+    await db.booking_events.insert_one({
+        "booking_id": str(booking_id), "event": event, "actor_type": actor_type,
+        "actor_id": actor_id, "reason": reason, "meta": meta or {}, "at": now_iso(),
     })
