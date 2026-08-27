@@ -1,5 +1,8 @@
+import uuid
+import time
 from fastapi import APIRouter, HTTPException, Depends
-from db import db, serialize, oid, now_iso, adjust_wallet, log_txn, wallet_available
+from pydantic import BaseModel
+from db import db, serialize, oid, now_iso, adjust_wallet, log_txn, wallet_available, log_platform_revenue, audit
 from security import require_admin
 from market import _room_customer_price, _room_num
 from integration import notify_rahal
@@ -220,3 +223,102 @@ async def resolve_dispute(booking_id: str, payload: dict, admin: dict = Depends(
         "dispute.status": "resolved", "dispute.resolution": resolution, "settled": True,
         "settled_at": now_iso(), "status": new_status}})
     return {"ok": True, "resolution": resolution}
+
+
+@router.get("/cancellations")
+async def list_cancellations(admin: dict = Depends(require_admin)):
+    """Super Admin review queue: approved bookings with a pending cancellation request,
+    including the buyer's reason and the Rahal owner's position/evidence/executed costs."""
+    docs = await db.bookings.find({"cancellation_status": "requested"}).sort("cancellation_requested_at", -1).to_list(500)
+    return serialize(docs)
+
+
+class CancellationDecisionInput(BaseModel):
+    decision: str            # cancelled | kept
+    refund_amount: float = 0.0
+    seller_compensation: float = 0.0
+    reason: str = ""
+
+
+@router.post("/bookings/{booking_id}/cancellation-decision")
+async def decide_cancellation(booking_id: str, payload: CancellationDecisionInput,
+                              admin: dict = Depends(require_admin)):
+    """FINAL cancellation authority (Meraaj is source of truth for escrow). Validates the
+    settlement identity, applies the split atomically (idempotent), and emits
+    meraaj.booking.cancellation_finalized to Rahal."""
+    b = await db.bookings.find_one({"_id": oid(booking_id)})
+    if not b:
+        raise HTTPException(404, "الحجز غير موجود")
+    if b.get("cancellation_status") != "requested":
+        raise HTTPException(400, "لا يوجد طلب إلغاء قيد المراجعة على هذا الحجز")
+    if payload.decision not in ("cancelled", "kept"):
+        raise HTTPException(400, "قرار غير صالح")
+    cur = b.get("currency", "USD")
+    original = round(b.get("amount_charged", 0) or 0, 2)     # escrow anchor = buyer's held total
+    net_total = round(b.get("net_cost_total", 0) or 0, 2)
+
+    if payload.decision == "kept":
+        refund_amount = 0.0
+        seller_compensation = net_total
+        platform_adjustment = round(original - seller_compensation, 2)
+    else:
+        refund_amount = round(payload.refund_amount, 2)
+        seller_compensation = round(payload.seller_compensation, 2)
+        platform_adjustment = round(original - refund_amount - seller_compensation, 2)
+        if refund_amount < 0 or seller_compensation < 0 or platform_adjustment < -0.01:
+            raise HTTPException(400, "المبالغ غير صالحة (سالبة أو تتجاوز المبلغ الأصلي)")
+    # Settlement identity (±0.01)
+    if abs((refund_amount + seller_compensation + platform_adjustment) - original) > 0.01:
+        raise HTTPException(400, "مجموع (الاسترداد + تعويض البائع + تسوية المنصة) يجب أن يساوي المبلغ الأصلي")
+
+    # Atomic claim => idempotent final state (blocks duplicate decisions)
+    claimed = await db.bookings.find_one_and_update(
+        {"_id": b["_id"], "cancellation_status": "requested"},
+        {"$set": {"cancellation_status": "decided" if payload.decision == "cancelled" else "rejected",
+                  "status": "cancelled" if payload.decision == "cancelled" else b.get("status", "blue"),
+                  "cancellation_final": {
+                      "decision": payload.decision, "original_amount": original,
+                      "refund_amount": refund_amount, "seller_compensation": seller_compensation,
+                      "platform_adjustment": platform_adjustment, "currency": cur,
+                      "reason": payload.reason, "decided_by": f"super_admin:{admin['_id']}",
+                      "decided_at": now_iso()}}})
+    if not claimed:
+        raise HTTPException(409, "تم اتخاذ القرار على هذا الطلب بالفعل")
+
+    if payload.decision == "cancelled":
+        # 1) Reverse effects recognized at approval, then 2) redistribute the held amount.
+        await adjust_wallet(oid(claimed["seller_id"]), cur, pending=-net_total, total=-net_total)
+        if claimed.get("buyer_type") == "office" and claimed.get("platform_fee"):
+            await log_platform_revenue(-claimed["platform_fee"], f"عكس عمولة منصة (إلغاء نهائي): {claimed.get('package_title','')}", booking_id, currency=cur)
+        if claimed.get("buyer_type") != "office":
+            if claimed.get("marketer_id") and claimed.get("marketer_commission"):
+                await adjust_wallet(oid(claimed["marketer_id"]), cur, pending=-claimed["marketer_commission"], total=-claimed["marketer_commission"])
+                await log_txn(claimed["marketer_id"], "marketer_commission_reversal", -claimed["marketer_commission"], f"عكس عمولة تسويق (إلغاء نهائي): {claimed.get('package_title','')}", booking_id, currency=cur)
+            if claimed.get("platform_profit"):
+                await log_platform_revenue(-claimed["platform_profit"], f"عكس أرباح (إلغاء نهائي): {claimed.get('package_title','')}", booking_id, currency=cur)
+        if refund_amount:
+            await adjust_wallet(oid(claimed["buyer_id"]), cur, available=refund_amount, total=refund_amount)
+            await log_txn(claimed["buyer_id"], "cancel_refund", refund_amount, f"استرداد إلغاء نهائي: {claimed.get('package_title','')}", booking_id, currency=cur)
+        if seller_compensation:
+            await adjust_wallet(oid(claimed["seller_id"]), cur, available=seller_compensation, total=seller_compensation)
+            await log_txn(claimed["seller_id"], "seller_compensation", seller_compensation, f"تعويض البائع (إلغاء): {claimed.get('package_title','')}", booking_id, currency=cur)
+        if platform_adjustment:
+            await log_platform_revenue(platform_adjustment, f"تسوية المنصة (إلغاء نهائي): {claimed.get('package_title','')}", booking_id, currency=cur)
+        await db.packages.update_one({"_id": oid(claimed["package_id"])}, {"$inc": {"available_seats": claimed.get("seats", 0)}})
+        await db.trip_passports.delete_many({"booking_id": booking_id})
+
+    await audit(booking_id, f"cancellation_{payload.decision}", "super_admin", actor_id=str(admin["_id"]),
+                reason=payload.reason, meta={"refund": refund_amount, "seller_compensation": seller_compensation,
+                                             "platform_adjustment": platform_adjustment})
+    if claimed.get("rahal_ref"):
+        await notify_rahal("meraaj.booking.cancellation_finalized", {}, envelope={
+            "id": str(uuid.uuid4()), "type": "meraaj.booking.cancellation_finalized",
+            "timestamp": int(time.time()),
+            "data": {"booking_ref": booking_id, "decision": payload.decision,
+                     "original_amount": original, "refund_amount": refund_amount,
+                     "seller_compensation": seller_compensation, "platform_adjustment": platform_adjustment,
+                     "currency": cur, "reason": payload.reason,
+                     "decided_by": f"super_admin:{admin['_id']}", "decided_at": now_iso()}})
+    return {"ok": True, "decision": payload.decision, "original_amount": original,
+            "refund_amount": refund_amount, "seller_compensation": seller_compensation,
+            "platform_adjustment": platform_adjustment}

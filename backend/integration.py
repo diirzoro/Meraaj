@@ -497,6 +497,24 @@ async def rahal_webhook(request: Request, x_rahal_signature: str = Header(defaul
         await db.rahal_inbound_log.update_one({"_id": log_res.inserted_id},
             {"$set": {"handled": res.get("handled", False), "matched_count": res.get("matched_count", 0)}})
         return {"received": True, "event": etype, **res}
+    # --- Rahal owner's cancellation POSITION (evidence/executed costs only — no money moves) ---
+    if etype == "booking.cancellation.position":
+        bref = data.get("booking_ref") or event.get("booking_ref")
+        matched = 0
+        if bref:
+            try:
+                r = await db.bookings.update_one({"_id": oid(bref)},
+                    {"$set": {"cancellation_position": data, "cancellation_position_at": now_iso()},
+                     "$push": {"cancellation_positions": data}})
+                matched = r.matched_count
+            except HTTPException:
+                matched = 0
+            if matched:
+                await audit(bref, "rahal_position", "rahal_owner", reason=data.get("position"),
+                            meta={"actual_costs_total": data.get("actual_costs_total")})
+        await db.rahal_inbound_log.update_one({"_id": log_res.inserted_id},
+            {"$set": {"handled": matched > 0, "matched_count": matched}})
+        return {"received": True, "event": etype, "handled": matched > 0, "matched_count": matched}
     # Matching precedence: meraaj_package_id -> rahal_ref (never by name)
     mid = event.get("meraaj_package_id") or data.get("meraaj_package_id")
     match = None
