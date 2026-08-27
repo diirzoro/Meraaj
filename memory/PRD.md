@@ -184,6 +184,18 @@ Per Rahal dev diagnosis:
 - **Affiliate share (office)**: green "مشاركة الرحلة برابطك" button (`share-trip-btn`) on PackageDetail for the owner → builds ad text (title, route, dates, features, starts-from price) + `/market/:id?ref=<office_id>`; uses Web Share API with clipboard fallback. Ref flows via existing `meraaj_ref` → booking commission to that office.
 - **Route field**: `PackageInput.route` + create-form input (`pkg-route`, e.g. "الشحر - الريان - المكلا - جدة"); shown in PackageDetail trip details. Verified stored + returned.
 
+## Office program management: edit/delete + protection + registrants + date auto-shift — DONE Aug 2026
+Applies ONLY to manually-added office programs (source != "rahal"); Rahal-sourced programs stay under Rahal control (edit/delete return 403; no edit/delete buttons shown, tagged «رحّال»).
+- **Backend `market.py`**: NEW `PUT /api/packages/{id}` (edit; validates return_date >= departure_date → 400; preserves already-booked seats when total_seats changes; re-syncs `package.updated` to the network via outbox). NEW `DELETE /api/packages/{id}` (blocked with **409** if any booking is active status ∈ {blue,yellow,green}; fully-cancelled bookings do NOT block; enqueues `package.deleted`). NEW `GET /api/packages/{id}/registrants` (seller-owned; returns bookings w/ status + registrants).
+- **Frontend**: `CreatePackage.js` now dual-mode create/edit (`/packages/:id/edit` route in App.js); prefills from `GET /packages/{id}`; **departure-date change auto-shifts return_date by the same delta** (duration constant, prevents schedule conflict) via `onDeparture`. `MyPackages.js` adds العودة column + actions المسجّلون/إخفاء/تعديل/حذف, a registrants Dialog (color legend 🔵 حجز جديد / 🟡 تم إصدار التأشيرة / 🟢 تم التفويج using existing StatusBadge), and a delete-confirm Dialog. Rahal programs show a «رحّال» tag and no edit/delete.
+- Colors reuse the existing booking lifecycle (blue=new, yellow=visa issued, green=dispatched). Test IDs: `registrants-btn-{id}`, `edit-pkg-{id}`, `delete-pkg-{id}`, `registrants-dialog`, `delete-confirm-btn`.
+- Verified E2E via curl (create → registrants[] empty → edit 200 + return>dep 400 → delete 200 when empty; book 1 seat → registrants shows 1 blue w/ traveler name → delete **409 blocked**) + screenshot (table actions + registrants dialog render correctly).
+
+## Meraaj→Rahaal outbound HMAC fixes — DONE Aug 2026
+- **retry_outbox** (`integration.py`): now re-serializes with the SAME compact separators `(",",":")` used at signing AND **recomputes** the HMAC with the CURRENT `MERAAJ_SHARED_SECRET` from env (fixes invalid_signature on retries and events queued before an HMAC secret rotation). Verified locally: primary 200, old spaced-retry reproduced 401, fixed retry 200.
+- **_deliver** header: sends bare lowercase hex `X-Meraaj-Signature: <hex>` (removed the `sha256=` prefix) because Rahaal's `meraajVerify()` compares the header verbatim without stripping a prefix. No secret/serialization/inbound changes. Production requires Re-publish for the code change to take effect.
+- Inbound (Rahaal→Meraaj) verified live on production `/api/integrations/rahal/webhooks`: HMAC on raw body before json.loads, hex, `X-Rahal-Signature`, correct-key handshake → 200, bad/no sig → 401.
+
 ## Backlog (P1/P2)
 - P1 (mobile next): Firebase FCM push (needs Firebase project + `google-services.json`; add `device_tokens` model + triggers on booking/wallet events) — Phase 3. Capgo OTA updates (needs Capgo account/key) — Phase 4.
 - P1: Real Rahal SSO + embedded signed-iframe (awaiting Rahal APIs). Atomic booking debit (transactions/optimistic locking) to prevent oversell/overdraw under concurrency.

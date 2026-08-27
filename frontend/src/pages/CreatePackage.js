@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import api, { apiError } from "@/lib/api";
 import { PageHeader } from "@/components/Layout";
 import { Button } from "@/components/ui/button";
@@ -16,8 +16,12 @@ const IMG = {
   tourism: "https://images.pexels.com/photos/18417462/pexels-photo-18417462.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
 };
 
+const numVal = (v) => (v == null ? "" : typeof v === "object" ? (v.adult ?? "") : v);
+
 export default function CreatePackage() {
   const navigate = useNavigate();
+  const { id } = useParams();
+  const isEdit = !!id;
   const [f, setF] = useState({
     type: "umrah", title: "", description: "", departure_date: "", return_date: "",
     departure_city: "", route: "", transport: "", currency: "SAR",
@@ -31,7 +35,51 @@ export default function CreatePackage() {
   const [images, setImages] = useState([]);
   const [imgBusy, setImgBusy] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(isEdit);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  // Extending the departure date auto-shifts the return date by the same number of days
+  // so the trip duration stays constant (prevents any schedule conflict).
+  const onDeparture = (e) => {
+    const newDep = e.target.value;
+    setF((prev) => {
+      let ret = prev.return_date;
+      if (prev.departure_date && prev.return_date && newDep) {
+        const oldDep = new Date(prev.departure_date);
+        const oldRet = new Date(prev.return_date);
+        const nd = new Date(newDep);
+        if (!isNaN(oldDep) && !isNaN(oldRet) && !isNaN(nd)) {
+          ret = new Date(nd.getTime() + (oldRet - oldDep)).toISOString().slice(0, 10);
+        }
+      }
+      return { ...prev, departure_date: newDep, return_date: ret };
+    });
+  };
+
+  useEffect(() => {
+    if (!isEdit) return;
+    (async () => {
+      try {
+        const { data: p } = await api.get(`/packages/${id}`);
+        setF({
+          type: p.type || "umrah", title: p.title || "", description: p.description || "",
+          departure_date: (p.departure_date || "").slice(0, 10),
+          return_date: (p.return_date || "").slice(0, 10),
+          departure_city: p.departure_city || "", route: p.route || "", transport: p.transport || "",
+          currency: p.currency || "SAR",
+          net_cost_per_seat: p.net_cost_per_seat ?? "", final_sale_price: p.final_sale_price ?? "",
+          buyer_office_commission: p.buyer_office_commission ?? "", total_seats: p.total_seats ?? "",
+          child_net_cost: p.child_net_cost ?? "", child_sale_price: p.child_sale_price ?? "", child_commission: p.child_commission ?? "",
+          infant_net_cost: p.infant_net_cost ?? "", infant_sale_price: p.infant_sale_price ?? "", infant_commission: p.infant_commission ?? "",
+        });
+        if (p.hotels?.length) setHotels(p.hotels.map((h) => ({ city: h.city || "", name: h.name || "", nights: h.nights ?? "" })));
+        if (p.room_pricing?.length) setRooms(p.room_pricing.map((r) => ({ room_type: r.room_type || "double", net: numVal(r.net), commission: numVal(r.commission), customer: numVal(r.customer) })));
+        if (p.features?.length) setFeatures(p.features);
+        if (p.images?.length) setImages(p.images);
+      } catch (e) { toast.error(apiError(e)); navigate("/packages"); }
+      finally { setLoading(false); }
+    })();
+  }, [id]); // eslint-disable-line
 
   const onImages = async (e) => {
     const files = Array.from(e.target.files || []);
@@ -53,7 +101,7 @@ export default function CreatePackage() {
     setBusy(true);
     try {
       const num = (v) => (v === "" || v == null ? undefined : Number(v));
-      await api.post("/packages", {
+      const body = {
         ...f,
         net_cost_per_seat: Number(f.net_cost_per_seat),
         final_sale_price: Number(f.final_sale_price),
@@ -76,8 +124,14 @@ export default function CreatePackage() {
             commission: num(r.commission),
             customer: Number(r.customer),
           })),
-      });
-      toast.success("تم نشر البرنامج في السوق");
+      };
+      if (isEdit) {
+        await api.put(`/packages/${id}`, body);
+        toast.success("تم حفظ التعديلات");
+      } else {
+        await api.post("/packages", body);
+        toast.success("تم نشر البرنامج في السوق");
+      }
       navigate("/packages");
     } catch (err) { toast.error(apiError(err)); } finally { setBusy(false); }
   };
@@ -86,9 +140,12 @@ export default function CreatePackage() {
   const sale = Number(f.final_sale_price) || 0;
   const comm = Number(f.buyer_office_commission) || 0;
 
+  if (loading) return <div className="py-20 text-center text-muted-foreground">جارٍ التحميل...</div>;
+
   return (
     <>
-      <PageHeader title="إضافة برنامج جديد" subtitle="أنت هنا بدور المُصنّع/البائع" />
+      <PageHeader title={isEdit ? "تعديل البرنامج" : "إضافة برنامج جديد"}
+        subtitle={isEdit ? "عدّل تفاصيل برنامجك المنشور" : "أنت هنا بدور المُصنّع/البائع"} />
 
       <form onSubmit={submit} className="grid lg:grid-cols-3 gap-6" data-testid="create-pkg-form">
         <div className="lg:col-span-2 space-y-6">
@@ -105,8 +162,12 @@ export default function CreatePackage() {
                 <Label className="mb-2 block">العنوان</Label>
                 <Input data-testid="pkg-title" required value={f.title} onChange={set("title")} />
               </div>
-              <div><Label className="mb-2 block">تاريخ الانطلاق</Label><Input data-testid="pkg-dep" type="date" required value={f.departure_date} onChange={set("departure_date")} /></div>
-              <div><Label className="mb-2 block">تاريخ العودة</Label><Input data-testid="pkg-ret" type="date" required value={f.return_date} onChange={set("return_date")} /></div>
+              <div><Label className="mb-2 block">تاريخ الانطلاق</Label><Input data-testid="pkg-dep" type="date" required value={f.departure_date} onChange={onDeparture} /></div>
+              <div>
+                <Label className="mb-2 block">تاريخ العودة</Label>
+                <Input data-testid="pkg-ret" type="date" required value={f.return_date} onChange={set("return_date")} />
+                <p className="text-[11px] text-muted-foreground mt-1">عند تمديد الانطلاق، تُمدَّد العودة تلقائياً بنفس عدد الأيام للحفاظ على مدة الرحلة.</p>
+              </div>
               <div><Label className="mb-2 block">مدينة الانطلاق</Label><Input data-testid="pkg-city" value={f.departure_city} onChange={set("departure_city")} /></div>
               <div className="sm:col-span-2"><Label className="mb-2 block">مسار الرحلة (نقاط المرور والتجميع)</Label><Input data-testid="pkg-route" value={f.route} onChange={set("route")} placeholder="مثال: الشحر - الريان - المكلا - جدة" /></div>
               <div><Label className="mb-2 block">وسيلة النقل</Label><Input data-testid="pkg-transport" value={f.transport} onChange={set("transport")} placeholder="طيران مباشر" /></div>
@@ -266,7 +327,9 @@ export default function CreatePackage() {
               <div className="flex justify-between"><span className="text-muted-foreground">عمولة المنصة على المشتري (10%)</span><span className="tabular font-semibold">{money(comm * 0.1, f.currency)}</span></div>
             </div>
 
-            <Button data-testid="submit-pkg-btn" disabled={busy} className="w-full h-11 bg-[#0A2540] hover:bg-[#061A2E]">{busy ? "جارٍ النشر..." : "نشر البرنامج"}</Button>
+            <Button data-testid="submit-pkg-btn" disabled={busy} className="w-full h-11 bg-[#0A2540] hover:bg-[#061A2E]">
+              {busy ? (isEdit ? "جارٍ الحفظ..." : "جارٍ النشر...") : (isEdit ? "حفظ التعديلات" : "نشر البرنامج")}
+            </Button>
           </div>
         </div>
       </form>

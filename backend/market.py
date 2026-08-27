@@ -248,6 +248,73 @@ async def toggle_package(pkg_id: str, user: dict = Depends(require_office)):
     return {"status": new_status}
 
 
+@router.put("/packages/{pkg_id}")
+async def update_package(pkg_id: str, payload: PackageInput, user: dict = Depends(require_office)):
+    """Edit a manually-added office program. Rahal-sourced programs stay under Rahal control."""
+    pkg = await db.packages.find_one({"_id": oid(pkg_id), "seller_id": str(user["_id"])})
+    if not pkg:
+        raise HTTPException(404, "البرنامج غير موجود")
+    if pkg.get("source") == "rahal":
+        raise HTTPException(403, "لا يمكن تعديل برامج رحّال من المنصة؛ تُدار من نظام رحّال")
+    dep = str(payload.departure_date)[:10]
+    ret = str(payload.return_date)[:10]
+    if dep and ret and ret < dep:
+        raise HTTPException(400, "تاريخ العودة يجب أن يكون في نفس يوم الانطلاق أو بعده")
+    doc = payload.model_dump()
+    # Preserve already-booked seats when total_seats changes
+    booked = max(0, (pkg.get("total_seats", 0) or 0) - (pkg.get("available_seats", 0) or 0))
+    doc["available_seats"] = max(0, payload.total_seats - booked)
+    await db.packages.update_one({"_id": oid(pkg_id)}, {"$set": doc})
+    # Re-sync the edited program to the Meraaj Network (reliable outbox → Rahal)
+    await notify_rahal("package.updated", {
+        "package_ref": pkg_id,
+        "title": doc["title"],
+        "type": doc.get("type"),
+        "departure_date": doc.get("departure_date"),
+        "return_date": doc.get("return_date"),
+        "images": doc.get("images", []),
+        "features": doc.get("features", []),
+        "hotels": doc.get("hotels", []),
+        "available_seats": doc["available_seats"],
+        "total_seats": doc.get("total_seats", 0),
+        "pricing": {
+            "net_cost_per_seat": doc.get("net_cost_per_seat", 0),
+            "final_sale_price": doc.get("final_sale_price", 0),
+            "buyer_office_commission": doc.get("buyer_office_commission", 0),
+            "currency": doc.get("currency", "USD"),
+        },
+    })
+    updated = await db.packages.find_one({"_id": oid(pkg_id)})
+    return _view_package(updated, user)
+
+
+@router.delete("/packages/{pkg_id}")
+async def delete_package(pkg_id: str, user: dict = Depends(require_office)):
+    """Delete a manual program ONLY when it has no active bookings (blue/yellow/green)."""
+    pkg = await db.packages.find_one({"_id": oid(pkg_id), "seller_id": str(user["_id"])})
+    if not pkg:
+        raise HTTPException(404, "البرنامج غير موجود")
+    if pkg.get("source") == "rahal":
+        raise HTTPException(403, "لا يمكن حذف برامج رحّال من المنصة؛ تُدار من نظام رحّال")
+    active = await db.bookings.count_documents(
+        {"package_id": pkg_id, "status": {"$in": ["blue", "yellow", "green"]}})
+    if active > 0:
+        raise HTTPException(409, f"لا يمكن حذف البرنامج لوجود {active} حجز نشط. الحذف متاح فقط عندما لا يوجد أي حجز نشط.")
+    await db.packages.delete_one({"_id": oid(pkg_id)})
+    await notify_rahal("package.deleted", {"package_ref": pkg_id, "status": "deleted"})
+    return {"deleted": True}
+
+
+@router.get("/packages/{pkg_id}/registrants")
+async def package_registrants(pkg_id: str, user: dict = Depends(require_office)):
+    """Bookings (with color status + registrants) for one of the seller's own programs."""
+    pkg = await db.packages.find_one({"_id": oid(pkg_id), "seller_id": str(user["_id"])})
+    if not pkg:
+        raise HTTPException(404, "البرنامج غير موجود")
+    docs = await db.bookings.find({"package_id": pkg_id}).sort("created_at", -1).to_list(1000)
+    return serialize(docs)
+
+
 # ---------- Bookings ----------
 class RegistrantInput(BaseModel):
     name: str

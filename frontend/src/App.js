@@ -72,6 +72,7 @@ function AppRoutes() {
       <Route path="/market/:id" element={<PublicOrMember><PackageDetail /></PublicOrMember>} />
       <Route path="/packages" element={<Protected role="office"><MyPackages /></Protected>} />
       <Route path="/packages/new" element={<Protected role="office"><CreatePackage /></Protected>} />
+      <Route path="/packages/:id/edit" element={<Protected role="office"><CreatePackage /></Protected>} />
       <Route path="/bookings" element={<Protected role="member"><Bookings /></Protected>} />
       <Route path="/sales" element={<Protected role="office"><Sales /></Protected>} />
       <Route path="/wallet" element={<Protected role="member"><WalletPage /></Protected>} />
