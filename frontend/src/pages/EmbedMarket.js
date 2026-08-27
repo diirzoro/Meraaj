@@ -8,6 +8,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { Network, MapPin, Users, CalendarDays, ShoppingCart, Plus, Trash2, Search } from "lucide-react";
+import { PkgImage } from "@/components/PkgImage";
 import { toast } from "sonner";
 
 const TABS = [{ k: "", l: "الكل" }, { k: "umrah", l: "عمرة" }, { k: "tourism", l: "سياحة" }];
