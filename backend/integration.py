@@ -79,9 +79,12 @@ async def _deliver(outbox_id, url: str, raw: bytes, sig: str):
             "$inc": {"attempts": 1}})
 
 
-async def notify_rahal(event: str, payload: dict):
-    """Persist the event to an outbox (never lost) then deliver in the background."""
-    body = {"event": event, **payload, "occurred_at": now_iso()}
+async def notify_rahal(event: str, payload: dict, *, envelope: dict = None):
+    """Persist the event to an outbox (never lost) then deliver in the background.
+    When `envelope` is provided it is sent VERBATIM as the signed body (Rahaal v2
+    {id,type,timestamp,data} contract); otherwise the legacy flat {event, ...payload}
+    shape is used. Serialization / HMAC / _deliver / outbox are unchanged."""
+    body = envelope if envelope is not None else {"event": event, **payload, "occurred_at": now_iso()}
     # Compact separators to byte-match Node's JSON.stringify (no spaces) so the HMAC
     # signature verifies on the Rahal side (fixes 401 Invalid HMAC signature).
     raw = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")

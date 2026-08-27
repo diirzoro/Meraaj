@@ -1,3 +1,6 @@
+import time
+import uuid
+
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import List, Optional, Union, Dict
@@ -524,13 +527,23 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
         if platform_profit:
             await log_platform_revenue(platform_profit, f"أرباح المنصة من حجز مباشر: {pkg['title']}", bid, currency=cur)
     if pkg.get("source") == "rahal" and pkg.get("rahal_ref"):
-        await notify_rahal("meraaj.booking.created", {
-            "package_ref": pkg["rahal_ref"],
-            "meraaj_booking_id": bid,
-            "seats_booked": seats,
-            "available_seats_now": pkg["available_seats"] - seats,
-            "buyer": {"office_name": user["office_name"], "type": user["role"]},
-            "registrants": [{"name": r.name, "passport_no": r.passport_no, "age": r.age} for r in payload.registrants],
+        # Rahaal Production v2 contract: {id, type, timestamp, data{...}}
+        await notify_rahal("meraaj.booking.created", {}, envelope={
+            "id": str(uuid.uuid4()),
+            "type": "meraaj.booking.created",
+            "timestamp": int(time.time()),
+            "data": {
+                "package_ref": pkg["rahal_ref"],
+                "booking_ref": bid,
+                "buyer_office_name": user["office_name"],
+                "registrants": [
+                    {"name": r.name, "passport_no": r.passport_no, "age": r.age,
+                     "room_type": payload.room_type or ""}
+                    for r in payload.registrants
+                ],
+                "total_price": required,
+                "currency": cur,
+            },
         })
     booking["_id"] = res.inserted_id
     return serialize(booking)
