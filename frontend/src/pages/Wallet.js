@@ -155,6 +155,7 @@ function LedgerTable({ rows }) {
               <th className="text-start px-5 py-3 font-medium">مدين</th>
               <th className="text-start px-5 py-3 font-medium">دائن</th>
               <th className="text-start px-5 py-3 font-medium">الرصيد الجاري</th>
+              <th className="text-start px-5 py-3 font-medium">العملة</th>
             </tr>
           </thead>
           <tbody>
@@ -168,6 +169,7 @@ function LedgerTable({ rows }) {
                   <td className="px-5 py-3 tabular font-semibold text-red-600">{amt < 0 ? money(Math.abs(amt), r.currency) : "—"}</td>
                   <td className="px-5 py-3 tabular font-semibold text-[#15803D]">{amt > 0 ? money(amt, r.currency) : "—"}</td>
                   <td className="px-5 py-3 tabular font-bold text-[#0A2540]">{money(r.running, r.currency)}</td>
+                  <td className="px-5 py-3 text-xs font-semibold text-muted-foreground">{r.currency === "SAR" ? "ر.س" : "$"}</td>
                 </tr>
               );
             })}

@@ -659,9 +659,10 @@ async def get_booking(booking_id: str, user: dict = Depends(require_buyer)):
 
 
 @router.get("/bookings/{booking_id}/timeline")
-async def booking_timeline(booking_id: str, user: dict = Depends(require_buyer)):
+async def booking_timeline(booking_id: str, user: dict = Depends(get_current_user)):
     b = await db.bookings.find_one({"_id": oid(booking_id)})
-    if not b or str(user["_id"]) not in (b["buyer_id"], b["seller_id"]):
+    is_party = str(user["_id"]) in (b["buyer_id"], b["seller_id"]) if b else False
+    if not b or (user.get("role") != "super_admin" and not is_party):
         raise HTTPException(404, "الحجز غير موجود")
     events = await db.booking_events.find({"booking_id": booking_id}).sort("at", 1).to_list(500)
     return serialize(events)

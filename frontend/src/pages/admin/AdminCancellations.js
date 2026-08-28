@@ -10,6 +10,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import Timeline from "@/components/Timeline";
 
 export default function AdminCancellations() {
   const [items, setItems] = useState([]);
@@ -142,6 +143,13 @@ function DecisionDialog({ booking, onDone }) {
         <div>
           <Label className="mb-2 block">سبب/ملاحظة القرار</Label>
           <Textarea data-testid="decision-reason" value={reason} onChange={(e) => setReason(e.target.value)} rows={3} />
+        </div>
+
+        <div className="mt-2">
+          <Label className="mb-1 block">سجل القرار / الخط الزمني</Label>
+          <div className="border rounded-xl p-3 bg-[#FAFBFC] max-h-56 overflow-y-auto">
+            <Timeline bookingId={booking.id} />
+          </div>
         </div>
 
         <DialogFooter>
