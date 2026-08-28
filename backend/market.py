@@ -820,9 +820,18 @@ async def cancel_request(booking_id: str, payload: Optional[Dict] = Body(default
             await refund_and_release(claimed)
             await audit(str(b["_id"]), "buyer_withdrew", "buyer", actor_id=str(user["_id"]))
             if claimed.get("rahal_ref"):
-                await notify_rahal("meraaj.booking.cancelled", {
-                    "package_ref": claimed["rahal_ref"], "meraaj_booking_id": str(b["_id"]),
-                    "booking_ref": str(b["_id"]), "seats_released": claimed.get("seats", 0)})
+                await notify_rahal("meraaj.booking.cancelled", {}, envelope={
+                    "id": str(uuid.uuid4()),
+                    "type": "meraaj.booking.cancelled",
+                    "timestamp": int(time.time()),
+                    "data": {
+                        "package_ref": claimed["rahal_ref"],
+                        "booking_ref": str(b["_id"]),
+                        "meraaj_booking_id": str(b["_id"]),
+                        "seats_released": claimed.get("seats", 0),
+                        "reason": reason or "buyer_withdrawal_before_approval"
+                    }
+                })
             return {"status": "cancelled", "approval_status": "rejected",
                     "refund": claimed.get("amount_charged", 0), "withdrawn": True}
         if ap == "approved":
@@ -932,8 +941,18 @@ async def cancel_accept(booking_id: str, user: dict = Depends(require_buyer)):
     if platform_cut:
         await log_platform_revenue(platform_cut, f"رسوم تشغيلية إلغاء: {b['package_title']}", booking_id, currency=cur)
     if b.get("rahal_ref"):
-        await notify_rahal("meraaj.booking.cancelled", {
-            "package_ref": b["rahal_ref"], "meraaj_booking_id": booking_id, "seats_released": b["seats"]})
+        await notify_rahal("meraaj.booking.cancelled", {}, envelope={
+            "id": str(uuid.uuid4()),
+            "type": "meraaj.booking.cancelled",
+            "timestamp": int(time.time()),
+            "data": {
+                "package_ref": b["rahal_ref"],
+                "booking_ref": booking_id,
+                "meraaj_booking_id": booking_id,
+                "seats_released": b["seats"],
+                "reason": "booking_cancelled"
+            }
+        })
     return {"status": "cancelled", "refund": refund, "seller_keeps": seller_keeps}
 
 

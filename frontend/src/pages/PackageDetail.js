@@ -25,7 +25,7 @@ export default function PackageDetail() {
   const { user } = useAuth();
   const [pkg, setPkg] = useState(null);
   const [open, setOpen] = useState(false);
-  const [regs, setRegs] = useState([{ name: "", passport_no: "", age: "", category: "adult", photo: "" }]);
+  const [regs, setRegs] = useState([{ name: "", passport_file: null, passport_filename: "", passport_preview_url: "", passport_mime: "", age: "", category: "adult", photo: "" }]);
   const [busy, setBusy] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState(null);
 
@@ -48,8 +48,12 @@ export default function PackageDetail() {
     infant: { label: "رضيع", offered: pkg.infant_sale_price != null || pkg.infant_net_cost != null || roomHas("infant") },
   };
   const setReg = (i, k) => (e) => { const c = [...regs]; c[i][k] = e.target.value; setRegs(c); };
-  const addReg = (category = "adult") => setRegs([...regs, { name: "", passport_no: "", age: "", category, photo: "" }]);
-  const rmReg = (i) => setRegs(regs.filter((_, x) => x !== i));
+  const addReg = (category = "adult") => setRegs([...regs, { name: "", passport_no: "", passport_file: null, passport_filename: "", passport_preview_url: "", passport_mime: "", age: "", category, photo: "" }]);
+  const rmReg = (i) => {
+    const target = regs[i];
+    if (target?.passport_preview_url) URL.revokeObjectURL(target.passport_preview_url);
+    setRegs(regs.filter((_, x) => x !== i));
+  };
   const onPhoto = (i) => (e) => {
     const file = e.target.files?.[0]; if (!file) return;
     if (file.size > 3 * 1024 * 1024) { toast.error("حجم الصورة يتجاوز 3 ميجابايت"); return; }
@@ -57,6 +61,30 @@ export default function PackageDetail() {
     reader.onload = () => { const c = [...regs]; c[i].photo = reader.result; setRegs(c); };
     reader.readAsDataURL(file);
   };
+
+  const onPassport = (i) => (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    const allowed = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+    if (!allowed.includes(file.type)) { toast.error("وثيقة السفر يجب أن تكون PDF أو JPG أو PNG أو WEBP"); return; }
+    if (file.size > 8 * 1024 * 1024) { toast.error("حجم وثيقة السفر يتجاوز 8 ميجابايت"); return; }
+    const c = [...regs];
+    if (c[i]?.passport_preview_url) URL.revokeObjectURL(c[i].passport_preview_url);
+    c[i] = {
+      ...c[i],
+      passport_file: file,
+      passport_filename: file.name,
+      passport_preview_url: URL.createObjectURL(file),
+      passport_mime: file.type,
+    };
+    setRegs(c);
+  };
+
+  const fileToDataUrl = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 
   // Per-traveler charge on the buyer's wallet, by category (child/infant fall back to adult if unset)
   const pick = (cat, childKey, infantKey, adultVal) =>
@@ -99,13 +127,32 @@ export default function PackageDetail() {
   const book = async () => {
     setBusy(true);
     try {
-      await api.post("/bookings", {
+      const { data: created } = await api.post("/bookings", {
         package_id: id,
         room_type: selectedRoom || undefined,
-        registrants: regs.map((r) => ({ name: r.name, passport_no: r.passport_no, age: Number(r.age), category: r.category, photo: r.photo || undefined })),
+        // Passport number remains authoritative for duplicate prevention.
+        // The uploaded passport/travel document is stored separately for verification/matching.
+        registrants: regs.map((r) => ({
+          name: r.name,
+          passport_no: r.passport_no.trim(),
+          age: Number(r.age),
+          category: r.category,
+          photo: r.photo || undefined
+        })),
         ref: localStorage.getItem("meraaj_ref") || undefined,
       });
-      toast.success("تم إنشاء الحجز وتجميد الرصيد بنجاح");
+      const bookingId = created?.id || created?.booking_id || created?.booking?.id;
+      if (!bookingId) throw new Error("تم إنشاء الحجز لكن لم يُرجع الخادم مرجع الحجز لرفع الوثائق");
+      await Promise.all(regs.map(async (r, i) => {
+        const content_base64 = await fileToDataUrl(r.passport_file);
+        await api.post(`/bookings/${bookingId}/documents`, {
+          registrant_index: i,
+          doc_type: "passport",
+          filename: r.passport_file.name,
+          content_base64,
+        });
+      }));
+      toast.success("تم إنشاء الحجز ورفع وثائق السفر وتجميد الرصيد بنجاح");
       setOpen(false);
       navigate("/bookings");
     } catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
@@ -304,14 +351,53 @@ export default function PackageDetail() {
                             <Label className="mb-1.5 block text-xs">الاسم الكامل</Label>
                             <Input data-testid={`reg-name-${i}`} value={r.name} onChange={setReg(i, "name")} />
                           </div>
-                          <div>
-                            <Label className="mb-1.5 block text-xs">رقم الجواز</Label>
-                            <Input data-testid={`reg-passport-${i}`} value={r.passport_no} onChange={setReg(i, "passport_no")} />
+                          <div className="col-span-2 sm:col-span-1">
+                            <Label className="mb-1.5 block text-xs">رقم الجواز <span className="text-destructive">*</span></Label>
+                            <Input
+                              data-testid={`reg-passport-${i}`}
+                              value={r.passport_no || ""}
+                              onChange={setReg(i, "passport_no")}
+                              placeholder="مثال: A1234567"
+                              autoComplete="off"
+                            />
+                            <div className="text-[11px] text-muted-foreground mt-1">يُستخدم لمنع تكرار نفس المسافر في نفس الرحلة.</div>
                           </div>
-                          <div>
-                            <Label className="mb-1.5 block text-xs">العمر</Label>
-                            <Input data-testid={`reg-age-${i}`} type="number" value={r.age} onChange={setReg(i, "age")} />
+
+                          <div className="col-span-2 sm:col-span-1">
+                            <Label className="mb-1.5 block text-xs">العمر <span className="text-destructive">*</span></Label>
+                            <Input data-testid={`reg-age-${i}`} type="number" min="0" value={r.age} onChange={setReg(i, "age")} />
                           </div>
+
+                          <div className="col-span-2 rounded-xl border border-dashed border-[#0A2540]/25 bg-[#F8FAFC] p-3">
+                            <Label className="mb-1.5 block text-xs font-semibold">جواز السفر / وثيقة السفر <span className="text-destructive">*</span></Label>
+                            <input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" data-testid={`reg-passport-file-${i}`} onChange={onPassport(i)}
+                                   className="w-full text-xs file:me-2 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-[#0A2540] file:text-white file:cursor-pointer" />
+                            <div className="text-[11px] text-muted-foreground mt-1">PDF أو صورة واضحة — حتى 8MB. تُحفظ الوثيقة بشكل مستقل لكل مسافر.</div>
+                            {r.passport_filename && <div className="text-[11px] text-[#15803D] mt-1">✓ تم اختيار: {r.passport_filename}</div>}
+                            {r.passport_preview_url && (
+                              <div className="mt-3 rounded-2xl border border-[#D7E2EE] bg-white overflow-hidden shadow-sm">
+                                <div className="px-3 py-2 border-b bg-[#F8FAFC] flex items-center justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <div className="text-xs font-bold text-[#0A2540]">معاينة الوثيقة قبل الحجز</div>
+                                    <div className="text-[10px] text-muted-foreground truncate" dir="ltr">{r.passport_filename}</div>
+                                  </div>
+                                  <span className="text-[10px] rounded-full px-2 py-1 bg-emerald-50 text-emerald-700 font-bold">✓ جاهزة للمراجعة</span>
+                                </div>
+                                <div className="bg-[#EEF2F6] min-h-[260px] max-h-[420px] flex items-start justify-center overflow-auto overscroll-contain p-3">
+                                  {String(r.passport_mime || '').includes('pdf') ? (
+                                    <iframe title={`passport-preview-${i}`} src={r.passport_preview_url} className="w-full h-[380px] rounded-xl border bg-white" />
+                                  ) : (
+                                    <img src={r.passport_preview_url} alt="معاينة جواز السفر" className="max-w-full max-h-[390px] object-contain rounded-xl shadow bg-white" />
+                                  )}
+                                </div>
+                                <div className="px-3 py-2 text-[10px] text-[#475569] bg-white">
+                                  تأكد أن الصورة واضحة وأن رقم الجواز المقروء في الوثيقة يطابق الرقم الذي أدخلته قبل تأكيد الحجز.
+                                </div>
+                              </div>
+                            )}
+
+                          </div>
+ 
                           {r.category === "infant" && (
                             <div className="col-span-2">
                               <Label className="mb-1.5 block text-xs">صورة الرضيع (اختياري)</Label>
@@ -343,7 +429,7 @@ export default function PackageDetail() {
                     </div>
                   </div>
                   <DialogFooter>
-                    <Button data-testid="confirm-booking-btn" onClick={book} disabled={busy || regs.some((r) => !r.name || !r.passport_no || !r.age)}
+                    <Button data-testid="confirm-booking-btn" onClick={book} disabled={busy || regs.some((r) => !r.name?.trim() || !r.passport_no?.trim() || !r.passport_file || r.age === "" || r.age == null)}
                             className="w-full h-11 bg-[#0A2540] hover:bg-[#061A2E]">
                       {busy ? "جارٍ الحجز..." : `تأكيد الحجز — ${money(required, pkg.currency)}`}
                     </Button>

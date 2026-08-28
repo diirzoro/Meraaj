@@ -58,6 +58,24 @@ def _rahal_webhook_url() -> str:
     return os.environ.get("RAHAL_WEBHOOK_URL", "").strip()
 
 
+def _rahal_base_url() -> str:
+    """Base URL for interactive/server-to-server Rahal calls. Prefer explicit RAHAL_BASE_URL;
+    otherwise derive it from the configured webhook URL so existing deployments need no new env.
+    """
+    base = os.environ.get("RAHAL_BASE_URL", "").strip().rstrip("/")
+    if base:
+        return base
+    wh = _rahal_webhook_url()
+    for suffix in ("/api/meraaj/webhooks", "/api/integrations/meraaj/webhooks"):
+        if wh.endswith(suffix):
+            return wh[:-len(suffix)].rstrip("/")
+    return ""
+
+
+def _outbound_signature(raw: bytes) -> str:
+    return hmac.new(_meraaj_secret().encode(), raw, hashlib.sha256).hexdigest()
+
+
 async def _deliver(outbox_id, url: str, raw: bytes, sig: str):
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -553,8 +571,62 @@ async def rahal_webhook(request: Request, x_rahal_signature: str = Header(defaul
     recognized = True
     matched_count = 0
     if etype == "inventory.updated" and match:
-        r = await db.packages.update_one(match, {"$set": {"available_seats": data.get("available_seats", event.get("available_seats", 0))}})
-        matched_count = r.matched_count
+        # Never interpret a missing inventory value as zero.
+        # A zero is valid ONLY when Rahal explicitly sends zero.
+        available = data.get("available_seats")
+        if available is None:
+            available = event.get("available_seats")
+
+        # Backward-compatible aliases from inventory providers.
+        # Rahal v2 uses seats_available.
+        if available is None:
+            available = data.get("seats_available")
+        if available is None:
+            available = event.get("seats_available")
+
+        if available is None:
+            available = data.get("remaining_seats")
+        if available is None:
+            available = event.get("remaining_seats")
+
+        if available is None:
+            available = data.get("remaining")
+        if available is None:
+            available = event.get("remaining")
+
+        if available is not None:
+            try:
+                available = max(0, int(available))
+            except (TypeError, ValueError):
+                available = None
+
+        if available is not None:
+            inventory_set = {
+                "available_seats": available,
+                "inventory_updated_at": now_iso()
+            }
+
+            # Rahal is the source of truth for Rahal-origin packages.
+            # Keep total capacity synchronized when Rahal sends seats_allocated.
+            allocated = data.get("seats_allocated")
+            if allocated is None:
+                allocated = event.get("seats_allocated")
+
+            if allocated is not None:
+                try:
+                    inventory_set["total_seats"] = max(0, int(allocated))
+                except (TypeError, ValueError):
+                    pass
+
+            r = await db.packages.update_one(
+                match,
+                {"$set": inventory_set}
+            )
+            matched_count = r.matched_count
+        else:
+            # Event recognized, but it contains no usable inventory count.
+            # Preserve the current availability instead of hiding the package.
+            matched_count = 0
     elif etype in ("package.deactivated", "package.deleted", "package.removed", "package.disabled") and match:
         r = await db.packages.update_one(match, {"$set": {"status": "unlisted", "is_active": False}})
         matched_count = r.matched_count
@@ -650,8 +722,12 @@ async def _remote_verify(token: str):
     if not url:
         return None
     try:
+        raw = json.dumps({"token": token}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         async with httpx.AsyncClient(timeout=5) as h:
-            r = await h.post(url, json={"token": token})
+            r = await h.post(url, content=raw, headers={
+                "Content-Type": "application/json",
+                "X-Meraaj-Signature": _outbound_signature(raw),
+            })
         if r.status_code == 200:
             body = r.json()
             if isinstance(body, dict) and isinstance(body.get("data"), dict):
@@ -757,8 +833,52 @@ async def link_office(request: Request,
             "permissions": perms, "rahal_office_ref": office_ref}
 
 
+class RahalPasswordInput(BaseModel):
+    email: str
+    password: str
+
+
+async def _exchange_rahal_credentials(email: str, password: str) -> str:
+    """Authenticate against Rahal using the user's real credentials, then request a short-lived
+    Rahal SSO token using the returned HttpOnly session cookie. Password is never stored in Meraaj.
+    """
+    base = _rahal_base_url()
+    if not base:
+        raise HTTPException(status_code=503, detail="عنوان نظام رحّال غير مضبوط على الخادم")
+    email = (email or "").strip().lower()
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="البريد وكلمة المرور مطلوبان")
+    try:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+            login = await client.post(base + "/api/auth/login", json={"email": email, "password": password})
+            if login.status_code in (400, 401, 403):
+                raise HTTPException(status_code=401, detail="بيانات الدخول في رحّال غير صحيحة أو الحساب غير متاح")
+            if login.status_code < 200 or login.status_code >= 300:
+                raise HTTPException(status_code=502, detail="تعذر التحقق من حساب رحّال حالياً")
+            token_res = await client.post(base + "/api/meraaj/sso-token", json={})
+            if token_res.status_code < 200 or token_res.status_code >= 300:
+                raise HTTPException(status_code=502, detail="تم تسجيل الدخول إلى رحّال لكن تعذر إنشاء رمز الدخول إلى معراج")
+            body = token_res.json()
+            token = body.get("token") if isinstance(body, dict) else None
+            if not token:
+                raise HTTPException(status_code=502, detail="استجابة رحّال لا تحتوي رمز دخول صالح")
+            return token
+    except HTTPException:
+        raise
+    except httpx.RequestError:
+        raise HTTPException(status_code=502, detail="تعذر الاتصال بنظام رحّال")
+    except (ValueError, json.JSONDecodeError):
+        raise HTTPException(status_code=502, detail="استجابة غير صالحة من نظام رحّال")
+
+
 class SSOInput(BaseModel):
     token: str
+
+
+@router.post("/sso/password")
+async def rahal_sso_password(payload: RahalPasswordInput):
+    token = await _exchange_rahal_credentials(payload.email, payload.password)
+    return await rahal_sso(SSOInput(token=token))
 
 
 @router.post("/sso")

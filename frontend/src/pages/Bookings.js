@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
-import { FileText, XCircle, AlertTriangle, Download, History, Undo2, Search } from "lucide-react";
+import { FileText, XCircle, AlertTriangle, Download, History, Undo2, Search, CalendarDays, Users, WalletCards, Building2 } from "lucide-react";
 import { toast } from "sonner";
 import TravelerDocs from "@/components/TravelerDocs";
 
@@ -86,15 +86,19 @@ export default function Bookings() {
     <>
       <PageHeader title="حجوزاتي (كمشتري)" subtitle="متابعة الحجوزات التي اشتريتها من السوق ودورة حياتها" />
 
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-5">
-        <div className="flex gap-1 bg-white border rounded-xl p-1 card-shadow w-fit overflow-x-auto">
+      <div className="bg-gradient-to-l from-[#0A2540] to-[#123B5D] rounded-2xl p-3 sm:p-4 mb-5 card-shadow">
+        <div className="grid grid-cols-4 gap-2">
           {TABS.map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)} data-testid={`bookings-tab-${k}`}
-              className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${tab === k ? "bg-[#0A2540] text-white" : "text-muted-foreground hover:text-[#0A2540]"}`}>
-              {l} <span className={`ms-1 tabular ${tab === k ? "text-[#D4AF37]" : "text-[#0A2540]/60"}`}>{counts[k]}</span>
+              className={`min-w-0 px-2 sm:px-4 py-3 rounded-xl text-xs sm:text-sm font-semibold transition-all ${tab === k ? "bg-white text-[#0A2540] shadow-md" : "text-white/75 hover:bg-white/10 hover:text-white"}`}>
+              <div className="truncate">{l}</div>
+              <div className={`mt-1 text-lg sm:text-xl font-black tabular ${tab === k ? "text-[#D4AF37]" : "text-white"}`}>{counts[k]}</div>
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-5">
         <div className="relative sm:ms-auto sm:w-64">
           <Search className="w-4 h-4 absolute top-1/2 -translate-y-1/2 start-3 text-muted-foreground" />
           <Input data-testid="bookings-search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="بحث بالبرنامج أو البائع" className="ps-9" />
@@ -106,11 +110,16 @@ export default function Bookings() {
       ) : (
         <div className="space-y-4">
           {view.map((b) => (
-            <div key={b.id} className="bg-white rounded-2xl border card-shadow p-5" data-testid={`booking-${b.id}`}>
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <div className="font-head font-bold text-[#0A2540]">{b.package_title}</div>
-                  <div className="text-xs text-muted-foreground mt-1">البائع: {b.seller_office_name} • انطلاق {fmtDate(b.departure_date)}</div>
+            <div key={b.id} className="bg-white rounded-2xl border border-slate-200 card-shadow overflow-hidden" data-testid={`booking-${b.id}`}>
+              <div className="h-1 bg-gradient-to-l from-[#D4AF37] via-[#0A2540] to-[#0A2540]" />
+              <div className="p-5">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="font-head font-bold text-lg text-[#0A2540] truncate">{b.package_title}</div>
+                  <div className="grid sm:grid-cols-2 gap-x-5 gap-y-1.5 text-xs text-muted-foreground mt-2">
+                    <span className="flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5" /> {b.seller_office_name}</span>
+                    <span className="flex items-center gap-1.5"><CalendarDays className="w-3.5 h-3.5" /> الانطلاق {fmtDate(b.departure_date)}</span>
+                  </div>
                 </div>
                 <div className="flex flex-wrap gap-2 justify-end">
                   {isRahal(b) && b.approval_status !== "approved" && <ApprovalBadge status={b.approval_status} />}
@@ -119,10 +128,10 @@ export default function Bookings() {
                 </div>
               </div>
 
-              <div className="grid sm:grid-cols-3 gap-3 mt-4 text-sm">
-                <Field label="المقاعد" value={b.seats} />
-                <Field label="المبلغ المدفوع" value={money(b.amount_charged, b.currency)} />
-                <Field label="عمولتك المتوقعة" value={money(b.buyer_commission_total, b.currency)} pos />
+              <div className="grid sm:grid-cols-3 gap-3 mt-5 text-sm">
+                <Field icon={Users} label="المسافرون / المقاعد" value={b.seats} />
+                <Field icon={WalletCards} label="المبلغ المدفوع" value={money(b.amount_charged, b.currency)} />
+                <Field icon={WalletCards} label="عمولتك المتوقعة" value={money(b.buyer_commission_total, b.currency)} pos />
               </div>
 
               {b.cancellation_final && (
@@ -170,6 +179,7 @@ export default function Bookings() {
                 )}
                 {b.status === "green" && !b.settled && !b.dispute && <DisputeDialog booking={b} onSubmit={dispute} />}
                 {b.dispute && <span className="text-xs text-[#A16207] flex items-center gap-1 self-center"><AlertTriangle className="w-3.5 h-3.5" /> نزاع {b.dispute.status === "open" ? "مفتوح" : "مُغلق"}</span>}
+              </div>
               </div>
             </div>
           ))}
@@ -250,7 +260,8 @@ function RegistrantsDialog({ booking, onClose }) {
                 <span className="font-semibold">{r.name}</span>
                 <span className="text-xs text-muted-foreground">العمر {r.age}</span>
               </div>
-              <div className="text-xs text-muted-foreground mt-1">جواز: {r.passport_no}</div>
+              {r.passport_no && <div className="text-xs text-muted-foreground mt-1">رقم الجواز: {r.passport_no}</div>}
+              <div className="text-xs text-muted-foreground mt-1">وثائق السفر مرفقة أدناه لكل مسافر.</div>
               <div className="mt-2 flex items-center justify-between">
                 <span className="text-xs">التأشيرة: <span className="font-semibold">{r.visa_no || "لم تُصدر بعد"}</span></span>
                 {r.visa_file && <a href={r.visa_file} target="_blank" rel="noreferrer" className="text-xs text-[#0A2540] flex items-center gap-1 hover:underline"><Download className="w-3.5 h-3.5" /> ملف التأشيرة</a>}
@@ -264,9 +275,12 @@ function RegistrantsDialog({ booking, onClose }) {
   );
 }
 
-const Field = ({ label, value, pos }) => (
-  <div className="bg-[#F4F6F8] rounded-lg px-4 py-3">
-    <div className="text-xs text-muted-foreground">{label}</div>
-    <div className={`tabular font-bold ${pos ? "text-[#15803D]" : "text-[#0A2540]"}`}>{value}</div>
+const Field = ({ icon: Icon, label, value, pos }) => (
+  <div className="bg-[#F8FAFC] border border-slate-100 rounded-xl px-4 py-3 flex items-center gap-3">
+    {Icon && <div className="w-9 h-9 rounded-lg bg-[#0A2540]/5 flex items-center justify-center"><Icon className="w-4 h-4 text-[#0A2540]" /></div>}
+    <div>
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className={`tabular font-bold mt-0.5 ${pos ? "text-[#15803D]" : "text-[#0A2540]"}`}>{value}</div>
+    </div>
   </div>
 );
