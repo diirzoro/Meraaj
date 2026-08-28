@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from typing import Tuple
 
 MAX_FILE_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
+MAX_BATCH_BYTES = int(os.environ.get("MAX_UPLOAD_BATCH_BYTES", str(20 * 1024 * 1024)))
 ALLOWED_MIME = {"application/pdf", "image/png", "image/jpeg", "image/jpg",
                 "image/webp", "image/heic", "image/heif"}
 
