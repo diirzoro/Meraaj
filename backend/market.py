@@ -629,7 +629,7 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
                 "buyer_office_name": user["office_name"],
                 "registrants": [
                     {"name": r.name, "passport_no": r.passport_no, "age": r.age,
-                     "room_type": payload.room_type or ""}
+                     "room_type": payload.room_type or "", "documents": []}
                     for r in payload.registrants
                 ],
                 "total_price": required,

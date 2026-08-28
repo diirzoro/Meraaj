@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { FileText, XCircle, AlertTriangle, Download, History, Undo2, Search } from "lucide-react";
 import { toast } from "sonner";
+import TravelerDocs from "@/components/TravelerDocs";
 
 const isRahal = (b) => b.approval_status != null;
 const catOf = (b) => {
@@ -254,6 +255,7 @@ function RegistrantsDialog({ booking, onClose }) {
                 <span className="text-xs">التأشيرة: <span className="font-semibold">{r.visa_no || "لم تُصدر بعد"}</span></span>
                 {r.visa_file && <a href={r.visa_file} target="_blank" rel="noreferrer" className="text-xs text-[#0A2540] flex items-center gap-1 hover:underline"><Download className="w-3.5 h-3.5" /> ملف التأشيرة</a>}
               </div>
+              <TravelerDocs bookingId={booking.id} registrantIndex={i} />
             </div>
           ))}
         </div>

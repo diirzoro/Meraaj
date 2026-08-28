@@ -8,8 +8,9 @@ import os
 import hmac
 import hashlib
 import json
+import time
+import base64
 import asyncio
-import jwt
 import httpx
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Request, Header, Depends
@@ -512,9 +513,33 @@ async def rahal_webhook(request: Request, x_rahal_signature: str = Header(defaul
             if matched:
                 await audit(bref, "rahal_position", "rahal_owner", reason=data.get("position"),
                             meta={"actual_costs_total": data.get("actual_costs_total")})
+            await _store_evidence(bref, data)
         await db.rahal_inbound_log.update_one({"_id": log_res.inserted_id},
             {"$set": {"handled": matched > 0, "matched_count": matched}})
         return {"received": True, "event": etype, "handled": matched > 0, "matched_count": matched}
+    # --- Office verification status from Rahal (Rahal = source of truth) ---
+    if etype == "office.verification_updated":
+        oref = data.get("office_ref") or data.get("tenant_id") or event.get("office_ref")
+        status_v = data.get("verification_status") or data.get("status")
+        reason_v = data.get("verification_reason") or data.get("reason") or ""
+        allowed = {"unverified", "pending_review", "verified", "rejected"}
+        matched = 0
+        if oref and status_v in allowed:
+            r = await db.users.update_one({"rahal_office_ref": oref}, {"$set": {
+                "verification_status": status_v, "verification_reason": reason_v,
+                "verified_at": now_iso() if status_v == "verified" else None,
+                "updated_at": now_iso()}})
+            matched = r.matched_count
+        await db.rahal_inbound_log.update_one({"_id": log_res.inserted_id},
+            {"$set": {"handled": matched > 0, "matched_count": matched}})
+        return {"received": True, "event": etype, "handled": matched > 0, "matched_count": matched}
+    # --- Cancellation evidence files from Rahal (NO financial effect) ---
+    if etype == "booking.cancellation.evidence":
+        bref = data.get("booking_ref") or event.get("booking_ref")
+        n = await _store_evidence(bref, data)
+        await db.rahal_inbound_log.update_one({"_id": log_res.inserted_id},
+            {"$set": {"handled": n > 0, "matched_count": n}})
+        return {"received": True, "event": etype, "handled": n > 0, "matched_count": n}
     # Matching precedence: meraaj_package_id -> rahal_ref (never by name)
     mid = event.get("meraaj_package_id") or data.get("meraaj_package_id")
     match = None
@@ -582,6 +607,84 @@ async def rahal_webhook(request: Request, x_rahal_signature: str = Header(defaul
         {"_id": log_res.inserted_id},
         {"$set": {"handled": handled, "matched_count": matched_count}})
     return {"received": True, "event": etype, "handled": handled, "matched_count": matched_count}
+
+
+def _b64url_decode(s: str) -> bytes:
+    pad = "=" * (-len(s) % 4)
+    return base64.urlsafe_b64decode(s + pad)
+
+
+def verify_rahal_sso_token(token: str) -> dict:
+    """Rahal SSO token = base64url(JSON) + '.' + HMAC-SHA256-hex(base64url). NOT a JWT.
+    Verifies the signature constant-time with the shared secret, then iss/aud/exp."""
+    if not token or token.count(".") != 1:
+        raise HTTPException(status_code=401, detail="رمز دخول رحّال غير صالح")
+    payload_b64, sig = token.split(".")
+    expected = hmac.new(_shared_secret().encode(), payload_b64.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, (sig or "").strip().lower()):
+        raise HTTPException(status_code=401, detail="توقيع رمز الدخول من رحّال غير صالح")
+    try:
+        claims = json.loads(_b64url_decode(payload_b64))
+    except Exception:
+        raise HTTPException(status_code=401, detail="حمولة رمز الدخول غير صالحة")
+    if not isinstance(claims, dict):
+        raise HTTPException(status_code=401, detail="حمولة رمز الدخول غير صالحة")
+    if claims.get("iss") != "rahaal-erp" or claims.get("aud") != "meraaj-network":
+        raise HTTPException(status_code=401, detail="جهة الإصدار أو الجمهور غير صحيحة في رمز الدخول")
+    exp = claims.get("exp")
+    try:
+        if exp is None or int(time.time()) > int(exp):
+            raise HTTPException(status_code=401, detail="انتهت صلاحية رمز الدخول")
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=401, detail="صلاحية رمز الدخول غير صالحة")
+    return claims
+
+
+async def _remote_verify(token: str):
+    """Optional LIVE verification against Rahal (POST /api/meraaj/sso/verify). Authoritative
+    for permissions/identity when reachable; falls back to local claims when not configured."""
+    url = os.environ.get("RAHAL_SSO_VERIFY_URL", "").strip()
+    if not url:
+        base = os.environ.get("RAHAL_BASE_URL", "").strip()
+        url = base.rstrip("/") + "/api/meraaj/sso/verify" if base else ""
+    if not url:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=5) as h:
+            r = await h.post(url, json={"token": token})
+        if r.status_code == 200:
+            body = r.json()
+            if isinstance(body, dict) and isinstance(body.get("data"), dict):
+                return body["data"]
+            return body if isinstance(body, dict) else None
+    except Exception:
+        return None
+    return None
+
+
+async def _store_evidence(booking_ref, data):
+    """Persist cancellation evidence file references from Rahal. NO financial effect."""
+    if not booking_ref:
+        return 0
+    items = data.get("evidence") or data.get("evidences") or data.get("documents") or []
+    if not isinstance(items, list):
+        items = []
+    if isinstance(data.get("file_ref"), str):
+        items = items + [data]
+    count = 0
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        await db.cancellation_evidence.insert_one({
+            "booking_id": str(booking_ref),
+            "file_ref": it.get("file_ref") or it.get("id"),
+            "doc_type": (it.get("type") or it.get("doc_type") or "other"),
+            "metadata": it.get("metadata") or {},
+            "download_ref": it.get("download_ref") or it.get("signed_url") or it.get("url"),
+            "source": "rahal", "created_at": now_iso(),
+        })
+        count += 1
+    return count
 
 
 def _norm_perms(raw):
@@ -663,21 +766,21 @@ async def rahal_sso(payload: SSOInput):
     """Signed-JWT SSO handoff from Rahal. Token is HS256-signed with the shared secret
     and carries the office identity. Auto-provisions/links a Meraaj office account and
     returns a Meraaj session token used inside the embedded iframe."""
-    try:
-        claims = jwt.decode(payload.token, _shared_secret(), algorithms=["HS256"])
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="انتهت صلاحية رمز الدخول من رحال")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="رمز دخول غير صالح من رحال")
+    claims = verify_rahal_sso_token(payload.token)
 
-    office_ref = claims.get("office_ref") or claims.get("office_id")
+    office_ref = claims.get("tenant_id") or claims.get("office_ref") or claims.get("office_id")
     email = (claims.get("email") or "").lower()
     if not office_ref or not email:
         raise HTTPException(status_code=400, detail="بيانات المكتب ناقصة في رمز الدخول")
 
-    perms = _norm_perms(claims.get("permissions"))
-    has_perms = claims.get("permissions") is not None
-    user_ref = claims.get("user_ref") or claims.get("rahal_user_id") or claims.get("sub")
+    # Live verification with Rahal wins for permissions/identity when reachable.
+    live = await _remote_verify(payload.token)
+    src = live if isinstance(live, dict) else claims
+    perms = _norm_perms(src.get("permissions"))
+    has_perms = src.get("permissions") is not None
+    rahal_role = src.get("role") or claims.get("role")
+    user_ref = (src.get("user_ref") or claims.get("user_ref")
+                or src.get("meraaj_office_id") or claims.get("meraaj_office_id"))
 
     user = await db.users.find_one({"$or": [{"rahal_office_ref": office_ref}, {"email": email}]})
     if not user:
@@ -696,6 +799,7 @@ async def rahal_sso(payload: SSOInput):
             "rahal_office_ref": office_ref,
             "rahal_permissions": perms if has_perms else None,
             "rahal_user_ref": user_ref,
+            "rahal_role": rahal_role,
             "wallet": _empty_wallet(),
             "created_at": now_iso(),
         }
@@ -711,6 +815,8 @@ async def rahal_sso(payload: SSOInput):
             upd["rahal_permissions"] = perms   # refresh permissions from Rahal on every login
         if user_ref is not None and not user.get("rahal_user_ref"):
             upd["rahal_user_ref"] = user_ref
+        if rahal_role:
+            upd["rahal_role"] = rahal_role
         if upd:
             await db.users.update_one({"_id": user["_id"]}, {"$set": upd})
             user = await db.users.find_one({"_id": user["_id"]})
