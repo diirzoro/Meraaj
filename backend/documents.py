@@ -4,6 +4,9 @@ import time
 import uuid
 import base64
 import mimetypes
+import os
+import hmac
+import hashlib
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, Response
 from pydantic import BaseModel
@@ -36,14 +39,50 @@ async def _authorized_doc(doc_id: str, user: dict):
     return d, b
 
 
+def _doc_signing_secret():
+    return (
+        os.getenv("JWT_SECRET")
+        or os.getenv("MERAAJ_SHARED_SECRET")
+        or os.getenv("RAHAL_SHARED_SECRET")
+        or ""
+    )
+
+
+def _signed_document_url(doc_id: str, expires_in: int = 72 * 3600) -> str:
+    base = (
+        os.getenv("MERAAJ_PUBLIC_BASE_URL")
+        or os.getenv("FRONTEND_URL")
+        or ""
+    ).rstrip("/")
+
+    secret = _doc_signing_secret()
+    if not base or not secret:
+        return ""
+
+    exp = int(time.time()) + expires_in
+    msg = f"doc:{doc_id}:{exp}".encode()
+    sig = hmac.new(secret.encode(), msg, hashlib.sha256).hexdigest()
+
+    return f"{base}/api/documents/{doc_id}/signed?exp={exp}&sig={sig}"
+
+
 async def _notify_docs(b: dict):
     """Push the full per-registrant document set to Rahal using the REAL booking_ref."""
     docs = await db.traveler_documents.find({"booking_id": str(b["_id"])}).to_list(2000)
     by_idx = {}
     for d in docs:
-        by_idx.setdefault(d["registrant_index"], []).append({
-            "doc_type": d["doc_type"], "file_ref": str(d["_id"]),
-            "filename": d["filename"], "download_ref": f"/api/documents/{d['_id']}/download"})
+        idx = d["registrant_index"]
+        reg = (b.get("registrants") or [])[idx] if idx < len(b.get("registrants") or []) else {}
+        by_idx.setdefault(idx, []).append({
+            "type": d["doc_type"],
+            "file_ref": str(d["_id"]),
+            "label": d["filename"],
+            "filename": d["filename"],
+            "url": _signed_document_url(str(d["_id"])),
+            "passport_no": reg.get("passport_no"),
+            "registrant_name": reg.get("name"),
+            "download_ref": f"/api/documents/{d['_id']}/download"
+        })
     registrants = [{"index": i, "documents": by_idx.get(i, [])}
                    for i in range(len(b.get("registrants", [])))]
     await notify_rahal("meraaj.booking.documents_updated", {}, envelope={
@@ -106,6 +145,50 @@ async def list_documents(booking_id: str, registrant_index: Optional[int] = None
         q["registrant_index"] = registrant_index
     docs = await db.traveler_documents.find(q).sort("created_at", 1).to_list(2000)
     return serialize(docs)
+
+
+@router.get("/documents/{doc_id}/signed")
+async def download_document_signed(doc_id: str, exp: int, sig: str):
+    if exp < int(time.time()):
+        raise HTTPException(410, "انتهت صلاحية رابط المستند")
+
+    secret = _doc_signing_secret()
+    if not secret:
+        raise HTTPException(503, "خدمة مشاركة المستندات غير مهيأة")
+
+    expected = hmac.new(
+        secret.encode(),
+        f"doc:{doc_id}:{exp}".encode(),
+        hashlib.sha256
+    ).hexdigest()
+
+    if not hmac.compare_digest(expected, sig):
+        raise HTTPException(401, "رابط المستند غير صالح")
+
+    d = await db.traveler_documents.find_one({"_id": oid(doc_id)})
+    if not d:
+        raise HTTPException(404, "المستند غير موجود")
+
+    try:
+        data, ct = await get_storage().get(d["object_key"])
+    except FileNotFoundError:
+        raise HTTPException(404, "الملف غير متوفر في وحدة التخزين")
+
+    await audit(
+        d["booking_id"],
+        "document_read_signed",
+        "rahal",
+        meta={"doc_id": doc_id}
+    )
+
+    return Response(
+        content=data,
+        media_type=ct,
+        headers={
+            "Content-Disposition": f'inline; filename="{d.get("filename", "file")}"',
+            "Cache-Control": "private, no-store"
+        }
+    )
 
 
 @router.get("/documents/{doc_id}/download")
