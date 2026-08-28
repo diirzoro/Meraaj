@@ -1,0 +1,339 @@
+diff --git a/backend/documents.py b/backend/documents.py
+index 87f79d4..7417998 100644
+--- a/backend/documents.py
++++ b/backend/documents.py
+@@ -9,12 +9,12 @@ from fastapi import APIRouter, HTTPException, Depends, Response
+ from pydantic import BaseModel
+ from db import db, serialize, oid, now_iso, audit
+ from security import get_current_user
+-from storage import get_storage, MAX_FILE_BYTES, ALLOWED_MIME
++from storage import get_storage, MAX_FILE_BYTES, MAX_BATCH_BYTES, ALLOWED_MIME
+ from integration import notify_rahal
+ 
+ router = APIRouter(prefix="/api", tags=["documents"])
+ 
+-DOC_TYPES = {"passport", "visa", "photo", "other"}
++DOC_TYPES = {"passport", "visa", "photo", "ticket", "other"}
+ 
+ 
+ async def _booking_party(booking_id: str, user: dict) -> dict:
+@@ -43,6 +43,7 @@ async def _notify_docs(b: dict):
+     for d in docs:
+         by_idx.setdefault(d["registrant_index"], []).append({
+             "doc_type": d["doc_type"], "file_ref": str(d["_id"]),
++            "passport_no": d.get("passport_no"),
+             "filename": d["filename"], "download_ref": f"/api/documents/{d['_id']}/download"})
+     registrants = [{"index": i, "documents": by_idx.get(i, [])}
+                    for i in range(len(b.get("registrants", [])))]
+@@ -58,6 +59,8 @@ class DocIn(BaseModel):
+     doc_type: str
+     filename: str
+     content_base64: str
++    passport_no: Optional[str] = None
++    batch_total_bytes: Optional[int] = None
+ 
+ 
+ @router.post("/bookings/{booking_id}/documents")
+@@ -73,7 +76,9 @@ async def upload_document(booking_id: str, payload: DocIn, user: dict = Depends(
+     except Exception:
+         raise HTTPException(400, "محتوى الملف غير صالح")
+     if len(raw) == 0 or len(raw) > MAX_FILE_BYTES:
+-        raise HTTPException(400, "حجم الملف غير صالح (فارغ أو يتجاوز الحد المسموح)")
++        raise HTTPException(400, "حجم الملف يتجاوز 10 ميجابايت للملف الواحد أو أنه فارغ")
++    if payload.batch_total_bytes and payload.batch_total_bytes > MAX_BATCH_BYTES:
++        raise HTTPException(400, "إجمالي حجم الملفات يجب ألا يتجاوز 20MB")
+     ct = mimetypes.guess_type(payload.filename)[0] or "application/octet-stream"
+     if ct not in ALLOWED_MIME:
+         raise HTTPException(400, "نوع الملف غير مدعوم (PDF أو صورة فقط)")
+@@ -84,6 +89,7 @@ async def upload_document(booking_id: str, payload: DocIn, user: dict = Depends(
+         "registrant_index": payload.registrant_index,
+         "registrant_name": regs[payload.registrant_index].get("name"),
+         "doc_type": payload.doc_type, "filename": payload.filename,
++        "passport_no": payload.passport_no,
+         "object_key": key, "mime": ct, "size": len(raw),
+         "tenant_office_id": b.get("seller_id"), "buyer_id": b.get("buyer_id"),
+         "uploaded_by": str(user["_id"]), "created_at": now_iso(),
+diff --git a/backend/storage.py b/backend/storage.py
+index 23b9247..74eb555 100644
+--- a/backend/storage.py
++++ b/backend/storage.py
+@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
+ from typing import Tuple
+ 
+ MAX_FILE_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
++MAX_BATCH_BYTES = int(os.environ.get("MAX_UPLOAD_BATCH_BYTES", str(20 * 1024 * 1024)))
+ ALLOWED_MIME = {"application/pdf", "image/png", "image/jpeg", "image/jpg",
+                 "image/webp", "image/heic", "image/heif"}
+ 
+diff --git a/frontend/src/components/TravelerDocs.js b/frontend/src/components/TravelerDocs.js
+index 52a9522..c770de3 100644
+--- a/frontend/src/components/TravelerDocs.js
++++ b/frontend/src/components/TravelerDocs.js
+@@ -1,35 +1,48 @@
+ import { useEffect, useState } from "react";
+ import api, { apiError } from "@/lib/api";
+-import { Upload, Trash2, FileText, Download } from "lucide-react";
++import { Button } from "@/components/ui/button";
++import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
++import { Upload, Trash2, FileText, Download, Eye, Printer } from "lucide-react";
+ import { toast } from "sonner";
+ 
+-const TYPES = [["passport", "جواز السفر"], ["visa", "التأشيرة"], ["photo", "صورة"], ["other", "أخرى"]];
+-const typeLabel = (t) => (TYPES.find((x) => x[0] === t) || [null, t])[1];
++export const DOC_TYPES = [["passport", "جواز السفر"], ["visa", "التأشيرة"], ["photo", "صورة"], ["ticket", "تذكرة السفر"], ["other", "أخرى"]];
++export const docLabel = (t) => (DOC_TYPES.find((x) => x[0] === t) || [null, t])[1];
++const MAX_FILE = 10 * 1024 * 1024;
++const MAX_BATCH = 20 * 1024 * 1024;
+ const API = process.env.REACT_APP_BACKEND_URL + "/api";
++const isPdf = (m, n) => m === "application/pdf" || /\.pdf$/i.test(n || "");
+ 
+-export default function TravelerDocs({ bookingId, registrantIndex }) {
++export default function TravelerDocs({ bookingId, registrantIndex, passportNo }) {
+   const [docs, setDocs] = useState([]);
+   const [docType, setDocType] = useState("passport");
+   const [busy, setBusy] = useState(false);
++  const [preview, setPreview] = useState(null);
+ 
+   const load = () => api.get(`/bookings/${bookingId}/documents?registrant_index=${registrantIndex}`)
+     .then((r) => setDocs(r.data)).catch(() => {});
+   useEffect(() => { load(); /* eslint-disable-next-line */ }, [bookingId, registrantIndex]);
+ 
+   const onFile = async (e) => {
+-    const file = e.target.files?.[0];
++    const files = Array.from(e.target.files || []);
+     e.target.value = "";
+-    if (!file) return;
+-    if (file.size > 10 * 1024 * 1024) { toast.error("حجم الملف يتجاوز 10 ميجابايت"); return; }
++    if (!files.length) return;
++    const big = files.find((f) => f.size > MAX_FILE);
++    if (big) { toast.error(`${big.name}: يتجاوز 10 ميجابايت للملف الواحد`); return; }
++    const total = files.reduce((s, f) => s + f.size, 0);
++    if (total > MAX_BATCH) { toast.error("إجمالي حجم الملفات يجب ألا يتجاوز 20MB"); return; }
+     setBusy(true);
+     try {
+-      const b64 = await new Promise((res, rej) => {
+-        const rd = new FileReader(); rd.onload = () => res(rd.result); rd.onerror = rej; rd.readAsDataURL(file);
+-      });
+-      await api.post(`/bookings/${bookingId}/documents`, {
+-        registrant_index: registrantIndex, doc_type: docType, filename: file.name, content_base64: b64,
+-      });
+-      toast.success("تم رفع الملف");
++      for (const file of files) {
++        const b64 = await new Promise((res, rej) => {
++          const rd = new FileReader(); rd.onload = () => res(rd.result); rd.onerror = rej; rd.readAsDataURL(file);
++        });
++        await api.post(`/bookings/${bookingId}/documents`, {
++          registrant_index: registrantIndex, doc_type: docType, filename: file.name,
++          content_base64: b64, batch_total_bytes: total,
++          passport_no: docType === "passport" ? (passportNo || undefined) : undefined,
++        });
++      }
++      toast.success("تم رفع الملفات");
+       load();
+     } catch (err) { toast.error(apiError(err)); } finally { setBusy(false); }
+   };
+@@ -38,6 +51,7 @@ export default function TravelerDocs({ bookingId, registrantIndex }) {
+     try { await api.delete(`/documents/${id}`); toast.success("تم حذف الملف"); load(); }
+     catch (e) { toast.error(apiError(e)); }
+   };
++  const printDoc = (d) => window.open(`${API}/documents/${d.id}/download`, "_blank");
+ 
+   return (
+     <div className="mt-3 border-t pt-3" data-testid={`docs-${registrantIndex}`}>
+@@ -48,12 +62,14 @@ export default function TravelerDocs({ bookingId, registrantIndex }) {
+             <div key={d.id} className="flex items-center justify-between bg-[#F4F6F8] rounded-lg px-3 py-2 text-xs" data-testid={`doc-${d.id}`}>
+               <span className="flex items-center gap-2 min-w-0">
+                 <FileText className="w-3.5 h-3.5 text-[#0A2540] shrink-0" />
+-                <span className="font-semibold shrink-0">{typeLabel(d.doc_type)}</span>
++                <span className="font-semibold shrink-0">{docLabel(d.doc_type)}</span>
++                {d.passport_no && <span className="text-[#A16207] shrink-0">({d.passport_no})</span>}
+                 <span className="text-muted-foreground truncate">{d.filename}</span>
+               </span>
+               <span className="flex items-center gap-3 shrink-0">
+-                <a href={`${API}/documents/${d.id}/download`} target="_blank" rel="noreferrer"
+-                   className="text-[#0A2540] hover:opacity-70" data-testid={`doc-download-${d.id}`}><Download className="w-3.5 h-3.5" /></a>
++                <button onClick={() => setPreview(d)} className="text-[#0A2540] hover:opacity-70" data-testid={`doc-preview-${d.id}`}><Eye className="w-3.5 h-3.5" /></button>
++                <button onClick={() => printDoc(d)} className="text-[#0A2540] hover:opacity-70" data-testid={`doc-print-${d.id}`}><Printer className="w-3.5 h-3.5" /></button>
++                <a href={`${API}/documents/${d.id}/download`} target="_blank" rel="noreferrer" className="text-[#0A2540] hover:opacity-70" data-testid={`doc-download-${d.id}`}><Download className="w-3.5 h-3.5" /></a>
+                 <button onClick={() => del(d.id)} className="text-red-500 hover:text-red-700" data-testid={`doc-delete-${d.id}`}><Trash2 className="w-3.5 h-3.5" /></button>
+               </span>
+             </div>
+@@ -63,13 +79,30 @@ export default function TravelerDocs({ bookingId, registrantIndex }) {
+       <div className="flex items-center gap-2">
+         <select value={docType} onChange={(e) => setDocType(e.target.value)} data-testid={`doc-type-${registrantIndex}`}
+                 className="h-8 rounded-md border border-input bg-transparent px-2 text-xs">
+-          {TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
++          {DOC_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+         </select>
+         <label className="inline-flex items-center gap-1.5 text-xs bg-[#0A2540] text-white rounded-md px-3 h-8 cursor-pointer hover:bg-[#061A2E]" data-testid={`doc-upload-${registrantIndex}`}>
+-          <Upload className="w-3.5 h-3.5" /> {busy ? "جارٍ الرفع..." : "رفع ملف"}
+-          <input type="file" className="hidden" accept="image/png,image/jpeg,image/webp,application/pdf" onChange={onFile} disabled={busy} />
++          <Upload className="w-3.5 h-3.5" /> {busy ? "جارٍ الرفع..." : "رفع ملفات"}
++          <input type="file" multiple className="hidden" accept="image/png,image/jpeg,image/webp,application/pdf" onChange={onFile} disabled={busy} />
+         </label>
+       </div>
++
++      <Dialog open={!!preview} onOpenChange={(o) => !o && setPreview(null)}>
++        <DialogContent dir="rtl" className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="doc-preview-dialog">
++          <DialogHeader><DialogTitle className="font-head text-[#0A2540] text-base">{preview && `${docLabel(preview.doc_type)} — ${preview.filename}`}</DialogTitle></DialogHeader>
++          {preview && (isPdf(preview.mime, preview.filename)
++            ? <iframe title="preview" src={`${API}/documents/${preview.id}/download`} className="w-full h-[70vh] rounded-lg border" />
++            : <img alt="preview" src={`${API}/documents/${preview.id}/download`} className="w-full rounded-lg border object-contain max-h-[70vh]" />)}
++          {preview && (
++            <div className="flex gap-2 justify-end">
++              <Button variant="outline" size="sm" onClick={() => printDoc(preview)}><Printer className="w-4 h-4" /> طباعة</Button>
++              <a href={`${API}/documents/${preview.id}/download`} target="_blank" rel="noreferrer">
++                <Button size="sm" className="bg-[#0A2540] hover:bg-[#061A2E]"><Download className="w-4 h-4" /> تنزيل</Button>
++              </a>
++            </div>
++          )}
++        </DialogContent>
++      </Dialog>
+     </div>
+   );
+ }
+diff --git a/frontend/src/pages/PackageDetail.js b/frontend/src/pages/PackageDetail.js
+index 7e1846a..9cbd520 100644
+--- a/frontend/src/pages/PackageDetail.js
++++ b/frontend/src/pages/PackageDetail.js
+@@ -11,7 +11,8 @@ import { Label } from "@/components/ui/label";
+ import {
+   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
+ } from "@/components/ui/dialog";
+-import { MapPin, Users, CalendarDays, Building2, Plane, Hotel, Plus, Trash2, ShoppingCart, CheckCircle2, Bus, BedDouble, ListChecks, Share2 } from "lucide-react";
++import { MapPin, Users, CalendarDays, Building2, Plane, Hotel, Plus, Trash2, ShoppingCart, CheckCircle2, Bus, BedDouble, ListChecks, Share2, Paperclip, X } from "lucide-react";
++import { DOC_TYPES, docLabel } from "@/components/TravelerDocs";
+ 
+ const ROOM_AR = { double: "ثنائية", twin: "ثنائية", triple: "ثلاثية", quad: "رباعية", quint: "خماسية", single: "فردية" };
+ const TRANSPORT_AR = { bus: "باص", flight: "طيران", air: "طيران", train: "قطار", car: "سيارة" };
+@@ -25,9 +26,11 @@ export default function PackageDetail() {
+   const { user } = useAuth();
+   const [pkg, setPkg] = useState(null);
+   const [open, setOpen] = useState(false);
+-  const [regs, setRegs] = useState([{ name: "", passport_no: "", age: "", category: "adult", photo: "" }]);
++  const [regs, setRegs] = useState([{ name: "", passport_no: "", age: "", category: "adult", photo: "", docs: [] }]);
+   const [busy, setBusy] = useState(false);
+   const [selectedRoom, setSelectedRoom] = useState(null);
++  const [docType, setDocType] = useState({});
++  const [progress, setProgress] = useState(null);
+ 
+   useEffect(() => {
+     api.get(`/packages/${id}`).then((r) => {
+@@ -48,11 +51,26 @@ export default function PackageDetail() {
+     infant: { label: "رضيع", offered: pkg.infant_sale_price != null || pkg.infant_net_cost != null || roomHas("infant") },
+   };
+   const setReg = (i, k) => (e) => { const c = [...regs]; c[i][k] = e.target.value; setRegs(c); };
+-  const addReg = (category = "adult") => setRegs([...regs, { name: "", passport_no: "", age: "", category, photo: "" }]);
++  const addReg = (category = "adult") => setRegs([...regs, { name: "", passport_no: "", age: "", category, photo: "", docs: [] }]);
+   const rmReg = (i) => setRegs(regs.filter((_, x) => x !== i));
++  const stageDocs = (i) => async (e) => {
++    const files = Array.from(e.target.files || []); e.target.value = "";
++    if (!files.length) return;
++    const big = files.find((f) => f.size > 10 * 1024 * 1024);
++    if (big) { toast.error(`${big.name}: يتجاوز 10 ميجابايت للملف الواحد`); return; }
++    if (files.reduce((s, f) => s + f.size, 0) > 20 * 1024 * 1024) { toast.error("إجمالي حجم الملفات يجب ألا يتجاوز 20MB"); return; }
++    const dt = docType[i] || "passport";
++    const added = [];
++    for (const file of files) {
++      const b64 = await new Promise((res, rej) => { const rd = new FileReader(); rd.onload = () => res(rd.result); rd.onerror = rej; rd.readAsDataURL(file); });
++      added.push({ doc_type: dt, filename: file.name, content_base64: b64, size: file.size });
++    }
++    const c = [...regs]; c[i].docs = [...(c[i].docs || []), ...added]; setRegs(c);
++  };
++  const rmDoc = (i, di) => { const c = [...regs]; c[i].docs = c[i].docs.filter((_, x) => x !== di); setRegs(c); };
+   const onPhoto = (i) => (e) => {
+     const file = e.target.files?.[0]; if (!file) return;
+-    if (file.size > 3 * 1024 * 1024) { toast.error("حجم الصورة يتجاوز 3 ميجابايت"); return; }
++    if (file.size > 10 * 1024 * 1024) { toast.error("حجم الصورة يتجاوز 10 ميجابايت"); return; }
+     const reader = new FileReader();
+     reader.onload = () => { const c = [...regs]; c[i].photo = reader.result; setRegs(c); };
+     reader.readAsDataURL(file);
+@@ -99,13 +117,30 @@ export default function PackageDetail() {
+   const book = async () => {
+     setBusy(true);
+     try {
+-      await api.post("/bookings", {
++      const { data: created } = await api.post("/bookings", {
+         package_id: id,
+         room_type: selectedRoom || undefined,
+         registrants: regs.map((r) => ({ name: r.name, passport_no: r.passport_no, age: Number(r.age), category: r.category, photo: r.photo || undefined })),
+         ref: localStorage.getItem("meraaj_ref") || undefined,
+       });
+       toast.success("تم إنشاء الحجز وتجميد الرصيد بنجاح");
++      // Upload staged traveler documents to the new booking (with progress)
++      const staged = regs.flatMap((r, i) => (r.docs || []).map((d) => ({ ...d, registrant_index: i, passport_no: r.passport_no })));
++      if (staged.length) {
++        setProgress({ done: 0, total: staged.length });
++        for (let k = 0; k < staged.length; k++) {
++          const d = staged[k];
++          try {
++            await api.post(`/bookings/${created.id}/documents`, {
++              registrant_index: d.registrant_index, doc_type: d.doc_type, filename: d.filename,
++              content_base64: d.content_base64, passport_no: d.doc_type === "passport" ? (d.passport_no || undefined) : undefined,
++            });
++          } catch { /* skip a failed file, continue */ }
++          setProgress({ done: k + 1, total: staged.length });
++        }
++        toast.success(`تم رفع ${staged.length} مستنداً للحجز`);
++      }
++      setProgress(null);
+       setOpen(false);
+       navigate("/bookings");
+     } catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
+@@ -321,6 +356,34 @@ export default function PackageDetail() {
+                             </div>
+                           )}
+                         </div>
++
++                        <div className="mt-3 border-t pt-3">
++                          <Label className="mb-1.5 block text-xs flex items-center gap-1"><Paperclip className="w-3.5 h-3.5" /> مستندات المسافر (جواز/تأشيرة/تذكرة… عدة ملفات)</Label>
++                          {(r.docs || []).length > 0 && (
++                            <div className="space-y-1 mb-2">
++                              {r.docs.map((d, di) => (
++                                <div key={di} className="flex items-center justify-between bg-[#F4F6F8] rounded-md px-2 py-1.5 text-[11px]" data-testid={`stage-doc-${i}-${di}`}>
++                                  <span className="flex items-center gap-2 min-w-0">
++                                    <span className="font-semibold shrink-0">{docLabel(d.doc_type)}</span>
++                                    {d.content_base64?.startsWith("data:image") && <img alt="" src={d.content_base64} className="w-6 h-6 rounded object-cover shrink-0" />}
++                                    <span className="text-muted-foreground truncate">{d.filename}</span>
++                                  </span>
++                                  <button type="button" onClick={() => rmDoc(i, di)} className="text-red-500 shrink-0" data-testid={`stage-doc-remove-${i}-${di}`}><X className="w-3.5 h-3.5" /></button>
++                                </div>
++                              ))}
++                            </div>
++                          )}
++                          <div className="flex items-center gap-2">
++                            <select value={docType[i] || "passport"} onChange={(e) => setDocType({ ...docType, [i]: e.target.value })}
++                                    data-testid={`stage-doc-type-${i}`} className="h-8 rounded-md border border-input bg-transparent px-2 text-xs">
++                              {DOC_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
++                            </select>
++                            <label className="inline-flex items-center gap-1.5 text-xs bg-white border border-[#0A2540] text-[#0A2540] rounded-md px-3 h-8 cursor-pointer hover:bg-[#0A2540]/5" data-testid={`stage-doc-add-${i}`}>
++                              <Plus className="w-3.5 h-3.5" /> إضافة ملفات
++                              <input type="file" multiple className="hidden" accept="image/png,image/jpeg,image/webp,application/pdf" onChange={stageDocs(i)} />
++                            </label>
++                          </div>
++                        </div>
+                       </div>
+                     ))}
+                     <div className="flex flex-wrap gap-2">
+@@ -345,7 +408,7 @@ export default function PackageDetail() {
+                   <DialogFooter>
+                     <Button data-testid="confirm-booking-btn" onClick={book} disabled={busy || regs.some((r) => !r.name || !r.passport_no || !r.age)}
+                             className="w-full h-11 bg-[#0A2540] hover:bg-[#061A2E]">
+-                      {busy ? "جارٍ الحجز..." : `تأكيد الحجز — ${money(required, pkg.currency)}`}
++                      {progress ? `جارٍ رفع المستندات ${progress.done}/${progress.total}...` : busy ? "جارٍ الحجز..." : `تأكيد الحجز — ${money(required, pkg.currency)}`}
+                     </Button>
+                   </DialogFooter>
+                 </DialogContent>
+diff --git a/frontend/src/pages/Wallet.js b/frontend/src/pages/Wallet.js
+index 60123c0..924dcc8 100644
+--- a/frontend/src/pages/Wallet.js
++++ b/frontend/src/pages/Wallet.js
+@@ -200,7 +200,7 @@ function TopupDialog({ onDone }) {
+     const file = e.target.files?.[0];
+     if (!file) return;
+     if (!/(image\/(png|jpe?g|webp)|application\/pdf)/.test(file.type)) { toast.error("الملف يجب أن يكون صورة (JPG/PNG) أو PDF"); return; }
+-    if (file.size > 5 * 1024 * 1024) { toast.error("حجم الملف يتجاوز 5 ميجابايت"); return; }
++    if (file.size > 10 * 1024 * 1024) { toast.error("حجم الملف يتجاوز 10 ميجابايت"); return; }
+     const reader = new FileReader();
+     reader.onload = () => { setF((p) => ({ ...p, receipt_url: reader.result })); setFileName(file.name); };
+     reader.readAsDataURL(file);
