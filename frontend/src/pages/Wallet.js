@@ -200,7 +200,7 @@ function TopupDialog({ onDone }) {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!/(image\/(png|jpe?g|webp)|application\/pdf)/.test(file.type)) { toast.error("الملف يجب أن يكون صورة (JPG/PNG) أو PDF"); return; }
-    if (file.size > 5 * 1024 * 1024) { toast.error("حجم الملف يتجاوز 5 ميجابايت"); return; }
+    if (file.size > 20 * 1024 * 1024) { toast.error("حجم الملف يتجاوز 20 ميجابايت"); return; }
     const reader = new FileReader();
     reader.onload = () => { setF((p) => ({ ...p, receipt_url: reader.result })); setFileName(file.name); };
     reader.readAsDataURL(file);

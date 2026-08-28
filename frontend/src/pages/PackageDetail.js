@@ -11,7 +11,8 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
-import { MapPin, Users, CalendarDays, Building2, Plane, Hotel, Plus, Trash2, ShoppingCart, CheckCircle2, Bus, BedDouble, ListChecks, Share2 } from "lucide-react";
+import { MapPin, Users, CalendarDays, Building2, Plane, Hotel, Plus, Trash2, ShoppingCart, CheckCircle2, Bus, BedDouble, ListChecks, Share2, Paperclip, X } from "lucide-react";
+import { DOC_TYPES, docLabel } from "@/components/TravelerDocs";
 
 const ROOM_AR = { double: "ثنائية", twin: "ثنائية", triple: "ثلاثية", quad: "رباعية", quint: "خماسية", single: "فردية" };
 const TRANSPORT_AR = { bus: "باص", flight: "طيران", air: "طيران", train: "قطار", car: "سيارة" };
@@ -25,9 +26,11 @@ export default function PackageDetail() {
   const { user } = useAuth();
   const [pkg, setPkg] = useState(null);
   const [open, setOpen] = useState(false);
-  const [regs, setRegs] = useState([{ name: "", passport_no: "", age: "", category: "adult", photo: "" }]);
+  const [regs, setRegs] = useState([{ name: "", passport_no: "", age: "", category: "adult", photo: "", docs: [] }]);
   const [busy, setBusy] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState(null);
+  const [docType, setDocType] = useState({});
+  const [progress, setProgress] = useState(null);
 
   useEffect(() => {
     api.get(`/packages/${id}`).then((r) => {
@@ -48,11 +51,24 @@ export default function PackageDetail() {
     infant: { label: "رضيع", offered: pkg.infant_sale_price != null || pkg.infant_net_cost != null || roomHas("infant") },
   };
   const setReg = (i, k) => (e) => { const c = [...regs]; c[i][k] = e.target.value; setRegs(c); };
-  const addReg = (category = "adult") => setRegs([...regs, { name: "", passport_no: "", age: "", category, photo: "" }]);
+  const addReg = (category = "adult") => setRegs([...regs, { name: "", passport_no: "", age: "", category, photo: "", docs: [] }]);
   const rmReg = (i) => setRegs(regs.filter((_, x) => x !== i));
+  const stageDocs = (i) => async (e) => {
+    const files = Array.from(e.target.files || []); e.target.value = "";
+    if (!files.length) return;
+    const dt = docType[i] || "passport";
+    const added = [];
+    for (const file of files) {
+      if (file.size > 20 * 1024 * 1024) { toast.error(`${file.name}: يتجاوز 20 ميجابايت`); continue; }
+      const b64 = await new Promise((res, rej) => { const rd = new FileReader(); rd.onload = () => res(rd.result); rd.onerror = rej; rd.readAsDataURL(file); });
+      added.push({ doc_type: dt, filename: file.name, content_base64: b64 });
+    }
+    const c = [...regs]; c[i].docs = [...(c[i].docs || []), ...added]; setRegs(c);
+  };
+  const rmDoc = (i, di) => { const c = [...regs]; c[i].docs = c[i].docs.filter((_, x) => x !== di); setRegs(c); };
   const onPhoto = (i) => (e) => {
     const file = e.target.files?.[0]; if (!file) return;
-    if (file.size > 3 * 1024 * 1024) { toast.error("حجم الصورة يتجاوز 3 ميجابايت"); return; }
+    if (file.size > 20 * 1024 * 1024) { toast.error("حجم الصورة يتجاوز 20 ميجابايت"); return; }
     const reader = new FileReader();
     reader.onload = () => { const c = [...regs]; c[i].photo = reader.result; setRegs(c); };
     reader.readAsDataURL(file);
@@ -99,13 +115,30 @@ export default function PackageDetail() {
   const book = async () => {
     setBusy(true);
     try {
-      await api.post("/bookings", {
+      const { data: created } = await api.post("/bookings", {
         package_id: id,
         room_type: selectedRoom || undefined,
         registrants: regs.map((r) => ({ name: r.name, passport_no: r.passport_no, age: Number(r.age), category: r.category, photo: r.photo || undefined })),
         ref: localStorage.getItem("meraaj_ref") || undefined,
       });
       toast.success("تم إنشاء الحجز وتجميد الرصيد بنجاح");
+      // Upload staged traveler documents to the new booking (with progress)
+      const staged = regs.flatMap((r, i) => (r.docs || []).map((d) => ({ ...d, registrant_index: i, passport_no: r.passport_no })));
+      if (staged.length) {
+        setProgress({ done: 0, total: staged.length });
+        for (let k = 0; k < staged.length; k++) {
+          const d = staged[k];
+          try {
+            await api.post(`/bookings/${created.id}/documents`, {
+              registrant_index: d.registrant_index, doc_type: d.doc_type, filename: d.filename,
+              content_base64: d.content_base64, passport_no: d.doc_type === "passport" ? (d.passport_no || undefined) : undefined,
+            });
+          } catch { /* skip a failed file, continue */ }
+          setProgress({ done: k + 1, total: staged.length });
+        }
+        toast.success(`تم رفع ${staged.length} مستنداً للحجز`);
+      }
+      setProgress(null);
       setOpen(false);
       navigate("/bookings");
     } catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
@@ -321,6 +354,34 @@ export default function PackageDetail() {
                             </div>
                           )}
                         </div>
+
+                        <div className="mt-3 border-t pt-3">
+                          <Label className="mb-1.5 block text-xs flex items-center gap-1"><Paperclip className="w-3.5 h-3.5" /> مستندات المسافر (جواز/تأشيرة/تذكرة… عدة ملفات)</Label>
+                          {(r.docs || []).length > 0 && (
+                            <div className="space-y-1 mb-2">
+                              {r.docs.map((d, di) => (
+                                <div key={di} className="flex items-center justify-between bg-[#F4F6F8] rounded-md px-2 py-1.5 text-[11px]" data-testid={`stage-doc-${i}-${di}`}>
+                                  <span className="flex items-center gap-2 min-w-0">
+                                    <span className="font-semibold shrink-0">{docLabel(d.doc_type)}</span>
+                                    {d.content_base64?.startsWith("data:image") && <img alt="" src={d.content_base64} className="w-6 h-6 rounded object-cover shrink-0" />}
+                                    <span className="text-muted-foreground truncate">{d.filename}</span>
+                                  </span>
+                                  <button type="button" onClick={() => rmDoc(i, di)} className="text-red-500 shrink-0" data-testid={`stage-doc-remove-${i}-${di}`}><X className="w-3.5 h-3.5" /></button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <div className="flex items-center gap-2">
+                            <select value={docType[i] || "passport"} onChange={(e) => setDocType({ ...docType, [i]: e.target.value })}
+                                    data-testid={`stage-doc-type-${i}`} className="h-8 rounded-md border border-input bg-transparent px-2 text-xs">
+                              {DOC_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                            </select>
+                            <label className="inline-flex items-center gap-1.5 text-xs bg-white border border-[#0A2540] text-[#0A2540] rounded-md px-3 h-8 cursor-pointer hover:bg-[#0A2540]/5" data-testid={`stage-doc-add-${i}`}>
+                              <Plus className="w-3.5 h-3.5" /> إضافة ملفات
+                              <input type="file" multiple className="hidden" accept="image/png,image/jpeg,image/webp,application/pdf" onChange={stageDocs(i)} />
+                            </label>
+                          </div>
+                        </div>
                       </div>
                     ))}
                     <div className="flex flex-wrap gap-2">
@@ -345,7 +406,7 @@ export default function PackageDetail() {
                   <DialogFooter>
                     <Button data-testid="confirm-booking-btn" onClick={book} disabled={busy || regs.some((r) => !r.name || !r.passport_no || !r.age)}
                             className="w-full h-11 bg-[#0A2540] hover:bg-[#061A2E]">
-                      {busy ? "جارٍ الحجز..." : `تأكيد الحجز — ${money(required, pkg.currency)}`}
+                      {progress ? `جارٍ رفع المستندات ${progress.done}/${progress.total}...` : busy ? "جارٍ الحجز..." : `تأكيد الحجز — ${money(required, pkg.currency)}`}
                     </Button>
                   </DialogFooter>
                 </DialogContent>

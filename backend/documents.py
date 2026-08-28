@@ -14,7 +14,7 @@ from integration import notify_rahal
 
 router = APIRouter(prefix="/api", tags=["documents"])
 
-DOC_TYPES = {"passport", "visa", "photo", "other"}
+DOC_TYPES = {"passport", "visa", "photo", "ticket", "other"}
 
 
 async def _booking_party(booking_id: str, user: dict) -> dict:
@@ -43,6 +43,7 @@ async def _notify_docs(b: dict):
     for d in docs:
         by_idx.setdefault(d["registrant_index"], []).append({
             "doc_type": d["doc_type"], "file_ref": str(d["_id"]),
+            "passport_no": d.get("passport_no"),
             "filename": d["filename"], "download_ref": f"/api/documents/{d['_id']}/download"})
     registrants = [{"index": i, "documents": by_idx.get(i, [])}
                    for i in range(len(b.get("registrants", [])))]
@@ -58,6 +59,7 @@ class DocIn(BaseModel):
     doc_type: str
     filename: str
     content_base64: str
+    passport_no: Optional[str] = None
 
 
 @router.post("/bookings/{booking_id}/documents")
@@ -84,6 +86,7 @@ async def upload_document(booking_id: str, payload: DocIn, user: dict = Depends(
         "registrant_index": payload.registrant_index,
         "registrant_name": regs[payload.registrant_index].get("name"),
         "doc_type": payload.doc_type, "filename": payload.filename,
+        "passport_no": payload.passport_no,
         "object_key": key, "mime": ct, "size": len(raw),
         "tenant_office_id": b.get("seller_id"), "buyer_id": b.get("buyer_id"),
         "uploaded_by": str(user["_id"]), "created_at": now_iso(),
