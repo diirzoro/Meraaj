@@ -7,7 +7,8 @@ import { toast } from "sonner";
 
 export const DOC_TYPES = [["passport", "جواز السفر"], ["visa", "التأشيرة"], ["photo", "صورة"], ["ticket", "تذكرة السفر"], ["other", "أخرى"]];
 export const docLabel = (t) => (DOC_TYPES.find((x) => x[0] === t) || [null, t])[1];
-const MAX_MB = 20;
+const MAX_FILE = 10 * 1024 * 1024;
+const MAX_BATCH = 20 * 1024 * 1024;
 const API = process.env.REACT_APP_BACKEND_URL + "/api";
 const isPdf = (m, n) => m === "application/pdf" || /\.pdf$/i.test(n || "");
 
@@ -25,16 +26,20 @@ export default function TravelerDocs({ bookingId, registrantIndex, passportNo })
     const files = Array.from(e.target.files || []);
     e.target.value = "";
     if (!files.length) return;
+    const big = files.find((f) => f.size > MAX_FILE);
+    if (big) { toast.error(`${big.name}: يتجاوز 10 ميجابايت للملف الواحد`); return; }
+    const total = files.reduce((s, f) => s + f.size, 0);
+    if (total > MAX_BATCH) { toast.error("إجمالي حجم الملفات يجب ألا يتجاوز 20MB"); return; }
     setBusy(true);
     try {
       for (const file of files) {
-        if (file.size > MAX_MB * 1024 * 1024) { toast.error(`${file.name}: يتجاوز ${MAX_MB} ميجابايت`); continue; }
         const b64 = await new Promise((res, rej) => {
           const rd = new FileReader(); rd.onload = () => res(rd.result); rd.onerror = rej; rd.readAsDataURL(file);
         });
         await api.post(`/bookings/${bookingId}/documents`, {
           registrant_index: registrantIndex, doc_type: docType, filename: file.name,
-          content_base64: b64, passport_no: docType === "passport" ? (passportNo || undefined) : undefined,
+          content_base64: b64, batch_total_bytes: total,
+          passport_no: docType === "passport" ? (passportNo || undefined) : undefined,
         });
       }
       toast.success("تم رفع الملفات");

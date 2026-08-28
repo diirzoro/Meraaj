@@ -56,19 +56,21 @@ export default function PackageDetail() {
   const stageDocs = (i) => async (e) => {
     const files = Array.from(e.target.files || []); e.target.value = "";
     if (!files.length) return;
+    const big = files.find((f) => f.size > 10 * 1024 * 1024);
+    if (big) { toast.error(`${big.name}: يتجاوز 10 ميجابايت للملف الواحد`); return; }
+    if (files.reduce((s, f) => s + f.size, 0) > 20 * 1024 * 1024) { toast.error("إجمالي حجم الملفات يجب ألا يتجاوز 20MB"); return; }
     const dt = docType[i] || "passport";
     const added = [];
     for (const file of files) {
-      if (file.size > 20 * 1024 * 1024) { toast.error(`${file.name}: يتجاوز 20 ميجابايت`); continue; }
       const b64 = await new Promise((res, rej) => { const rd = new FileReader(); rd.onload = () => res(rd.result); rd.onerror = rej; rd.readAsDataURL(file); });
-      added.push({ doc_type: dt, filename: file.name, content_base64: b64 });
+      added.push({ doc_type: dt, filename: file.name, content_base64: b64, size: file.size });
     }
     const c = [...regs]; c[i].docs = [...(c[i].docs || []), ...added]; setRegs(c);
   };
   const rmDoc = (i, di) => { const c = [...regs]; c[i].docs = c[i].docs.filter((_, x) => x !== di); setRegs(c); };
   const onPhoto = (i) => (e) => {
     const file = e.target.files?.[0]; if (!file) return;
-    if (file.size > 20 * 1024 * 1024) { toast.error("حجم الصورة يتجاوز 20 ميجابايت"); return; }
+    if (file.size > 10 * 1024 * 1024) { toast.error("حجم الصورة يتجاوز 10 ميجابايت"); return; }
     const reader = new FileReader();
     reader.onload = () => { const c = [...regs]; c[i].photo = reader.result; setRegs(c); };
     reader.readAsDataURL(file);
