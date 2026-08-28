@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import api, { apiError } from "@/lib/api";
 import { PageHeader } from "@/components/Layout";
 import { money, equiv, fmtDate } from "@/lib/format";
@@ -60,7 +60,7 @@ export default function WalletPage() {
       </div>
 
       <div className="bg-white rounded-2xl border card-shadow overflow-x-auto">
-        {tab === "txns" && <SimpleTable rows={txns} cols={[["description", "الوصف"], ["amount", "المبلغ", true], ["created_at", "التاريخ", false, true]]} empty="لا توجد حركات" />}
+        {tab === "txns" && <LedgerTable rows={txns} />}
         {tab === "topups" && <SimpleTable rows={topups} cols={[["amount", "المبلغ", true], ["method", "الطريقة"], ["status", "الحالة", false, false, true], ["created_at", "التاريخ", false, true]]} empty="لا توجد طلبات شحن" />}
         {tab === "transfers" && <SimpleTable rows={transfers} cols={[["to_office_name", "إلى/من"], ["amount", "المبلغ", true], ["status", "الحالة", false, false, true], ["created_at", "التاريخ", false, true]]} empty="لا توجد تحويلات" />}
         {tab === "withdrawals" && <SimpleTable rows={withdrawals} cols={[["amount", "المبلغ", true], ["method", "الطريقة"], ["status", "الحالة", false, false, true], ["created_at", "التاريخ", false, true]]} empty="لا توجد سحوبات" />}
@@ -107,6 +107,74 @@ function SimpleTable({ rows, cols, empty }) {
         ))}
       </tbody>
     </table>
+  );
+}
+
+const r2 = (x) => Math.round((Number(x) || 0) * 100) / 100;
+
+// Account statement (كشف الحساب): Date | Statement | Ref | Debit | Credit | Running balance | Currency.
+function LedgerTable({ rows }) {
+  const [ccy, setCcy] = useState("all");
+  const [q, setQ] = useState("");
+
+  const enriched = useMemo(() => {
+    const asc = [...(rows || [])].reverse(); // rows come newest-first → chronological
+    const bal = { SAR: 0, USD: 0 };
+    const out = asc.map((r) => {
+      const c = r.currency === "SAR" ? "SAR" : "USD";
+      bal[c] = r2(bal[c] + Number(r.amount || 0));
+      return { ...r, running: bal[c] };
+    });
+    return out.reverse(); // back to newest-first for display
+  }, [rows]);
+
+  let view = enriched;
+  if (ccy !== "all") view = view.filter((r) => (r.currency === "SAR" ? "SAR" : "USD") === ccy);
+  if (q.trim()) view = view.filter((r) => (r.description || "").includes(q.trim()));
+
+  return (
+    <div>
+      <div className="flex flex-col sm:flex-row gap-3 p-4 border-b bg-[#FAFBFC]">
+        <select data-testid="ledger-currency" value={ccy} onChange={(e) => setCcy(e.target.value)}
+          className="h-9 rounded-md border border-input bg-white px-3 text-sm sm:w-48">
+          <option value="all">كل العملات</option>
+          <option value="SAR">ريال سعودي (SAR)</option>
+          <option value="USD">دولار أمريكي (USD)</option>
+        </select>
+        <Input data-testid="ledger-search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="بحث في البيان" className="sm:w-64" />
+      </div>
+      {view.length === 0 ? (
+        <div className="p-10 text-center text-muted-foreground text-sm">لا توجد حركات</div>
+      ) : (
+        <table className="w-full text-sm min-w-[720px]" data-testid="ledger-table">
+          <thead className="text-muted-foreground text-xs border-b">
+            <tr>
+              <th className="text-start px-5 py-3 font-medium">التاريخ</th>
+              <th className="text-start px-5 py-3 font-medium">البيان</th>
+              <th className="text-start px-5 py-3 font-medium">المرجع</th>
+              <th className="text-start px-5 py-3 font-medium">مدين</th>
+              <th className="text-start px-5 py-3 font-medium">دائن</th>
+              <th className="text-start px-5 py-3 font-medium">الرصيد الجاري</th>
+            </tr>
+          </thead>
+          <tbody>
+            {view.map((r, i) => {
+              const amt = Number(r.amount || 0);
+              return (
+                <tr key={r.id || i} className="border-b last:border-0" data-testid={`ledger-row-${i}`}>
+                  <td className="px-5 py-3 text-muted-foreground text-xs whitespace-nowrap">{fmtDate(r.created_at)}</td>
+                  <td className="px-5 py-3">{r.description}</td>
+                  <td className="px-5 py-3 text-muted-foreground text-xs font-mono">{r.ref ? `#${String(r.ref).slice(-6)}` : "—"}</td>
+                  <td className="px-5 py-3 tabular font-semibold text-red-600">{amt < 0 ? money(Math.abs(amt), r.currency) : "—"}</td>
+                  <td className="px-5 py-3 tabular font-semibold text-[#15803D]">{amt > 0 ? money(amt, r.currency) : "—"}</td>
+                  <td className="px-5 py-3 tabular font-bold text-[#0A2540]">{money(r.running, r.currency)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }
 

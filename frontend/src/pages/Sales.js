@@ -2,18 +2,20 @@ import { useEffect, useState } from "react";
 import api, { apiError } from "@/lib/api";
 import { PageHeader } from "@/components/Layout";
 import { money, fmtDate } from "@/lib/format";
-import StatusBadge from "@/components/StatusBadge";
+import StatusBadge, { ApprovalBadge, CancellationBadge } from "@/components/StatusBadge";
+import Timeline from "@/components/Timeline";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
-import { Stamp, Plane, CheckCircle2, Banknote } from "lucide-react";
+import { Stamp, Plane, CheckCircle2, Banknote, History } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Sales() {
   const [items, setItems] = useState([]);
+  const [tl, setTl] = useState(null);
   const load = () => api.get("/bookings?role=seller").then((r) => setItems(r.data));
   useEffect(() => { load(); }, []);
 
@@ -40,7 +42,11 @@ export default function Sales() {
                   <div className="font-head font-bold text-[#0A2540]">{b.package_title}</div>
                   <div className="text-xs text-muted-foreground mt-1">المشتري: {b.buyer_office_name} • انطلاق {fmtDate(b.departure_date)}</div>
                 </div>
-                <StatusBadge status={b.status} />
+                <div className="flex flex-wrap gap-2 justify-end">
+                  {b.approval_status && b.approval_status !== "approved" && <ApprovalBadge status={b.approval_status} />}
+                  <StatusBadge status={b.status} />
+                  {b.cancellation_status && b.cancellation_status !== "none" && <CancellationBadge status={b.cancellation_status} />}
+                </div>
               </div>
 
               <div className="grid sm:grid-cols-3 gap-3 mt-4 text-sm">
@@ -50,7 +56,10 @@ export default function Sales() {
               </div>
 
               <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t">
-                {b.status === "blue" && <IssueVisasDialog booking={b} onDone={load} />}
+                <Button variant="outline" size="sm" onClick={() => setTl(b)} data-testid={`sale-timeline-btn-${b.id}`}>
+                  <History className="w-4 h-4" /> السجل الزمني
+                </Button>
+                {b.status === "blue" && b.approval_status !== "pending" && <IssueVisasDialog booking={b} onDone={load} />}
                 {b.status === "yellow" && (
                   <Button size="sm" className="bg-[#15803D] hover:bg-[#166534]" onClick={() => dispatch(b)} data-testid={`dispatch-${b.id}`}>
                     <Plane className="w-4 h-4 rtl:rotate-180" /> تم التفويج
@@ -69,7 +78,21 @@ export default function Sales() {
           ))}
         </div>
       )}
+
+      <TimelineDialog booking={tl} onClose={() => setTl(null)} />
     </>
+  );
+}
+
+function TimelineDialog({ booking, onClose }) {
+  if (!booking) return null;
+  return (
+    <Dialog open={!!booking} onOpenChange={onClose}>
+      <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto" dir="rtl" data-testid="sale-timeline-dialog">
+        <DialogHeader><DialogTitle className="font-head text-[#0A2540]">السجل الزمني للحجز</DialogTitle></DialogHeader>
+        <Timeline bookingId={booking.id} />
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import {
   LayoutDashboard, Store, Package, ShoppingBag, TicketCheck, Wallet,
-  Users, Banknote, ShieldAlert, LogOut, Building2, Network, Menu, X, TrendingUp,
+  Users, Banknote, ShieldAlert, LogOut, Building2, Network, Menu, X, TrendingUp, Ban,
 } from "lucide-react";
 
 const officeNav = [
@@ -27,6 +27,7 @@ const adminNav = [
   { to: "/admin", label: "لوحة المؤشرات", icon: LayoutDashboard },
   { to: "/admin/finance", label: "المركز المالي", icon: Banknote },
   { to: "/admin/offices", label: "إدارة المكاتب", icon: Users },
+  { to: "/admin/cancellations", label: "طلبات الإلغاء", icon: Ban },
   { to: "/admin/disputes", label: "النزاعات", icon: ShieldAlert },
 ];
 

@@ -21,6 +21,50 @@ export const STATUS = {
 
 export const PKG_TYPE = { umrah: "عمرة", tourism: "سياحة" };
 
+// Enterprise P2P approval lifecycle (rahal bookings)
+export const APPROVAL = {
+  pending: { label: "بانتظار موافقة البائع", cls: "bg-[#FEFCE8] text-[#A16207] border-[#FEF08A]" },
+  approved: { label: "معتمد", cls: "bg-[#F0FDF4] text-[#15803D] border-[#BBF7D0]" },
+  rejected: { label: "مرفوض", cls: "bg-red-50 text-red-600 border-red-200" },
+  expired: { label: "منتهي المهلة", cls: "bg-gray-100 text-gray-500 border-gray-200" },
+};
+
+export const CANCELLATION = {
+  requested: { label: "طلب إلغاء قيد المراجعة", cls: "bg-[#FEF2F2] text-[#B91C1C] border-[#FECACA]" },
+  withdrawn: { label: "طلب مسحوب", cls: "bg-gray-100 text-gray-500 border-gray-200" },
+  decided: { label: "أُلغي بقرار الإدارة", cls: "bg-gray-100 text-gray-500 border-gray-200" },
+  rejected: { label: "رُفض الإلغاء (نشط)", cls: "bg-[#F0FDF4] text-[#15803D] border-[#BBF7D0]" },
+  expired: { label: "منتهي", cls: "bg-gray-100 text-gray-500 border-gray-200" },
+};
+
+// Audit-trail event codes → Arabic (fallback to raw code)
+export const EVENT_LABELS = {
+  booking_created: "تم إنشاء الحجز",
+  booking_requested: "تم إرسال طلب الحجز (بانتظار الموافقة)",
+  seller_approved: "وافق صاحب الباكيج على الحجز",
+  seller_rejected: "رفض صاحب الباكيج الحجز",
+  buyer_withdrew: "سحب المشتري الطلب",
+  cancellation_requested: "طلب إلغاء من المشتري",
+  rahal_position: "استلام موقف صاحب الباكيج بشأن الإلغاء",
+  cancellation_cancelled: "قرار الإدارة: إلغاء الحجز وتسوية المبالغ",
+  cancellation_kept: "قرار الإدارة: إبقاء الحجز نشطاً",
+  auto_expired: "انتهت مهلة الموافقة تلقائياً",
+};
+
+export const ACTOR_LABELS = {
+  buyer: "المشتري", seller: "البائع", rahal_owner: "صاحب الباكيج",
+  super_admin: "الإدارة", system: "النظام",
+};
+
+export const fmtDateTime = (s) => {
+  if (!s) return "-";
+  try {
+    return new Date(s).toLocaleString("ar-EG", {
+      year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+    });
+  } catch { return s; }
+};
+
 // Rahal sends room_pricing[].customer as an object {adult, child, infant}.
 // Manual (Meraaj) programs store it as a plain number (adult only). Support both.
 export const roomCustomer = (customer, cat = "adult") => {

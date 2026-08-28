@@ -23,6 +23,7 @@ import EmbedMarket from "@/pages/EmbedMarket";
 import AdminDashboard from "@/pages/admin/AdminDashboard";
 import AdminFinance from "@/pages/admin/AdminFinance";
 import AdminOffices from "@/pages/admin/AdminOffices";
+import AdminCancellations from "@/pages/admin/AdminCancellations";
 import AdminDisputes from "@/pages/admin/AdminDisputes";
 
 function Loader() {
@@ -81,6 +82,7 @@ function AppRoutes() {
       <Route path="/admin" element={<Protected role="admin"><AdminDashboard /></Protected>} />
       <Route path="/admin/finance" element={<Protected role="admin"><AdminFinance /></Protected>} />
       <Route path="/admin/offices" element={<Protected role="admin"><AdminOffices /></Protected>} />
+      <Route path="/admin/cancellations" element={<Protected role="admin"><AdminCancellations /></Protected>} />
       <Route path="/admin/disputes" element={<Protected role="admin"><AdminDisputes /></Protected>} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
