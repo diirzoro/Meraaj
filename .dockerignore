@@ -1,0 +1,11 @@
+.git
+.gitignore
+.emergent
+memory
+test_reports
+tests
+backend/tests
+frontend/node_modules
+frontend/build
+frontend/.env
+.env

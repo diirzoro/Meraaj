@@ -41,6 +41,13 @@ export function AuthProvider({ children }) {
     return data.user;
   };
 
+  const rahalPasswordLogin = async (email, password) => {
+    const { data } = await api.post("/integrations/rahal/sso/password", { email, password });
+    setToken(data.access_token);
+    setUser(data.user);
+    return data.user;
+  };
+
   const logout = async () => {
     try { await api.post("/auth/logout"); } catch {}
     setToken(null);
@@ -53,7 +60,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, ssoLogin, logout, refreshUser }}>
+    <AuthContext.Provider value={{ user, loading, login, register, ssoLogin, rahalPasswordLogin, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );

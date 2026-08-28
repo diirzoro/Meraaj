@@ -6,7 +6,6 @@ import { RESUME_KEY } from "@/config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -16,7 +15,7 @@ import { toast } from "sonner";
 const RAHAL_SSO_URL = process.env.REACT_APP_RAHAL_SSO_URL || "";
 
 export default function Login() {
-  const { login, ssoLogin } = useAuth();
+  const { login, ssoLogin, rahalPasswordLogin } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -158,31 +157,57 @@ export default function Login() {
         </form>
       </div>
 
-      <RahalTokenDialog open={rahalOpen} onOpenChange={setRahalOpen} onExchange={exchangeRahal} />
+      <RahalLoginDialog open={rahalOpen} onOpenChange={setRahalOpen} onLogin={async (email, password) => {
+        const u = await rahalPasswordLogin(email, password);
+        toast.success("تم الدخول عبر حساب رحّال");
+        goAfterAuth(u);
+        return u;
+      }} />
     </div>
   );
 }
 
-function RahalTokenDialog({ open, onOpenChange, onExchange }) {
-  const [token, setToken] = useState("");
+function RahalLoginDialog({ open, onOpenChange, onLogin }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
-  const submit = async () => {
+
+  const submit = async (e) => {
+    e?.preventDefault?.();
     setBusy(true);
-    try { await onExchange(token.trim()); onOpenChange(false); }
-    catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
+    try {
+      await onLogin(email.trim(), password);
+      onOpenChange(false);
+      setPassword("");
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setBusy(false);
+    }
   };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent dir="rtl" data-testid="rahal-token-dialog">
-        <DialogHeader><DialogTitle className="font-head text-[#0A2540]">الدخول بحساب رحّال</DialogTitle></DialogHeader>
-        <p className="text-sm text-muted-foreground -mt-2">الصق رمز الدخول الصادر من نظام رحّال للمتابعة.</p>
-        <Label className="mb-1 block">رمز الدخول (Token)</Label>
-        <Textarea data-testid="rahal-token-input" value={token} onChange={(e) => setToken(e.target.value)} rows={4} placeholder="eyJhbGciOiJI..." />
-        <DialogFooter>
-          <Button className="bg-[#0A2540] hover:bg-[#061A2E]" onClick={submit} disabled={busy || !token.trim()} data-testid="rahal-token-submit">
-            {busy ? "جارٍ التحقق..." : "متابعة"}
-          </Button>
-        </DialogFooter>
+      <DialogContent dir="rtl" data-testid="rahal-login-dialog">
+        <DialogHeader>
+          <DialogTitle className="font-head text-[#0A2540]">الدخول بحساب رحّال</DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground -mt-2">استخدم نفس البريد الإلكتروني وكلمة المرور المسجلين في رحّال. يتم إنشاء رمز الدخول الآمن تلقائياً في الخلفية ولن تحتاج لنسخ أي Token.</p>
+        <form onSubmit={submit} className="space-y-4">
+          <div>
+            <Label className="mb-1.5 block">البريد الإلكتروني في رحّال</Label>
+            <Input data-testid="rahal-email-input" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="office@example.com" required />
+          </div>
+          <div>
+            <Label className="mb-1.5 block">كلمة المرور</Label>
+            <Input data-testid="rahal-password-input" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required />
+          </div>
+          <DialogFooter>
+            <Button type="submit" className="bg-[#0A2540] hover:bg-[#061A2E]" disabled={busy || !email.trim() || !password} data-testid="rahal-login-submit">
+              {busy ? "جارٍ التحقق..." : "دخول آمن عبر رحّال"}
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
