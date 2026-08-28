@@ -12,8 +12,9 @@ from db import (db, serialize, oid, now_iso, adjust_wallet, log_txn,
                 platform_pct, cancel_fee_pct, marketer_pct, log_platform_revenue,
                 plan_debit, wallet_available, CurrencyField,
                 approval_timeout_hours, iso_in_hours, audit)
-from security import get_current_user, get_optional_user, require_office, require_buyer
-from integration import notify_rahal, refund_and_release
+from security import (get_current_user, get_optional_user, require_office,
+                      require_buyer, require_permission)
+from integration import notify_rahal, refund_and_release, apply_approval_financials
 
 router = APIRouter(prefix="/api", tags=["market"])
 
@@ -81,7 +82,7 @@ class PackageInput(BaseModel):
 
 
 @router.post("/packages")
-async def create_package(payload: PackageInput, user: dict = Depends(require_office)):
+async def create_package(payload: PackageInput, user: dict = Depends(require_permission("manage_packages"))):
     doc = payload.model_dump()
     doc.update({
         "seller_id": str(user["_id"]),
@@ -228,7 +229,7 @@ async def list_packages(type: Optional[str] = None, q: Optional[str] = None,
 
 
 @router.get("/packages/mine")
-async def my_packages(user: dict = Depends(require_office)):
+async def my_packages(user: dict = Depends(require_permission("manage_packages"))):
     docs = await db.packages.find({"seller_id": str(user["_id"])}).sort("created_at", -1).to_list(500)
     return serialize(docs)
 
@@ -242,7 +243,7 @@ async def get_package(pkg_id: str, user=Depends(get_optional_user)):
 
 
 @router.patch("/packages/{pkg_id}/toggle")
-async def toggle_package(pkg_id: str, user: dict = Depends(require_office)):
+async def toggle_package(pkg_id: str, user: dict = Depends(require_permission("manage_packages"))):
     pkg = await db.packages.find_one({"_id": oid(pkg_id), "seller_id": str(user["_id"])})
     if not pkg:
         raise HTTPException(404, "البرنامج غير موجود")
@@ -257,7 +258,7 @@ async def toggle_package(pkg_id: str, user: dict = Depends(require_office)):
 
 
 @router.put("/packages/{pkg_id}")
-async def update_package(pkg_id: str, payload: PackageInput, user: dict = Depends(require_office)):
+async def update_package(pkg_id: str, payload: PackageInput, user: dict = Depends(require_permission("manage_packages"))):
     """Edit a manually-added office program. Rahal-sourced programs stay under Rahal control."""
     pkg = await db.packages.find_one({"_id": oid(pkg_id), "seller_id": str(user["_id"])})
     if not pkg:
@@ -297,7 +298,7 @@ async def update_package(pkg_id: str, payload: PackageInput, user: dict = Depend
 
 
 @router.delete("/packages/{pkg_id}")
-async def delete_package(pkg_id: str, user: dict = Depends(require_office)):
+async def delete_package(pkg_id: str, user: dict = Depends(require_permission("manage_packages"))):
     """Delete a manual program ONLY when it has no active bookings (blue/yellow/green)."""
     pkg = await db.packages.find_one({"_id": oid(pkg_id), "seller_id": str(user["_id"])})
     if not pkg:
@@ -314,7 +315,7 @@ async def delete_package(pkg_id: str, user: dict = Depends(require_office)):
 
 
 @router.get("/packages/{pkg_id}/registrants")
-async def package_registrants(pkg_id: str, user: dict = Depends(require_office)):
+async def package_registrants(pkg_id: str, user: dict = Depends(require_permission("manage_packages"))):
     """Bookings (with color status + registrants) for one of the seller's own programs."""
     pkg = await db.packages.find_one({"_id": oid(pkg_id), "seller_id": str(user["_id"])})
     if not pkg:
@@ -666,12 +667,71 @@ async def booking_timeline(booking_id: str, user: dict = Depends(require_buyer))
     return serialize(events)
 
 
+class RejectInput(BaseModel):
+    reason: str = ""
+
+
+@router.post("/bookings/{booking_id}/approve")
+async def approve_booking(booking_id: str, user: dict = Depends(require_permission("approve_reject"))):
+    """Seller (Rahal-linked office) approves a pending booking request for THEIR package.
+    Establishes deferred escrow/revenue exactly like the Rahal webhook path. Ownership-scoped."""
+    b = await db.bookings.find_one({"_id": oid(booking_id)})
+    if not b or b["seller_id"] != str(user["_id"]):
+        raise HTTPException(404, "الحجز غير موجود")
+    if b.get("approval_status") != "pending":
+        raise HTTPException(400, "لا يوجد طلب حجز قيد الموافقة على هذا الحجز")
+    claimed = await db.bookings.find_one_and_update(
+        {"_id": b["_id"], "approval_status": "pending"},
+        {"$set": {"approval_status": "approved", "approved_at": now_iso()}})
+    if not claimed:
+        raise HTTPException(409, "تم تحديث حالة الطلب بالفعل")
+    await apply_approval_financials(claimed)
+    await audit(booking_id, "seller_approved", "seller", actor_id=str(user["_id"]))
+    if claimed.get("rahal_ref"):
+        await notify_rahal("meraaj.booking.approved", {}, envelope={
+            "id": str(uuid.uuid4()), "type": "meraaj.booking.approved",
+            "timestamp": int(time.time()),
+            "data": {"package_ref": claimed["rahal_ref"], "booking_ref": booking_id,
+                     "decided_by": f"office:{user['_id']}"}})
+    return {"ok": True, "approval_status": "approved"}
+
+
+@router.post("/bookings/{booking_id}/reject")
+async def reject_booking(booking_id: str, payload: Optional[Dict] = Body(default=None),
+                         user: dict = Depends(require_permission("approve_reject"))):
+    """Seller rejects a pending request: full unwind of the buyer's hold (exact debit split),
+    releases seats + passports. Ownership-scoped."""
+    reason = (payload or {}).get("reason", "") if payload else ""
+    b = await db.bookings.find_one({"_id": oid(booking_id)})
+    if not b or b["seller_id"] != str(user["_id"]):
+        raise HTTPException(404, "الحجز غير موجود")
+    if b.get("approval_status") != "pending":
+        raise HTTPException(400, "لا يوجد طلب حجز قيد الموافقة على هذا الحجز")
+    claimed = await db.bookings.find_one_and_update(
+        {"_id": b["_id"], "approval_status": "pending"},
+        {"$set": {"approval_status": "rejected", "status": "cancelled",
+                  "rejected_at": now_iso(), "rejection_reason": reason,
+                  "cancellation_status": "none",
+                  "cancellation": {"type": "seller_rejected", "reason": reason}}})
+    if not claimed:
+        raise HTTPException(409, "تم تحديث حالة الطلب بالفعل")
+    await refund_and_release(claimed)
+    await audit(booking_id, "seller_rejected", "seller", actor_id=str(user["_id"]), reason=reason)
+    if claimed.get("rahal_ref"):
+        await notify_rahal("meraaj.booking.rejected", {}, envelope={
+            "id": str(uuid.uuid4()), "type": "meraaj.booking.rejected",
+            "timestamp": int(time.time()),
+            "data": {"package_ref": claimed["rahal_ref"], "booking_ref": booking_id,
+                     "reason": reason, "decided_by": f"office:{user['_id']}"}})
+    return {"ok": True, "approval_status": "rejected", "refund": claimed.get("amount_charged", 0)}
+
+
 class VisaInput(BaseModel):
     visas: List[dict]  # [{index, visa_no, visa_file?}]
 
 
 @router.post("/bookings/{booking_id}/issue-visas")
-async def issue_visas(booking_id: str, payload: VisaInput, user: dict = Depends(require_office)):
+async def issue_visas(booking_id: str, payload: VisaInput, user: dict = Depends(require_permission("manage_bookings"))):
     b = await db.bookings.find_one({"_id": oid(booking_id)})
     if not b or b["seller_id"] != str(user["_id"]):
         raise HTTPException(404, "الحجز غير موجود")
@@ -695,7 +755,7 @@ async def issue_visas(booking_id: str, payload: VisaInput, user: dict = Depends(
 
 
 @router.post("/bookings/{booking_id}/dispatch")
-async def dispatch_booking(booking_id: str, user: dict = Depends(require_office)):
+async def dispatch_booking(booking_id: str, user: dict = Depends(require_permission("manage_bookings"))):
     b = await db.bookings.find_one({"_id": oid(booking_id)})
     if not b or b["seller_id"] != str(user["_id"]):
         raise HTTPException(404, "الحجز غير موجود")
@@ -707,7 +767,7 @@ async def dispatch_booking(booking_id: str, user: dict = Depends(require_office)
 
 
 @router.post("/bookings/{booking_id}/settle")
-async def settle_booking(booking_id: str, user: dict = Depends(require_office)):
+async def settle_booking(booking_id: str, user: dict = Depends(require_permission("manage_bookings"))):
     """Release escrow to seller available after 24h grace with no dispute."""
     b = await db.bookings.find_one({"_id": oid(booking_id)})
     if not b or b["seller_id"] != str(user["_id"]):
@@ -826,7 +886,7 @@ class DeductionInput(BaseModel):
 
 
 @router.post("/bookings/{booking_id}/cancel-offer")
-async def cancel_offer(booking_id: str, payload: DeductionInput, user: dict = Depends(require_office)):
+async def cancel_offer(booking_id: str, payload: DeductionInput, user: dict = Depends(require_permission("can_refund"))):
     b = await db.bookings.find_one({"_id": oid(booking_id)})
     if not b or b["seller_id"] != str(user["_id"]):
         raise HTTPException(404, "الحجز غير موجود")

@@ -77,6 +77,30 @@ async def require_buyer(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
+# ---- Rahal-linked office permissions (server-side enforcement) ----
+RAHAL_PERMISSIONS = {"manage_packages", "manage_bookings", "approve_reject",
+                     "can_refund", "manage_settings"}
+
+
+def is_rahal_office(user: dict) -> bool:
+    return user.get("source") == "rahal" or bool(user.get("rahal_office_ref"))
+
+
+def require_permission(permission: str):
+    """Server-side gate for Rahal-linked offices. A normal Meraaj office is unrestricted
+    (backward compatible). A Rahal office with an explicit `rahal_permissions` set is
+    enforced strictly; a legacy Rahal office WITHOUT a set (auto-provisioned via share)
+    keeps full access until Rahal pushes its permissions."""
+    async def dep(user: dict = Depends(require_office)) -> dict:
+        if is_rahal_office(user):
+            perms = user.get("rahal_permissions")
+            if perms is not None and permission not in perms:
+                raise HTTPException(status_code=403,
+                                    detail="هذه العملية غير مصرّح بها لحساب مكتب رحّال الخاص بك")
+        return user
+    return dep
+
+
 async def get_optional_user(request: Request):
     try:
         return await get_current_user(request)

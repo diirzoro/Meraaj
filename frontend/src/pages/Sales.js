@@ -7,10 +7,11 @@ import Timeline from "@/components/Timeline";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
-import { Stamp, Plane, CheckCircle2, Banknote, History } from "lucide-react";
+import { Stamp, Plane, CheckCircle2, Banknote, History, Check, X } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Sales() {
@@ -18,6 +19,15 @@ export default function Sales() {
   const [tl, setTl] = useState(null);
   const load = () => api.get("/bookings?role=seller").then((r) => setItems(r.data));
   useEffect(() => { load(); }, []);
+
+  const approve = async (b) => {
+    try { await api.post(`/bookings/${b.id}/approve`); toast.success("تمت الموافقة على الحجز"); load(); }
+    catch (e) { toast.error(apiError(e)); }
+  };
+  const reject = async (b, reason) => {
+    try { const { data } = await api.post(`/bookings/${b.id}/reject`, { reason }); toast.success(`تم رفض الطلب واسترداد ${money(data.refund, b.currency)} للمشتري`); load(); }
+    catch (e) { toast.error(apiError(e)); }
+  };
 
   const dispatch = async (b) => {
     try { await api.post(`/bookings/${b.id}/dispatch`); toast.success("تم التفويج — بدأت فترة السماح 24 ساعة"); load(); }
@@ -59,6 +69,14 @@ export default function Sales() {
                 <Button variant="outline" size="sm" onClick={() => setTl(b)} data-testid={`sale-timeline-btn-${b.id}`}>
                   <History className="w-4 h-4" /> السجل الزمني
                 </Button>
+                {b.approval_status === "pending" && (
+                  <>
+                    <Button size="sm" className="bg-[#15803D] hover:bg-[#166534]" onClick={() => approve(b)} data-testid={`approve-${b.id}`}>
+                      <Check className="w-4 h-4" /> قبول الطلب
+                    </Button>
+                    <RejectDialog booking={b} onSubmit={reject} />
+                  </>
+                )}
                 {b.status === "blue" && b.approval_status !== "pending" && <IssueVisasDialog booking={b} onDone={load} />}
                 {b.status === "yellow" && (
                   <Button size="sm" className="bg-[#15803D] hover:bg-[#166534]" onClick={() => dispatch(b)} data-testid={`dispatch-${b.id}`}>
@@ -168,6 +186,28 @@ function CancelOfferDialog({ booking, onDone }) {
         <Input data-testid="deduction-input" type="number" value={deduction} onChange={(e) => setDeduction(e.target.value)} />
         <DialogFooter>
           <Button className="bg-[#0A2540] hover:bg-[#061A2E]" onClick={submit} disabled={!deduction} data-testid="submit-deduction-btn">إرسال العرض للمشتري</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function RejectDialog({ booking, onSubmit }) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="destructive" data-testid={`reject-${booking.id}`}><X className="w-4 h-4" /> رفض الطلب</Button>
+      </DialogTrigger>
+      <DialogContent dir="rtl">
+        <DialogHeader><DialogTitle className="font-head text-[#0A2540]">رفض طلب الحجز</DialogTitle></DialogHeader>
+        <p className="text-sm text-muted-foreground -mt-2">سيُسترد كامل المبلغ المحجوز للمشتري وتُحرَّر المقاعد.</p>
+        <Label className="mb-1 block">سبب الرفض (اختياري)</Label>
+        <Textarea data-testid="reject-reason" value={reason} onChange={(e) => setReason(e.target.value)} rows={3} />
+        <DialogFooter>
+          <Button variant="destructive" data-testid={`submit-reject-${booking.id}`}
+                  onClick={() => { onSubmit(booking, reason); setOpen(false); }}>تأكيد الرفض</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -14,7 +14,7 @@ import httpx
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Request, Header, Depends
 from db import db, serialize, oid, now_iso, adjust_wallet, log_txn, log_platform_revenue, audit
-from security import create_access_token, require_admin
+from security import create_access_token, require_admin, RAHAL_PERMISSIONS
 
 def _empty_wallet():
     from db import empty_wallet
@@ -584,6 +584,76 @@ async def rahal_webhook(request: Request, x_rahal_signature: str = Header(defaul
     return {"received": True, "event": etype, "handled": handled, "matched_count": matched_count}
 
 
+def _norm_perms(raw):
+    """Normalize an incoming permission set (list OR {perm: true} map) to the allowed set."""
+    if isinstance(raw, dict):
+        raw = [k for k, v in raw.items() if v]
+    if not isinstance(raw, list):
+        return []
+    return sorted({str(p) for p in raw if str(p) in RAHAL_PERMISSIONS})
+
+
+@router.post("/offices/link")
+async def link_office(request: Request,
+                      x_rahal_api_key: str = Header(default=""),
+                      x_rahal_signature: str = Header(default=""),
+                      x_meraaj_signature: str = Header(default="")):
+    """Inbound account-link from Rahal (HMAC-signed). Idempotently create OR link a Meraaj
+    office to a Rahal office_ref and store the office permissions. Never creates a duplicate
+    for the same office_ref/email."""
+    raw = await request.body()
+    sig = x_rahal_signature or x_meraaj_signature
+    authorized = (x_rahal_api_key and x_rahal_api_key == _shared_secret()) or _verify_hmac(raw, sig)
+    if not authorized:
+        raise HTTPException(status_code=401, detail="Invalid Rahal credentials (API key or HMAC signature)")
+    try:
+        body = json.loads(raw)
+    except (ValueError, json.JSONDecodeError):
+        raise HTTPException(status_code=400, detail="Malformed JSON body")
+    office_ref = body.get("office_ref") or body.get("office_id")
+    if not office_ref:
+        raise HTTPException(status_code=400, detail="office_ref مطلوب")
+    email = (body.get("email") or f"{str(office_ref).lower()}@rahal.local").lower()
+    perms = _norm_perms(body.get("permissions"))
+    user_ref = body.get("user_ref") or body.get("rahal_user_id")
+
+    set_fields = {
+        "source": "rahal", "rahal_office_ref": office_ref,
+        "rahal_permissions": perms, "status": "active", "updated_at": now_iso(),
+    }
+    for k in ("office_name", "owner_name", "phone", "governorate", "address", "commercial_license"):
+        if body.get(k) is not None:
+            set_fields[k] = body.get(k)
+    if user_ref is not None:
+        set_fields["rahal_user_ref"] = user_ref
+
+    existing = await db.users.find_one({"$or": [{"rahal_office_ref": office_ref}, {"email": email}]})
+    if existing:
+        await db.users.update_one({"_id": existing["_id"]}, {"$set": set_fields})
+        return {"ok": True, "office_id": str(existing["_id"]), "action": "updated",
+                "permissions": perms, "rahal_office_ref": office_ref}
+    doc = {
+        "email": email, "password_hash": None, "role": "office",
+        "office_name": body.get("office_name") or f"مكتب رحال {office_ref}".strip(),
+        "owner_name": body.get("owner_name") or "",
+        "phone": body.get("phone") or "", "governorate": body.get("governorate") or "",
+        "address": body.get("address") or "", "commercial_license": body.get("commercial_license") or "",
+        "wallet": _empty_wallet(), "created_at": now_iso(),
+        **set_fields,
+    }
+    try:
+        res = await db.users.insert_one(doc)
+        office_id = str(res.inserted_id)
+    except Exception:
+        again = await db.users.find_one({"rahal_office_ref": office_ref})
+        if not again:
+            raise
+        await db.users.update_one({"_id": again["_id"]}, {"$set": set_fields})
+        office_id = str(again["_id"])
+    return {"ok": True, "office_id": office_id, "action": "created",
+            "permissions": perms, "rahal_office_ref": office_ref}
+
+
 class SSOInput(BaseModel):
     token: str
 
@@ -600,10 +670,14 @@ async def rahal_sso(payload: SSOInput):
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="رمز دخول غير صالح من رحال")
 
-    office_ref = claims.get("office_ref")
+    office_ref = claims.get("office_ref") or claims.get("office_id")
     email = (claims.get("email") or "").lower()
     if not office_ref or not email:
         raise HTTPException(status_code=400, detail="بيانات المكتب ناقصة في رمز الدخول")
+
+    perms = _norm_perms(claims.get("permissions"))
+    has_perms = claims.get("permissions") is not None
+    user_ref = claims.get("user_ref") or claims.get("rahal_user_id") or claims.get("sub")
 
     user = await db.users.find_one({"$or": [{"rahal_office_ref": office_ref}, {"email": email}]})
     if not user:
@@ -620,14 +694,26 @@ async def rahal_sso(payload: SSOInput):
             "status": "active",
             "source": "rahal",
             "rahal_office_ref": office_ref,
+            "rahal_permissions": perms if has_perms else None,
+            "rahal_user_ref": user_ref,
             "wallet": _empty_wallet(),
             "created_at": now_iso(),
         }
         res = await db.users.insert_one(doc)
         doc["_id"] = res.inserted_id
         user = doc
-    elif not user.get("rahal_office_ref"):
-        await db.users.update_one({"_id": user["_id"]}, {"$set": {"rahal_office_ref": office_ref}})
+    else:
+        upd = {}
+        if not user.get("rahal_office_ref"):
+            upd["rahal_office_ref"] = office_ref
+            upd["source"] = "rahal"
+        if has_perms:
+            upd["rahal_permissions"] = perms   # refresh permissions from Rahal on every login
+        if user_ref is not None and not user.get("rahal_user_ref"):
+            upd["rahal_user_ref"] = user_ref
+        if upd:
+            await db.users.update_one({"_id": user["_id"]}, {"$set": upd})
+            user = await db.users.find_one({"_id": user["_id"]})
 
     token = create_access_token(str(user["_id"]), user["email"], user.get("role", "office"))
     return {"access_token": token, "user": serialize(user)}

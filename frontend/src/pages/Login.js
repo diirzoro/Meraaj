@@ -6,21 +6,55 @@ import { RESUME_KEY } from "@/config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Network, ShieldCheck, Wallet, Store } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog";
+import { Network, ShieldCheck, Wallet, Store, Link2 } from "lucide-react";
 import { toast } from "sonner";
 
+const RAHAL_SSO_URL = process.env.REACT_APP_RAHAL_SSO_URL || "";
+
 export default function Login() {
-  const { login } = useAuth();
+  const { login, ssoLogin } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [suspended, setSuspended] = useState(false);
+  const [rahalOpen, setRahalOpen] = useState(false);
+
+  const goAfterAuth = (u) => {
+    const params = new URLSearchParams(window.location.search);
+    const next = params.get("next");
+    const resume = localStorage.getItem(RESUME_KEY);
+    localStorage.removeItem(RESUME_KEY);
+    const roleOk = (p) => !!p && !p.startsWith("/login") && !p.startsWith("/register") && !p.startsWith("/embed")
+      && (p.startsWith("/admin") ? u.role === "super_admin" : u.role !== "super_admin");
+    let dest;
+    if (next && roleOk(next)) dest = next;
+    else if (resume && roleOk(resume)) dest = resume;
+    else dest = u.role === "super_admin" ? "/admin" : "/dashboard";
+    navigate(dest, { replace: true });
+  };
+
+  const exchangeRahal = async (token) => {
+    const u = await ssoLogin(token);
+    toast.success("تم الدخول عبر حساب رحّال");
+    goAfterAuth(u);
+    return u;
+  };
 
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("suspended") === "1") {
-      setSuspended(true);
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("suspended") === "1") setSuspended(true);
+    const rahalToken = params.get("rahal_token") || params.get("token");
+    if (rahalToken) {
+      // strip the token from the URL before exchanging (avoid leaking it in history)
+      window.history.replaceState(null, "", "/login");
+      exchangeRahal(rahalToken).catch((e) => toast.error(apiError(e)));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const submit = async (e) => {
@@ -29,22 +63,17 @@ export default function Login() {
     try {
       const u = await login(email, password);
       toast.success("مرحباً بعودتك");
-      const params = new URLSearchParams(window.location.search);
-      const next = params.get("next");
-      const resume = localStorage.getItem(RESUME_KEY);
-      localStorage.removeItem(RESUME_KEY);
-      const roleOk = (p) => !!p && !p.startsWith("/login") && !p.startsWith("/register") && !p.startsWith("/embed")
-        && (p.startsWith("/admin") ? u.role === "super_admin" : u.role !== "super_admin");
-      let dest;
-      if (next && roleOk(next)) dest = next;             // booking guard (?next=) takes priority
-      else if (resume && roleOk(resume)) dest = resume;  // restore route saved on idle logout
-      else dest = u.role === "super_admin" ? "/admin" : "/dashboard";
-      navigate(dest, { replace: true });
+      goAfterAuth(u);
     } catch (err) {
       toast.error(apiError(err));
     } finally {
       setBusy(false);
     }
+  };
+
+  const onRahalClick = () => {
+    if (RAHAL_SSO_URL) { window.location.href = RAHAL_SSO_URL; return; }
+    setRahalOpen(true);
   };
 
   return (
@@ -109,6 +138,17 @@ export default function Login() {
             {busy ? "جارٍ الدخول..." : "دخول"}
           </Button>
 
+          <div className="flex items-center gap-3 my-6">
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-xs text-muted-foreground">أو</span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
+          <Button type="button" variant="outline" onClick={onRahalClick} data-testid="rahal-login-btn"
+                  className="w-full h-11 border-[#D4AF37] text-[#0A2540] hover:bg-[#D4AF37]/10">
+            <Link2 className="w-4 h-4" /> الدخول بحساب رحّال
+          </Button>
+
           <p className="text-center text-sm text-muted-foreground mt-6">
             مكتب جديد؟{" "}
             <Link to="/register" className="text-[#0A2540] font-semibold hover:underline" data-testid="go-register">
@@ -117,6 +157,33 @@ export default function Login() {
           </p>
         </form>
       </div>
+
+      <RahalTokenDialog open={rahalOpen} onOpenChange={setRahalOpen} onExchange={exchangeRahal} />
     </div>
+  );
+}
+
+function RahalTokenDialog({ open, onOpenChange, onExchange }) {
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    try { await onExchange(token.trim()); onOpenChange(false); }
+    catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
+  };
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent dir="rtl" data-testid="rahal-token-dialog">
+        <DialogHeader><DialogTitle className="font-head text-[#0A2540]">الدخول بحساب رحّال</DialogTitle></DialogHeader>
+        <p className="text-sm text-muted-foreground -mt-2">الصق رمز الدخول الصادر من نظام رحّال للمتابعة.</p>
+        <Label className="mb-1 block">رمز الدخول (Token)</Label>
+        <Textarea data-testid="rahal-token-input" value={token} onChange={(e) => setToken(e.target.value)} rows={4} placeholder="eyJhbGciOiJI..." />
+        <DialogFooter>
+          <Button className="bg-[#0A2540] hover:bg-[#061A2E]" onClick={submit} disabled={busy || !token.trim()} data-testid="rahal-token-submit">
+            {busy ? "جارٍ التحقق..." : "متابعة"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
