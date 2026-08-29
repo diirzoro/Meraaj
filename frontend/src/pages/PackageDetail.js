@@ -230,7 +230,6 @@ export default function PackageDetail() {
               filename: d.filename,
               content_base64: d.content_base64,
               passport_no: d.passport_no || undefined,
-              batch_total_bytes: d.batch_total_bytes,
             });
 
             uploaded += 1;

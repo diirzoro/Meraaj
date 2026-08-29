@@ -75,20 +75,24 @@ export default function TravelerDocs({ bookingId, registrantIndex, passportNo })
   };
 
   const printDoc = async (d) => {
+    // Open the print window synchronously within the user gesture (avoids popup blockers),
+    // then load the authenticated blob into it once fetched.
+    const w = window.open("", "_blank");
+    if (!w) { toast.error("رجاءً اسمح بالنوافذ المنبثقة للطباعة"); return; }
     try {
+      w.document.write('<!doctype html><html dir="rtl"><head><meta charset="utf-8"><title>طباعة</title></head><body style="margin:0;font-family:sans-serif;padding:16px">جارٍ التحميل…</body></html>');
       const blob = await fetchBlob(d.id);
       const url = URL.createObjectURL(blob);
-      const w = window.open("", "_blank");
-      if (!w) { URL.revokeObjectURL(url); toast.error("رجاءً اسمح بالنوافذ المنبثقة للطباعة"); return; }
       if (isPdf(d.mime, d.filename)) {
         w.location.href = url;
         w.onload = () => { w.focus(); w.print(); };
       } else {
-        w.document.write(`<html dir="rtl"><head><title>${d.filename || "مستند"}</title></head><body style="margin:0;display:flex;justify-content:center"><img src="${url}" style="max-width:100%" onload="window.focus();window.print();" /></body></html>`);
+        w.document.open();
+        w.document.write(`<!doctype html><html dir="rtl"><head><meta charset="utf-8"><title>${d.filename || "مستند"}</title></head><body style="margin:0;display:flex;justify-content:center"><img src="${url}" style="max-width:100%" onload="window.focus();window.print();" /></body></html>`);
         w.document.close();
       }
       setTimeout(() => URL.revokeObjectURL(url), 60000);
-    } catch (e) { toast.error("تعذر طباعة المستند"); }
+    } catch (e) { try { w.close(); } catch (_) {} toast.error("تعذر طباعة المستند"); }
   };
 
   return (
