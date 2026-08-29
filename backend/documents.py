@@ -114,7 +114,7 @@ async def upload_document(booking_id: str, payload: DocIn, user: dict = Depends(
     except Exception:
         raise HTTPException(400, "محتوى الملف غير صالح")
     if len(raw) == 0 or len(raw) > MAX_FILE_BYTES:
-        raise HTTPException(400, "حجم الملف يتجاوز 10 ميجابايت للملف الواحد أو أنه فارغ")
+        raise HTTPException(400, "حجم الملف يتجاوز 20 ميجابايت للملف الواحد أو أنه فارغ")
     if payload.batch_total_bytes and payload.batch_total_bytes > MAX_BATCH_BYTES:
         raise HTTPException(400, "إجمالي حجم الملفات يجب ألا يتجاوز 20MB")
     ct = mimetypes.guess_type(payload.filename)[0] or "application/octet-stream"
