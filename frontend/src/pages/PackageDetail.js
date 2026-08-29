@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
-import { MapPin, Users, CalendarDays, Building2, Plane, Hotel, Plus, Trash2, ShoppingCart, CheckCircle2, Bus, BedDouble, ListChecks, Share2, Paperclip, X } from "lucide-react";
+import { MapPin, Users, CalendarDays, Building2, Plane, Hotel, Plus, Trash2, ShoppingCart, CheckCircle2, Bus, BedDouble, ListChecks, Share2, Paperclip, X, Camera } from "lucide-react";
 import { DOC_TYPES, docLabel } from "@/components/TravelerDocs";
 
 const ROOM_AR = { double: "ثنائية", twin: "ثنائية", triple: "ثلاثية", quad: "رباعية", quint: "خماسية", single: "فردية" };
@@ -70,18 +70,9 @@ export default function PackageDetail() {
       return;
     }
 
-    const big = files.find((f) => f.size > 10 * 1024 * 1024);
+    const big = files.find((f) => f.size > 20 * 1024 * 1024);
     if (big) {
-      toast.error(`${big.name}: يتجاوز 10 ميجابايت للملف الواحد`);
-      return;
-    }
-
-    const current = regs[i]?.docs || [];
-    const currentBytes = current.reduce((sum, d) => sum + Number(d.size || 0), 0);
-    const incomingBytes = files.reduce((sum, f) => sum + f.size, 0);
-
-    if (currentBytes + incomingBytes > 20 * 1024 * 1024) {
-      toast.error("إجمالي المستندات الإضافية للمسافر يجب ألا يتجاوز 20MB");
+      toast.error(`${big.name}: يتجاوز 20 ميجابايت للملف الواحد`);
       return;
     }
 
@@ -117,7 +108,7 @@ export default function PackageDetail() {
 
   const onPhoto = (i) => (e) => {
     const file = e.target.files?.[0]; if (!file) return;
-    if (file.size > 10 * 1024 * 1024) { toast.error("حجم الصورة يتجاوز 10 ميجابايت"); return; }
+    if (file.size > 20 * 1024 * 1024) { toast.error("حجم الصورة يتجاوز 20 ميجابايت"); return; }
     const reader = new FileReader();
     reader.onload = () => { const c = [...regs]; c[i].photo = reader.result; setRegs(c); };
     reader.readAsDataURL(file);
@@ -127,7 +118,7 @@ export default function PackageDetail() {
     const file = e.target.files?.[0]; if (!file) return;
     const allowed = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
     if (!allowed.includes(file.type)) { toast.error("وثيقة السفر يجب أن تكون PDF أو JPG أو PNG أو WEBP"); return; }
-    if (file.size > 10 * 1024 * 1024) { toast.error("حجم وثيقة السفر يتجاوز 10 ميجابايت"); return; }
+    if (file.size > 20 * 1024 * 1024) { toast.error("حجم وثيقة السفر يتجاوز 20 ميجابايت"); return; }
     const c = [...regs];
     if (c[i]?.passport_preview_url) URL.revokeObjectURL(c[i].passport_preview_url);
     c[i] = {
@@ -212,23 +203,16 @@ export default function PackageDetail() {
           filename: r.passport_file.name,
           content_base64,
           passport_no: r.passport_no.trim(),
-          batch_total_bytes: r.passport_file.size,
         });
       }));
 
-      const staged = regs.flatMap((r, i) => {
-        const batchTotal = (r.docs || []).reduce(
-          (sum, d) => sum + Number(d.size || 0),
-          0
-        );
-
-        return (r.docs || []).map((d) => ({
+      const staged = regs.flatMap((r, i) =>
+        (r.docs || []).map((d) => ({
           ...d,
           registrant_index: i,
           passport_no: r.passport_no.trim(),
-          batch_total_bytes: batchTotal,
-        }));
-      });
+        }))
+      );
 
       let uploaded = 0;
       let failed = 0;
@@ -614,7 +598,7 @@ export default function PackageDetail() {
 
                                     ) / 1024 / 1024
 
-                                  ).toFixed(1)}MB من 20MB
+                                  ).toFixed(1)}MB
 
                                 </div>
 
@@ -672,9 +656,22 @@ export default function PackageDetail() {
                               </label>
 
 
+                              <label className="inline-flex items-center gap-1.5 text-xs bg-[#0A2540] text-white rounded-md px-3 h-8 cursor-pointer hover:bg-[#061A2E]" data-testid={`stage-doc-camera-${i}`}>
+                                <Camera className="w-3.5 h-3.5" />
+                                مسح / تصوير مستند
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  capture="environment"
+                                  className="hidden"
+                                  onChange={stageDocs(i)}
+                                />
+                              </label>
+
+
                               <span className="text-[10px] text-muted-foreground">
 
-                                10MB لكل ملف — 20MB إجمالاً
+                                20MB لكل ملف
 
                               </span>
 
