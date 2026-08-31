@@ -78,6 +78,17 @@ agenthub/agents/youtube/db
 
 memory/test_credentials.md
 
+# Test artifacts / agent reports
+/test_reports/
+/test_result.md
+**/pytest/*.xml
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build binaries
+**/gradle-wrapper.jar
+
 # Mobile development
 android-sdk/
 .env
