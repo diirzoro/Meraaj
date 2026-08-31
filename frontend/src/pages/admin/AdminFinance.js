@@ -37,7 +37,7 @@ export default function AdminFinance() {
         ))}
       </div>
 
-      <div className="bg-white rounded-2xl border card-shadow overflow-x-auto">
+      <div className="bg-white rounded-2xl border card-shadow overflow-x-auto table-scroll">
         {tab === "topups" && (
           <Table empty="لا توجد طلبات شحن" head={["المكتب", "المبلغ", "الطريقة", "الإشعار", "التاريخ", ""]}>
             {topups.map((t) => (
