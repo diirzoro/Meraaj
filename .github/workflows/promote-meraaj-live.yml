@@ -117,6 +117,35 @@ jobs:
           fi
 
           # ===================================================================
+          # PREFLIGHT - Live runtime prerequisites (before ANY Live change / rollback)
+          # ===================================================================
+          echo "--- Preflight: Live runtime prerequisites ---"
+
+          test -r "$LIVE_BACKEND_ENV_FILE" || {
+            echo "Missing/unreadable Live backend env file: $LIVE_BACKEND_ENV_FILE"
+            exit 1
+          }
+
+          for net in meraaj_default meraaj_live_net bridge; do
+            docker network inspect "$net" >/dev/null 2>&1 || {
+              echo "Required Docker network missing: $net"
+              exit 1
+            }
+          done
+
+          docker image inspect "$TEST_BE_IMG_ID" >/dev/null 2>&1 || {
+            echo "Test backend image no longer exists"
+            exit 1
+          }
+
+          docker image inspect "$TEST_FE_IMG_ID" >/dev/null 2>&1 || {
+            echo "Test frontend image no longer exists"
+            exit 1
+          }
+
+          echo "Preflight OK."
+
+          # ===================================================================
           # STEP 3 - Save the CURRENT Live as the single rollback (replace older)
           # ===================================================================
           echo "--- Step 3: snapshot current Live as rollback ---"
