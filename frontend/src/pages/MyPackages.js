@@ -56,7 +56,7 @@ export default function MyPackages() {
       {items.length === 0 ? (
         <div className="text-center py-20 text-muted-foreground">لم تضف أي برنامج بعد</div>
       ) : (
-        <div className="bg-white rounded-2xl border card-shadow overflow-x-auto">
+        <div className="bg-white rounded-2xl border card-shadow overflow-x-auto table-scroll">
           <table className="w-full text-sm min-w-[820px]">
             <thead className="text-muted-foreground text-xs border-b">
               <tr>

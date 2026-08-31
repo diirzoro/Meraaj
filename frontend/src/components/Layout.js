@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -45,8 +45,20 @@ export default function Layout({ children }) {
 
   const doLogout = async () => { localStorage.removeItem("meraaj_resume_route"); await logout(); navigate("/login"); };
 
+  // Edge-swipe to open / swipe to close the mobile sidebar (RTL: sidebar sits on the right).
+  const sx = useRef(0), sy = useRef(0);
+  const onTouchStart = (e) => { sx.current = e.touches[0].clientX; sy.current = e.touches[0].clientY; };
+  const onTouchEnd = (e) => {
+    if (typeof window === "undefined" || window.innerWidth >= 1024) return;
+    const dx = e.changedTouches[0].clientX - sx.current;
+    const dy = e.changedTouches[0].clientY - sy.current;
+    if (Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx)) return; // ignore vertical scrolls
+    if (!open && sx.current > window.innerWidth - 40 && dx < 0) setOpen(true);
+    else if (open && dx > 0) setOpen(false);
+  };
+
   return (
-    <div className="min-h-screen bg-[#F4F6F8]">
+    <div className="min-h-screen bg-[#F4F6F8]" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
       {/* Mobile top bar */}
       <div className="lg:hidden fixed top-0 inset-x-0 z-30 bg-[#0A2540] text-white h-14 flex items-center justify-between px-4">
         <div className="flex items-center gap-2">
@@ -60,7 +72,7 @@ export default function Layout({ children }) {
 
       <aside
         data-testid="sidebar"
-        className={`w-72 bg-[#0A2540] text-white flex flex-col fixed top-0 bottom-0 start-0 z-40 transition-transform duration-300 ${
+        className={`w-[min(18rem,85vw)] lg:w-72 bg-[#0A2540] text-white flex flex-col fixed top-0 bottom-0 start-0 z-40 transition-transform duration-300 ${
           open ? "translate-x-0" : "translate-x-full lg:translate-x-0"
         }`}
       >
