@@ -59,7 +59,7 @@ export default function WalletPage() {
         ))}
       </div>
 
-      <div className="bg-white rounded-2xl border card-shadow overflow-x-auto">
+      <div className="bg-white rounded-2xl border card-shadow overflow-x-auto table-scroll">
         {tab === "txns" && <LedgerTable rows={txns} />}
         {tab === "topups" && <SimpleTable rows={topups} cols={[["amount", "المبلغ", true], ["method", "الطريقة"], ["status", "الحالة", false, false, true], ["created_at", "التاريخ", false, true]]} empty="لا توجد طلبات شحن" />}
         {tab === "transfers" && <SimpleTable rows={transfers} cols={[["to_office_name", "إلى/من"], ["amount", "المبلغ", true], ["status", "الحالة", false, false, true], ["created_at", "التاريخ", false, true]]} empty="لا توجد تحويلات" />}
@@ -146,6 +146,7 @@ function LedgerTable({ rows }) {
       {view.length === 0 ? (
         <div className="p-10 text-center text-muted-foreground text-sm">لا توجد حركات</div>
       ) : (
+        <div className="table-scroll">
         <table className="w-full text-sm min-w-[720px]" data-testid="ledger-table">
           <thead className="text-muted-foreground text-xs border-b">
             <tr>
@@ -175,6 +176,7 @@ function LedgerTable({ rows }) {
             })}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );

@@ -75,6 +75,18 @@ h1, h2, h3, h4, .font-head {
 html, body, #root { max-width: 100%; overflow-x: hidden; }
 img { max-width: 100%; }
 
+/* Independent horizontal scroll for wide tables (page itself stays fixed horizontally) */
+.table-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
+}
+/* Prevent long unbreakable text/numbers from overflowing cards */
+body { overflow-wrap: anywhere; }
+
 @layer base {
     body { @apply bg-background text-foreground; }
 }
