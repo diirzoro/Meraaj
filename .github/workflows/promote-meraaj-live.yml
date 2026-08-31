@@ -1,0 +1,274 @@
+name: Promote Meraaj Test to Live
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type PROMOTE to confirm promoting the current Test images to Live'
+        required: true
+        default: ''
+
+concurrency:
+  group: meraaj-promote-live
+  cancel-in-progress: false
+
+env:
+  TEST_BACKEND_CONTAINER: meraaj_fresh_test_backend
+  TEST_FRONTEND_CONTAINER: meraaj_fresh_test_frontend
+  LIVE_BACKEND_CONTAINER: ${{ vars.LIVE_MERAAJ_BACKEND_CONTAINER || 'meraaj_backend' }}
+  LIVE_FRONTEND_CONTAINER: ${{ vars.LIVE_MERAAJ_FRONTEND_CONTAINER || 'meraaj_frontend' }}
+  LIVE_BACKEND_PORT: ${{ vars.LIVE_MERAAJ_BACKEND_PORT || '8000' }}
+  LIVE_FRONTEND_PORT: ${{ vars.LIVE_MERAAJ_FRONTEND_PORT || '8004' }}
+  LIVE_BACKEND_ENV_FILE: ${{ vars.LIVE_MERAAJ_BACKEND_ENV_FILE || '/root/meraaj_backend_env_live' }}
+  TEST_BACKEND_PORT: '8010'
+  TEST_FRONTEND_PORT: '8014'
+  PUBLIC_URL: 'https://meraaj.targetmediagrp.com/'
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    # Only from main
+    if: ${{ github.ref == 'refs/heads/main' }}
+    steps:
+      - name: Validate confirmation input
+        run: |
+          if [ "${{ github.event.inputs.confirmation }}" != "PROMOTE" ]; then
+            echo "Confirmation mismatch. You must type exactly: PROMOTE"
+            exit 1
+          fi
+          echo "Confirmation accepted."
+
+      - name: Guard - must run on main
+        run: |
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "This workflow may only run on main. Current ref: ${{ github.ref }}"
+            exit 1
+          fi
+
+      - name: Setup SSH key (native, no third-party actions)
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.TEST_SERVER_SSH_KEY_B64 }}" | base64 -d > ~/.ssh/meraaj_live_key
+          chmod 600 ~/.ssh/meraaj_live_key
+          ssh-keyscan -H "${{ vars.TEST_SERVER_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Promote on server (SSH, no build / no pull)
+        run: |
+          ssh -i ~/.ssh/meraaj_live_key -o StrictHostKeyChecking=no \
+            "${{ vars.TEST_SERVER_USER }}@${{ vars.TEST_SERVER_HOST }}" \
+            "TEST_BACKEND_CONTAINER='${{ env.TEST_BACKEND_CONTAINER }}' \
+             TEST_FRONTEND_CONTAINER='${{ env.TEST_FRONTEND_CONTAINER }}' \
+             LIVE_BACKEND_CONTAINER='${{ env.LIVE_BACKEND_CONTAINER }}' \
+             LIVE_FRONTEND_CONTAINER='${{ env.LIVE_FRONTEND_CONTAINER }}' \
+             LIVE_BACKEND_PORT='${{ env.LIVE_BACKEND_PORT }}' \
+             LIVE_FRONTEND_PORT='${{ env.LIVE_FRONTEND_PORT }}' \
+             LIVE_BACKEND_ENV_FILE='${{ env.LIVE_BACKEND_ENV_FILE }}' \
+             TEST_BACKEND_PORT='${{ env.TEST_BACKEND_PORT }}' \
+             TEST_FRONTEND_PORT='${{ env.TEST_FRONTEND_PORT }}' \
+             PUBLIC_URL='${{ env.PUBLIC_URL }}' \
+             bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          echo "==================================================================="
+          echo " Meraaj Promote: Test -> Live  (no build, no pull, no rebuild)"
+          echo "==================================================================="
+
+          # ---- Retry-based HTTP health helper ----
+          http_ok() {
+            # $1 = url, $2 = expected code, $3 = attempts, $4 = interval
+            local url="$1" expect="$2" attempts="${3:-20}" interval="${4:-2}" i code
+            for i in $(seq 1 "$attempts"); do
+              code="$(curl -s -o /dev/null -w '%{http_code}' "$url" || echo 000)"
+              if [ "$code" = "$expect" ]; then
+                echo "  OK  $url -> $code (attempt $i)"
+                return 0
+              fi
+              echo "  ... $url -> $code (attempt $i/$attempts)"
+              sleep "$interval"
+            done
+            echo "  FAIL $url never returned $expect"
+            return 1
+          }
+
+          # ===================================================================
+          # STEP 1 - Verify TEST is healthy BEFORE touching Live
+          # ===================================================================
+          echo "--- Step 1: verify Test is healthy ---"
+          if ! http_ok "http://127.0.0.1:${TEST_BACKEND_PORT}/openapi.json" 200 20 2; then
+            echo "Test backend unhealthy. Aborting WITHOUT touching Live."
+            exit 1
+          fi
+          if ! http_ok "http://127.0.0.1:${TEST_FRONTEND_PORT}/" 200 20 2; then
+            echo "Test frontend unhealthy. Aborting WITHOUT touching Live."
+            exit 1
+          fi
+
+          # ===================================================================
+          # STEP 2 - Read the exact Test image IDs (source of truth)
+          # ===================================================================
+          echo "--- Step 2: read Test image IDs ---"
+          TEST_BE_IMG_ID="$(docker inspect -f '{{.Image}}' "$TEST_BACKEND_CONTAINER")"
+          TEST_FE_IMG_ID="$(docker inspect -f '{{.Image}}' "$TEST_FRONTEND_CONTAINER")"
+          echo "  Test backend  image id: $TEST_BE_IMG_ID"
+          echo "  Test frontend image id: $TEST_FE_IMG_ID"
+          if [ -z "$TEST_BE_IMG_ID" ] || [ -z "$TEST_FE_IMG_ID" ]; then
+            echo "Could not read Test image IDs. Aborting WITHOUT touching Live."
+            exit 1
+          fi
+
+          # ===================================================================
+          # PREFLIGHT - Live runtime prerequisites (before ANY Live change / rollback)
+          # ===================================================================
+          echo "--- Preflight: Live runtime prerequisites ---"
+
+          test -r "$LIVE_BACKEND_ENV_FILE" || {
+            echo "Missing/unreadable Live backend env file: $LIVE_BACKEND_ENV_FILE"
+            exit 1
+          }
+
+          for net in meraaj_default meraaj_live_net bridge; do
+            docker network inspect "$net" >/dev/null 2>&1 || {
+              echo "Required Docker network missing: $net"
+              exit 1
+            }
+          done
+
+          docker image inspect "$TEST_BE_IMG_ID" >/dev/null 2>&1 || {
+            echo "Test backend image no longer exists"
+            exit 1
+          }
+
+          docker image inspect "$TEST_FE_IMG_ID" >/dev/null 2>&1 || {
+            echo "Test frontend image no longer exists"
+            exit 1
+          }
+
+          echo "Preflight OK."
+
+          # ===================================================================
+          # STEP 3 - Save the CURRENT Live as the single rollback (replace older)
+          # ===================================================================
+          echo "--- Step 3: snapshot current Live as rollback ---"
+          HAVE_LIVE_BE=0; HAVE_LIVE_FE=0
+          if docker inspect "$LIVE_BACKEND_CONTAINER" >/dev/null 2>&1; then
+            CUR_LIVE_BE_IMG_ID="$(docker inspect -f '{{.Image}}' "$LIVE_BACKEND_CONTAINER")"
+            docker rmi -f meraaj_backend:rollback >/dev/null 2>&1 || true
+            docker tag "$CUR_LIVE_BE_IMG_ID" meraaj_backend:rollback
+            HAVE_LIVE_BE=1
+            echo "  backend rollback tagged from $CUR_LIVE_BE_IMG_ID"
+          else
+            echo "  no existing Live backend (first promote) - no backend rollback"
+          fi
+          if docker inspect "$LIVE_FRONTEND_CONTAINER" >/dev/null 2>&1; then
+            CUR_LIVE_FE_IMG_ID="$(docker inspect -f '{{.Image}}' "$LIVE_FRONTEND_CONTAINER")"
+            docker rmi -f meraaj_frontend:rollback >/dev/null 2>&1 || true
+            docker tag "$CUR_LIVE_FE_IMG_ID" meraaj_frontend:rollback
+            HAVE_LIVE_FE=1
+            echo "  frontend rollback tagged from $CUR_LIVE_FE_IMG_ID"
+          else
+            echo "  no existing Live frontend (first promote) - no frontend rollback"
+          fi
+
+          # ===================================================================
+          # STEP 4 - Tag the SAME Test images literally as live-current
+          # ===================================================================
+          echo "--- Step 4: tag Test images as live-current ---"
+          docker tag "$TEST_BE_IMG_ID" meraaj_backend:live-current
+          docker tag "$TEST_FE_IMG_ID" meraaj_frontend:live-current
+
+          # ---- Automatic rollback routine (only used AFTER Live change starts) ----
+          rollback() {
+            echo "!!! ROLLBACK: restoring previous Live from rollback tags !!!"
+            docker rm -f "$LIVE_BACKEND_CONTAINER"  >/dev/null 2>&1 || true
+            docker rm -f "$LIVE_FRONTEND_CONTAINER" >/dev/null 2>&1 || true
+
+            if [ "$HAVE_LIVE_BE" = "1" ]; then
+              docker run -d --name "$LIVE_BACKEND_CONTAINER" \
+                --restart unless-stopped \
+                --env-file "$LIVE_BACKEND_ENV_FILE" \
+                --network meraaj_default \
+                --network-alias backend \
+                -p "${LIVE_BACKEND_PORT}:8000" \
+                meraaj_backend:rollback || true
+              docker network connect --alias backend meraaj_live_net "$LIVE_BACKEND_CONTAINER" 2>/dev/null || true
+              docker network connect bridge "$LIVE_BACKEND_CONTAINER" 2>/dev/null || true
+            fi
+            if [ "$HAVE_LIVE_FE" = "1" ]; then
+              docker run -d --name "$LIVE_FRONTEND_CONTAINER" \
+                --restart unless-stopped \
+                --network meraaj_default \
+                -p "${LIVE_FRONTEND_PORT}:80" \
+                meraaj_frontend:rollback || true
+            fi
+
+            echo "--- rollback health check ---"
+            http_ok "http://127.0.0.1:${LIVE_BACKEND_PORT}/openapi.json" 200 20 2 || true
+            http_ok "http://127.0.0.1:${LIVE_FRONTEND_PORT}/" 200 20 2 || true
+          }
+
+          # From here on, any failure triggers automatic rollback
+          LIVE_CHANGED=0
+          trap 'if [ "$LIVE_CHANGED" = "1" ]; then rollback; fi; exit 1' ERR
+
+          # ===================================================================
+          # STEP 5 - Recreate Live Backend
+          # ===================================================================
+          echo "--- Step 5: recreate Live backend ---"
+          LIVE_CHANGED=1
+          docker rm -f "$LIVE_BACKEND_CONTAINER" >/dev/null 2>&1 || true
+          docker run -d --name "$LIVE_BACKEND_CONTAINER" \
+            --restart unless-stopped \
+            --env-file "$LIVE_BACKEND_ENV_FILE" \
+            --network meraaj_default \
+            --network-alias backend \
+            -p "${LIVE_BACKEND_PORT}:8000" \
+            meraaj_backend:live-current
+          # attach to live net + bridge, keeping alias backend on both docker networks
+          docker network connect --alias backend meraaj_live_net "$LIVE_BACKEND_CONTAINER"
+          docker network connect bridge "$LIVE_BACKEND_CONTAINER"
+
+          # ===================================================================
+          # STEP 6 - Recreate Live Frontend
+          # ===================================================================
+          echo "--- Step 6: recreate Live frontend ---"
+          docker rm -f "$LIVE_FRONTEND_CONTAINER" >/dev/null 2>&1 || true
+          docker run -d --name "$LIVE_FRONTEND_CONTAINER" \
+            --restart unless-stopped \
+            --network meraaj_default \
+            -p "${LIVE_FRONTEND_PORT}:80" \
+            meraaj_frontend:live-current
+
+          # ===================================================================
+          # STEP 7 - Health checks (retry, not a single sleep)
+          # ===================================================================
+          echo "--- Step 7: Live health checks (retry) ---"
+          http_ok "http://127.0.0.1:${LIVE_BACKEND_PORT}/openapi.json" 200 20 2
+          http_ok "http://127.0.0.1:${LIVE_FRONTEND_PORT}/" 200 20 2
+          http_ok "${PUBLIC_URL}" 200 20 2
+
+          # ===================================================================
+          # STEP 8 - Verify Live image IDs == Test image IDs
+          # ===================================================================
+          echo "--- Step 8: verify Live image IDs match Test ---"
+          LIVE_BE_IMG_ID="$(docker inspect -f '{{.Image}}' "$LIVE_BACKEND_CONTAINER")"
+          LIVE_FE_IMG_ID="$(docker inspect -f '{{.Image}}' "$LIVE_FRONTEND_CONTAINER")"
+          echo "  live backend  image id: $LIVE_BE_IMG_ID"
+          echo "  live frontend image id: $LIVE_FE_IMG_ID"
+          if [ "$LIVE_BE_IMG_ID" != "$TEST_BE_IMG_ID" ] || [ "$LIVE_FE_IMG_ID" != "$TEST_FE_IMG_ID" ]; then
+            echo "Image ID mismatch between Live and Test. Treating as FAILURE."
+            false
+          fi
+
+          # Success - disable the rollback trap
+          trap - ERR
+
+          # ===================================================================
+          # STEP 9 - Verify network aliases on Live backend
+          # ===================================================================
+          echo "--- Step 9: verify backend aliases (meraaj_default + meraaj_live_net) ---"
+          docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} aliases={{$v.Aliases}}{{"\n"}}{{end}}' "$LIVE_BACKEND_CONTAINER" || true
+
+          echo "==================================================================="
+          echo " Promote SUCCESS: Live now runs the promoted Test images."
+          echo "==================================================================="
+          REMOTE
