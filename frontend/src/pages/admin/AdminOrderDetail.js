@@ -21,6 +21,7 @@ export default function AdminOrderDetail() {
   const [note, setNote] = useState("");
   const [task, setTask] = useState({ title: "", assignee: "", due_date: "", priority: "normal" });
   const [escReason, setEscReason] = useState("");
+  const [ovr, setOvr] = useState({ fee: "", reason: "" });
 
   const load = useCallback(() => api.get(`/admin/bookings/${id}/full`).then((r) => setD(r.data)), [id]);
   useEffect(() => { load(); }, [load]);
@@ -202,6 +203,48 @@ export default function AdminOrderDetail() {
                   تصعيد الطلب
                 </Button>
               </>
+            )}
+          </Card>
+
+          {/* Commission override */}
+          <Card title="تعديل العمولة يدوياً" icon={FileText} tid="order-commission-override">
+            {b.commission_snapshot && (
+              <div className="text-[11px] bg-[#F4F6F8] rounded-lg px-3 py-2 mb-2">
+                القاعدة المطبّقة عند الإنشاء: <b className="text-[#0A2540]">{b.commission_snapshot.rule_name}</b>
+                {b.commission_snapshot.mode === "percent" && ` (${(b.commission_snapshot.value * 100).toFixed(2)}%)`}
+              </div>
+            )}
+            {b.commission_override && (
+              <div className="text-[11px] bg-[#FEFCE8] border border-[#FEF08A] rounded-lg px-3 py-2 mb-2">
+                تعديل سابق: {b.commission_override.old} ← {b.commission_override.new} • {b.commission_override.reason}
+                <div className="text-[10px] text-muted-foreground">{b.commission_override.by} • {fmtDate(b.commission_override.at)}</div>
+              </div>
+            )}
+            {b.buyer_type === "office" && !f.settled && b.status !== "cancelled" ? (
+              <>
+                <Label className="text-xs mb-1 block">عمولة المنصة الجديدة ({c})</Label>
+                <Input type="number" value={ovr.fee} data-testid="override-fee" className="h-8 text-xs"
+                  onChange={(e) => setOvr({ ...ovr, fee: e.target.value })} />
+                <Label className="text-xs mt-2 mb-1 block">السبب (إلزامي — يُسجَّل بالتدقيق)</Label>
+                <Textarea rows={2} value={ovr.reason} data-testid="override-reason"
+                  onChange={(e) => setOvr({ ...ovr, reason: e.target.value })} />
+                <Button size="sm" className="mt-2 bg-[#0A2540] hover:bg-[#061A2E]" data-testid="override-btn"
+                  disabled={busy || ovr.reason.trim().length < 5 || ovr.fee === ""}
+                  onClick={() => act(async () => {
+                    await api.post(`/admin/bookings/${id}/commission-override`,
+                      { new_platform_fee: Number(ovr.fee), reason: ovr.reason });
+                    setOvr({ fee: "", reason: "" });
+                  }, "تم تعديل العمولة وتسجيل القيد")}>
+                  تطبيق التعديل
+                </Button>
+                <div className="text-[10px] text-muted-foreground mt-2">
+                  الفرق يُخصم من محفظة المشتري أو يُعاد إليها مع قيد مالي وسجل تدقيق.
+                </div>
+              </>
+            ) : (
+              <div className="text-xs text-muted-foreground">
+                التعديل اليدوي متاح لحجوزات المكاتب غير المُسوّاة وغير الملغاة فقط.
+              </div>
             )}
           </Card>
 

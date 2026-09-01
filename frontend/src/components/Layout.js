@@ -4,6 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import {
   LayoutDashboard, Store, Package, ShoppingBag, TicketCheck, Wallet,
   Users, Banknote, ShieldAlert, LogOut, Building2, Network, Menu, X, TrendingUp, Ban,
+  BookOpen, ArrowDownCircle, Percent, Gauge,
 } from "lucide-react";
 
 const officeNav = [
@@ -27,6 +28,10 @@ const adminNav = [
   { to: "/admin", label: "لوحة المؤشرات", icon: LayoutDashboard },
   { to: "/admin/orders", label: "مركز الطلبات", icon: ShoppingBag },
   { to: "/admin/finance", label: "المركز المالي", icon: Banknote },
+  { to: "/admin/ledger", label: "الدفتر المالي", icon: BookOpen },
+  { to: "/admin/withdrawals", label: "دورة السحوبات", icon: ArrowDownCircle },
+  { to: "/admin/commissions", label: "محرك العمولات", icon: Percent },
+  { to: "/admin/credit", label: "السقف الائتماني", icon: Gauge },
   { to: "/admin/offices", label: "إدارة المكاتب", icon: Users },
   { to: "/admin/cancellations", label: "طلبات الإلغاء", icon: Ban },
   { to: "/admin/disputes", label: "النزاعات", icon: ShieldAlert },

@@ -23,6 +23,10 @@ import EmbedMarket from "@/pages/EmbedMarket";
 import AdminDashboard from "@/pages/admin/AdminDashboard";
 import AdminOrders from "@/pages/admin/AdminOrders";
 import AdminOrderDetail from "@/pages/admin/AdminOrderDetail";
+import AdminLedger from "@/pages/admin/AdminLedger";
+import AdminWithdrawals from "@/pages/admin/AdminWithdrawals";
+import AdminCommissions from "@/pages/admin/AdminCommissions";
+import AdminCredit from "@/pages/admin/AdminCredit";
 import AdminFinance from "@/pages/admin/AdminFinance";
 import AdminOffices from "@/pages/admin/AdminOffices";
 import AdminCancellations from "@/pages/admin/AdminCancellations";
@@ -84,6 +88,10 @@ function AppRoutes() {
       <Route path="/admin" element={<Protected role="admin"><AdminDashboard /></Protected>} />
       <Route path="/admin/orders" element={<Protected role="admin"><AdminOrders /></Protected>} />
       <Route path="/admin/orders/:id" element={<Protected role="admin"><AdminOrderDetail /></Protected>} />
+      <Route path="/admin/ledger" element={<Protected role="admin"><AdminLedger /></Protected>} />
+      <Route path="/admin/withdrawals" element={<Protected role="admin"><AdminWithdrawals /></Protected>} />
+      <Route path="/admin/commissions" element={<Protected role="admin"><AdminCommissions /></Protected>} />
+      <Route path="/admin/credit" element={<Protected role="admin"><AdminCredit /></Protected>} />
       <Route path="/admin/finance" element={<Protected role="admin"><AdminFinance /></Protected>} />
       <Route path="/admin/offices" element={<Protected role="admin"><AdminOffices /></Protected>} />
       <Route path="/admin/cancellations" element={<Protected role="admin"><AdminCancellations /></Protected>} />

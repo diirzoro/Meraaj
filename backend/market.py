@@ -10,8 +10,10 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Union, Dict
 from db import (db, serialize, oid, now_iso, adjust_wallet, log_txn,
                 platform_pct, cancel_fee_pct, marketer_pct, log_platform_revenue,
-                plan_debit, wallet_available, CurrencyField,
+                plan_debit, wallet_available, CurrencyField, other_ccy,
                 approval_timeout_hours, iso_in_hours, audit)
+from commissions import resolve_commission
+from credit import credit_allows, credit_frozen
 from security import (get_current_user, get_optional_user, require_office,
                       require_buyer, require_permission)
 from integration import notify_rahal, refund_and_release, apply_approval_financials
@@ -518,12 +520,19 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
     if is_office:
         # B2B: office pays net + platform fee (double commission); keeps margin offline
         buyer_commission_total = comm_total
-        platform_fee = round(buyer_commission_total * platform_pct(), 2)
+        cats = {"adult": 0, "child": 0, "infant": 0, "seats": seats}
+        for r in payload.registrants:
+            cats[r.category if r.category in cats else "adult"] += 1
+        commission_snapshot = await resolve_commission(
+            buyer_type=user["role"], currency=cur, package=pkg,
+            seller_id=pkg["seller_id"], base_amount=buyer_commission_total, per_category=cats)
+        platform_fee = round(float(commission_snapshot["amount"]), 2)
         required = round(net_total + platform_fee, 2)
     else:
         # B2C: consumer pays full retail; seller gets net; margin => platform (+marketer)
         buyer_commission_total = 0.0
         platform_fee = 0.0
+        commission_snapshot = None
         required = sale_total
         margin_total = round(sale_total - net_total, 2)
         if payload.ref:
@@ -535,9 +544,17 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
         platform_profit = round(margin_total - marketer_commission, 2)
 
     fresh = await db.users.find_one({"_id": user["_id"]})
+    if await credit_frozen(fresh, cur):
+        raise HTTPException(400, "حساب المكتب مجمّد ائتمانياً — لا يمكن إتمام الحجز")
     split = plan_debit(fresh["wallet"], cur, required)
+    credit_used = 0.0
     if split is None:
-        raise HTTPException(400, f"الرصيد المتاح غير كافٍ. المطلوب: {required} {cur}")
+        # Credit Control: allow going negative only within the approved credit ceiling.
+        allowed, msg, room = await credit_allows(fresh, cur, required)
+        if not allowed:
+            raise HTTPException(400, msg or f"الرصيد المتاح غير كافٍ. المطلوب: {required} {cur}")
+        split = {cur: round(required, 2), other_ccy(cur): 0.0}
+        credit_used = round(max(0.0, required - max(0.0, room["available_balance"])), 2)
 
     is_rahal = pkg.get("source") == "rahal" and bool(pkg.get("rahal_ref"))
 
@@ -589,6 +606,8 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
         "platform_profit": platform_profit,
         "amount_charged": required,
         "debit_split": split,
+        "commission_snapshot": commission_snapshot,
+        "credit_used": credit_used,
         "currency": cur,
         "status": "blue",
         "dispatched_at": None,

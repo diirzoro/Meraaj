@@ -16,6 +16,9 @@ from wallet import router as wallet_router
 from admin import router as admin_router
 from admin_orders import router as admin_orders_router
 from admin_analytics import router as admin_analytics_router
+from commissions import router as commissions_router
+from credit import router as credit_router
+from finance import router as finance_router
 from integration import router as integration_router, sim_router as rahal_sim_router
 from individual import router as individual_router
 from documents import router as documents_router
@@ -37,6 +40,9 @@ app.include_router(wallet_router)
 app.include_router(admin_router)
 app.include_router(admin_orders_router)
 app.include_router(admin_analytics_router)
+app.include_router(commissions_router)
+app.include_router(credit_router)
+app.include_router(finance_router)
 app.include_router(integration_router)
 app.include_router(rahal_sim_router)
 app.include_router(individual_router)

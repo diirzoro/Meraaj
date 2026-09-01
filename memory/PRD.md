@@ -275,3 +275,56 @@ Rahal SSO (no duplicate user), inbound webhook HMAC 200/401, office flows and ex
   settings center + feature flags.
 - P2 Batch 6: Meraaj Scan Bridge PoC (real scanner via local Windows service).
 - Deferred: S3 storage (Release B), auto-expiry cron, Capacitor Android phase 2.
+
+---
+
+## Enterprise Admin Upgrade — Batch 2 (session 2026-09-01)
+Delivered on top of Batch 1 (commit ab90c30). ADDITIVE; no existing endpoint removed.
+
+### Backend (new)
+- `commissions.py` — commission engine. `resolve_commission()` falls back to
+  `PLATFORM_COMMISSION_PCT` (0.10) when no active rule matches, so default behaviour is byte-identical.
+  Rules CRUD (`/api/admin/commission-rules`, PATCH, DELETE = deactivate), `/preview` simulator,
+  `/commission-events` audit, and `POST /api/admin/bookings/{id}/commission-override`
+  (reason ≥5 chars, real ledger movement `commission_adjustment` + platform_revenue + audit;
+  blocked for settled/cancelled/B2C/insufficient balance).
+  Every new booking now stores `commission_snapshot` → historic bookings never change.
+- `credit.py` — Credit Control. `credit_limits` (per office+currency), `credit_events` (audited),
+  `GET /api/admin/credit` (paginated, utilization + alert level 70/90/100),
+  `POST /api/admin/credit/{office_id}` (reason required, cannot drop below current debt),
+  `/freeze`. `credit_frozen()` blocks bookings regardless of balance; `credit_allows()` permits a
+  negative wallet ONLY within the approved ceiling. Default limit 0 = current behaviour unchanged.
+- `finance.py` — unified ledger (`/api/admin/ledger` + filters/pagination/inflow-outflow-net),
+  CSV export with UTF-8 BOM, `/reconciliation` (wallets vs ledger vs platform revenue + mismatches),
+  `/vouchers/{txn_id}` (سند قبض/صرف/تحويل), 6-stage withdrawal cycle
+  (`/withdrawals/queue`, `/{id}/stage`, `/{id}/receipt`, `/{id}/detail`) — stages never move money;
+  the existing `/withdrawals/{id}/review` remains the only debit path.
+- `market.py` create_booking: `commission_snapshot`, `credit_used`, frozen-account block,
+  credit head-room fallback. All other math untouched.
+
+### Frontend (new pages)
+`AdminLedger.js`, `AdminWithdrawals.js`, `AdminCommissions.js` (incl. commission simulator),
+`AdminCredit.js` (paginated, freeze dialog with mandatory reason), plus the
+"تعديل العمولة يدوياً" card on the order detail page. 4 new sidebar items + routes.
+
+### Testing — `/app/test_reports/iteration_11.json`
+46/46 new backend tests pass (`tests/test_admin_enterprise_b2.py`) + Batch 1 suite re-run 49/49.
+Frontend pass on desktop + 390px. Issues found and FIXED afterwards:
+1. HIGH — a credit-frozen office with a funded wallet could still book → `credit_frozen()` now
+   checked on every booking (verified: 400 "حساب المكتب مجمّد ائتمانياً").
+2. MEDIUM — /admin/credit hid un-exposed offices so a first limit could not be granted → search now
+   bypasses the filter, and the list is paginated (was ~2416 unpaginated rows).
+3. MEDIUM — freeze reason used window.prompt → now a proper RTL dialog.
+4. Data hygiene — leftover QA `credit_limits` doc and 6 TEST_ commission rules deleted;
+   all remaining limits are 0/active (default behaviour restored).
+Known/accepted: short-reason validation returns 422 (Pydantic) rather than 400.
+Pre-existing, NOT caused by Batch 2: one QA account with USD −58, and 216 wallet/ledger
+reconciliation mismatches from directly-seeded QA wallets.
+
+### Backlog after Batch 2
+- P1 Batch 3: decouple `offices` from `users`, org profile/branches/staff, 12-role RBAC, Maker–Checker.
+- P1 Batch 4: file limits 10MB/20MB, document categories, notifications + templates + delivery log,
+  reports center with Excel/PDF export.
+- P2 Batch 5: immutable audit log, sessions/2FA, rate limiting, integration-health screen,
+  settings center + feature flags.
+- P2 Batch 6: Meraaj Scan Bridge PoC.
