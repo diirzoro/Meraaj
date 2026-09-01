@@ -224,3 +224,54 @@ Final contract (supersedes booking.cancellation.approved/rejected): Meraaj Super
 
 ## Test Credentials
 See /app/memory/test_credentials.md — Admin abuzay84@gmail.com / Meraaj@2026; seller@test.com & buyer@test.com / Test@1234; individual+marketer user1@qa-example.com / Test@1234.
+
+---
+
+## Enterprise Admin Upgrade — Batch 1 (2026-06 / session date 2026-09-01)
+
+### Gap Analysis
+Full read-only audit delivered in `/app/memory/ENTERPRISE_GAP_ANALYSIS.md` (function-by-function
+status table, affected files/collections/APIs, 6-batch plan with credit estimates, risks + rollback,
+and the Scanner technical report).
+
+### Implemented (Batch 1 — ADDITIVE ONLY, nothing removed or refactored)
+- `backend/admin_analytics.py` (NEW): `GET /api/admin/analytics` (period day/week/month/year,
+  custom date range, currency/seller/buyer/package/status filters) → sales, platform commission,
+  net profit, escrow pending/released/refunded, seller dues, exposure, liquidity, withdrawals,
+  bookings by status/approval, attention counters, programs, parties, time series, previous-period
+  comparison, risk alerts. `GET /api/admin/attention` → intervention queue.
+- `backend/admin_orders.py` (NEW): `GET /api/admin/bookings` (search by id/package/office/traveler
+  name/passport/rahal_ref + status, seller decision, currency, source, date range, sort, pagination,
+  DB-level `attention` filter), `GET /api/admin/bookings/{id}/full` (booking + parties + documents +
+  missing documents + timeline + notes + tasks + transactions + financial breakdown),
+  internal notes, staff tasks (+`PATCH /api/admin/tasks/{id}`, `GET /api/admin/tasks`),
+  escalate / de-escalate. New collections: `admin_notes`, `admin_tasks`.
+- Frontend: `pages/admin/AdminDashboard.js` rebuilt as an executive dashboard (recharts, filters,
+  clickable KPI tiles that deep-link into the orders center, risk alerts, attention queue);
+  NEW `AdminOrders.js` (orders center) and `AdminOrderDetail.js` (detail page with breadcrumbs,
+  sticky actions, print/export, financials, travelers+docs, timeline, internal notes, tasks,
+  escalation). Routes `/admin/orders`, `/admin/orders/:id`; sidebar item «مركز الطلبات».
+- Lifecycle preserved: admin cannot approve/reject on behalf of the seller — oversight only
+  (escalation touches only `escalated*` fields, verified by tests).
+
+### Bugs fixed
+- `AdminCancellations.js`: white-screen crash — `cancellation_position` is an object for
+  Rahal-sourced bookings and was rendered directly as a React child.
+- `admin_orders`: naive/aware datetime comparison (HTTP 500) and attention filter applied after
+  pagination (wrong totals/pages).
+
+### Testing
+`/app/test_reports/iteration_10.json` — 49/49 backend tests pass
+(`backend/tests/test_admin_enterprise_b1.py`), full frontend Playwright pass, regressions on
+Rahal SSO (no duplicate user), inbound webhook HMAC 200/401, office flows and existing admin pages.
+
+### Backlog (P0 → P2)
+- P0 Batch 2: unified ledger, 6-stage withdrawal cycle + receipt, settlements, commission engine
+  with per-booking snapshot, Credit Control (limits, exposure, 70/90/100% alerts).
+- P1 Batch 3: decouple `offices` from `users`, org profile/branches/staff, 12-role RBAC, Maker–Checker.
+- P1 Batch 4: file limits 10MB/20MB, document categories + missing-doc tracking, notifications +
+  templates + delivery log, reports center with Excel/PDF export.
+- P2 Batch 5: immutable audit log, sessions/2FA, rate limiting, integration-health screen,
+  settings center + feature flags.
+- P2 Batch 6: Meraaj Scan Bridge PoC (real scanner via local Windows service).
+- Deferred: S3 storage (Release B), auto-expiry cron, Capacitor Android phase 2.

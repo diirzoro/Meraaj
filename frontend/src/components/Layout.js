@@ -25,6 +25,7 @@ const individualNav = [
 
 const adminNav = [
   { to: "/admin", label: "لوحة المؤشرات", icon: LayoutDashboard },
+  { to: "/admin/orders", label: "مركز الطلبات", icon: ShoppingBag },
   { to: "/admin/finance", label: "المركز المالي", icon: Banknote },
   { to: "/admin/offices", label: "إدارة المكاتب", icon: Users },
   { to: "/admin/cancellations", label: "طلبات الإلغاء", icon: Ban },

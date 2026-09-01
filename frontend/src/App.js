@@ -21,6 +21,8 @@ import WalletPage from "@/pages/Wallet";
 import Marketer from "@/pages/Marketer";
 import EmbedMarket from "@/pages/EmbedMarket";
 import AdminDashboard from "@/pages/admin/AdminDashboard";
+import AdminOrders from "@/pages/admin/AdminOrders";
+import AdminOrderDetail from "@/pages/admin/AdminOrderDetail";
 import AdminFinance from "@/pages/admin/AdminFinance";
 import AdminOffices from "@/pages/admin/AdminOffices";
 import AdminCancellations from "@/pages/admin/AdminCancellations";
@@ -80,6 +82,8 @@ function AppRoutes() {
       <Route path="/marketer" element={<Protected role="individual"><Marketer /></Protected>} />
 
       <Route path="/admin" element={<Protected role="admin"><AdminDashboard /></Protected>} />
+      <Route path="/admin/orders" element={<Protected role="admin"><AdminOrders /></Protected>} />
+      <Route path="/admin/orders/:id" element={<Protected role="admin"><AdminOrderDetail /></Protected>} />
       <Route path="/admin/finance" element={<Protected role="admin"><AdminFinance /></Protected>} />
       <Route path="/admin/offices" element={<Protected role="admin"><AdminOffices /></Protected>} />
       <Route path="/admin/cancellations" element={<Protected role="admin"><AdminCancellations /></Protected>} />
