@@ -117,6 +117,18 @@ jobs:
             echo "frontend FAILED ($FE_CODE)"; docker logs --tail 80 "$FRONTEND_CONTAINER" || true; exit 1
           fi
 
+          # Public: must be HTTP 200 on the Test domain (end-to-end DNS/nginx/SSL), with retry
+          echo "--- public health check: https://meraaj-test.targetmediagrp.com/ ---"
+          PUB_CODE=000
+          for i in $(seq 1 20); do
+            PUB_CODE="$(curl -s -o /dev/null -w '%{http_code}' https://meraaj-test.targetmediagrp.com/ || echo 000)"
+            if [ "$PUB_CODE" = "200" ]; then echo "public OK (200, attempt $i)"; break; fi
+            echo "... public -> $PUB_CODE (attempt $i/20)"; sleep 2
+          done
+          if [ "$PUB_CODE" != "200" ]; then
+            echo "public FAILED ($PUB_CODE)"; exit 1
+          fi
+
           # --- Cleanup transferred tarballs ---
           rm -f /tmp/meraaj_backend_test.tar /tmp/meraaj_frontend_test.tar
 
