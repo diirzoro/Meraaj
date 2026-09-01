@@ -99,6 +99,13 @@ async def analytics(date_from: Optional[str] = None, date_to: Optional[str] = No
     async for r in db.bookings.aggregate([{"$match": base},
                                           {"$group": {"_id": "$approval_status", "n": {"$sum": 1}}}]):
         by_approval[r["_id"] or "legacy"] = r["n"]
+    # "Awaiting seller decision" = explicit pending OR a legacy new booking with no decision yet.
+    awaiting_seller = await db.bookings.count_documents({**base, "$or": [
+        {"approval_status": "pending"},
+        {"approval_status": {"$in": [None, ""]}, "status": "blue"},
+    ]})
+    by_approval["awaiting_seller"] = awaiting_seller
+    status_sum = sum(by_status.values())
 
     # ---- escrow / money movement (transaction ledger, whole platform) ----
     txn_range = _created_filter(df, dt)
@@ -236,6 +243,8 @@ async def analytics(date_from: Optional[str] = None, date_to: Optional[str] = No
         "credit": {"enabled": False, "limits_total": _z(), "used": exposure},
         "withdrawals": withdrawals,
         "bookings_by_status": by_status, "bookings_by_approval": by_approval,
+        "counts_check": {"bookings_count": bookings_count, "status_sum": status_sum,
+                         "matches": bookings_count == status_sum},
         "attention": attention, "programs": programs, "parties": parties,
         "series": series,
         "comparison": {"previous_gross": prev_gross, "previous_bookings": prev_count},

@@ -14,6 +14,7 @@ from db import (db, serialize, oid, now_iso, adjust_wallet, log_txn,
                 approval_timeout_hours, iso_in_hours, audit)
 from commissions import resolve_commission
 from credit import credit_allows, credit_frozen
+from orgs import notify
 from security import (get_current_user, get_optional_user, require_office,
                       require_buyer, require_permission)
 from integration import notify_rahal, refund_and_release, apply_approval_financials
@@ -707,6 +708,9 @@ async def approve_booking(booking_id: str, user: dict = Depends(require_permissi
         raise HTTPException(409, "تم تحديث حالة الطلب بالفعل")
     await apply_approval_financials(claimed)
     await audit(booking_id, "seller_approved", "seller", actor_id=str(user["_id"]))
+    await notify(claimed.get("buyer_id"), "booking_approved", "تم قبول طلبك",
+                 f"قبل البائع طلبك على: {claimed.get('package_title')}",
+                 f"/bookings", {"booking_id": booking_id})
     if claimed.get("rahal_ref"):
         await notify_rahal("meraaj.booking.approved", {}, envelope={
             "id": str(uuid.uuid4()), "type": "meraaj.booking.approved",
@@ -714,7 +718,6 @@ async def approve_booking(booking_id: str, user: dict = Depends(require_permissi
             "data": {"package_ref": claimed["rahal_ref"], "booking_ref": booking_id,
                      "decided_by": f"office:{user['_id']}"}})
     return {"ok": True, "approval_status": "approved"}
-
 
 @router.post("/bookings/{booking_id}/reject")
 async def reject_booking(booking_id: str, payload: Optional[Dict] = Body(default=None),
@@ -737,6 +740,9 @@ async def reject_booking(booking_id: str, payload: Optional[Dict] = Body(default
         raise HTTPException(409, "تم تحديث حالة الطلب بالفعل")
     await refund_and_release(claimed)
     await audit(booking_id, "seller_rejected", "seller", actor_id=str(user["_id"]), reason=reason)
+    await notify(claimed.get("buyer_id"), "booking_rejected", "تم رفض طلبك",
+                 f"رفض البائع طلبك على: {claimed.get('package_title')} — {reason or 'بدون سبب'}",
+                 "/bookings", {"booking_id": booking_id})
     if claimed.get("rahal_ref"):
         await notify_rahal("meraaj.booking.rejected", {}, envelope={
             "id": str(uuid.uuid4()), "type": "meraaj.booking.rejected",

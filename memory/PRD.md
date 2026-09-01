@@ -328,3 +328,59 @@ reconciliation mismatches from directly-seeded QA wallets.
 - P2 Batch 5: immutable audit log, sessions/2FA, rate limiting, integration-health screen,
   settings center + feature flags.
 - P2 Batch 6: Meraaj Scan Bridge PoC.
+
+---
+
+## Enterprise Admin Upgrade — Batches 3, 4 & 5 (session 2026-09-01)
+Built inside the Emergent workspace ONLY. No GitHub push, no merge, no Test/Live deploy.
+
+### Batch 1/2 feedback fixes
+- `admin_analytics`: `counts_check` (bookings_count vs status_sum now match 464/464) and
+  `bookings_by_approval.awaiting_seller` which includes legacy new bookings (162).
+- `credit`: office-only list, pagination, search bypasses the exposure filter, unique index
+  (office_id+currency) prevents duplicate rows, `credit_frozen()` blocks a frozen office's booking.
+- `finance`: withdrawal cycle unified to 6 numbered stages; `closed` requires a receipt;
+  stages never move money. `POST /reconciliation/adjust(-all)` documents wallet/ledger gaps with a
+  single `opening_balance` ledger entry + audit — no balance edit, no data deletion, one per account.
+- `commissions.ensure_default_rule()` seeds the visible 10% office rule + an inactive B2C rule.
+- `security`: suspended accounts can no longer log in (403); tokens carry `iat` and
+  `force_logout_at` invalidates old tokens; every login writes a `sessions` record.
+
+### New modules
+- `admin_ops.py` — Rahal integration health (grouped failure reasons), guarded manual retry
+  (reason + audit, re-signs with the current secret exactly like the dispatcher), startup indexes.
+- `admin_packages.py` — programs & seats: filters, detail, guarded PATCH (cannot drop allocated
+  seats below sold), state listed/unlisted/archived, date/authorization extension, images,
+  full `package_events` change log.
+- `admin_travelers.py` — unified traveler files (grouped by passport), missing docs, passport
+  expiry states, duplicate detection, document list, guarded permanent delete (reason + audit),
+  passport alerts. Upload limits now 10MB/file and 20MB/batch.
+- `rbac.py` — 21 permissions, 12 roles, per-user assignment, Maker–Checker approvals (creator
+  cannot approve), dual-control policy, sessions, force-logout, suspend, login history, TOTP 2FA.
+- `orgs.py` — organisations (profile, legal docs + expiry, risk class, account manager),
+  branches, staff records, in-app notifications (+ hooks on seller approve/reject), templates,
+  delivery log, idempotent alert scan (docs/passports/credit thresholds/overdue tasks).
+- `enterprise.py` — 13-report centre with CSV export + saved filters, merged immutable audit
+  trail, anomaly detection, 11-section settings + feature flags, service health, encrypted
+  mongodump backup (retention 7) and triple-guarded restore.
+- `scanner-bridge/README.md` + a real «مسح من Scanner» button that probes
+  `https://127.0.0.1:8787` and shows a clear Arabic fallback. File upload/camera unchanged.
+
+### Frontend
+8 new admin pages (Programs, Travelers, Integrations, Orgs, Roles/Security, Notifications,
+Reports, System) — 18 sidebar items, all RTL and mobile-checked.
+
+### Testing — `/app/test_reports/iteration_12.json`
+157 new tests: 152 pass. Batch 1 suite 49/49, Batch 2 suite 46/46 re-run. All reported issues
+fixed afterwards and re-verified by curl + screenshots: outbox retry ImportError (now 200),
+suspended-login bypass (now 403), credit search bypass, settings metadata leak, adjust guard
+order, passport-window date math, audit actor filter, scan result UI, failure-groups display.
+Known/external: Rahal preview rejects our HMAC and returns 404 for some event types, so 111
+events stay undelivered; 216 legacy wallet/ledger mismatches remain until you approve the
+opening-entry run (dry-run verified).
+
+### Remaining / not done
+- Staff LOGIN accounts sharing one office wallet (needs the `users`↔`offices` money-layer
+  refactor; staff are management records today).
+- PDF export is produced from the print view (Arabic RTL correct) instead of server-side PDF.
+- Scanner: PoC contract + UI + docs ready; the Windows service itself needs a machine with a scanner.

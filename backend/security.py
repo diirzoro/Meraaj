@@ -29,9 +29,25 @@ def _secret() -> str:
 
 
 def create_access_token(user_id: str, email: str, role: str) -> str:
-    payload = {"sub": user_id, "email": email, "role": role,
-               "exp": datetime.now(timezone.utc) + timedelta(days=7), "type": "access"}
+    now = datetime.now(timezone.utc)
+    payload = {"sub": user_id, "email": email, "role": role, "iat": int(now.timestamp()),
+               "exp": now + timedelta(days=7), "type": "access"}
     return jwt.encode(payload, _secret(), algorithm=JWT_ALGORITHM)
+
+
+async def record_session(user: dict, request: Optional[Request] = None, source: str = "password"):
+    """Session bookkeeping for the admin security screen. Never blocks a login."""
+    try:
+        ip = ua = ""
+        if request is not None:
+            ip = request.headers.get("x-forwarded-for", "") or (request.client.host if request.client else "")
+            ua = request.headers.get("user-agent", "")[:250]
+        await db.sessions.insert_one({
+            "user_id": str(user["_id"]), "email": user.get("email"),
+            "role": user.get("role"), "source": source, "ip": ip, "user_agent": ua,
+            "revoked": False, "created_at": now_iso(), "last_seen": now_iso()})
+    except Exception:
+        pass
 
 
 async def get_current_user(request: Request) -> dict:
@@ -47,6 +63,13 @@ async def get_current_user(request: Request) -> dict:
         user = await db.users.find_one({"_id": oid(payload["sub"])})
         if not user:
             raise HTTPException(status_code=401, detail="المستخدم غير موجود")
+        forced = user.get("force_logout_at")
+        if forced and payload.get("iat"):
+            try:
+                if datetime.fromisoformat(forced).timestamp() > float(payload["iat"]):
+                    raise HTTPException(status_code=401, detail="تم إنهاء الجلسة من الإدارة")
+            except (ValueError, TypeError):
+                pass
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="انتهت صلاحية الجلسة")
@@ -178,7 +201,7 @@ async def register(payload: RegisterInput, response: Response):
 
 
 @router.post("/login")
-async def login(payload: LoginInput, response: Response):
+async def login(payload: LoginInput, response: Response, request: Request):
     email = payload.email.lower()
     now = datetime.now(timezone.utc)
     rec = await db.login_attempts.find_one({"email": email})
@@ -196,8 +219,11 @@ async def login(payload: LoginInput, response: Response):
         raise HTTPException(status_code=401, detail="بيانات الدخول غير صحيحة")
     if rec:
         await db.login_attempts.delete_one({"email": email})
+    if user.get("status") == "suspended":
+        raise HTTPException(status_code=403, detail="الحساب معلَّق من إدارة معراج — تواصل مع الدعم")
     token = create_access_token(str(user["_id"]), email, user["role"])
     _set_cookie(response, token)
+    await record_session(user, request, "password")
     return {"user": serialize(user), "access_token": token}
 
 

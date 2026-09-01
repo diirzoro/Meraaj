@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import api, { apiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Upload, Trash2, FileText, Download, Eye, Printer, Camera } from "lucide-react";
+import { Upload, Trash2, FileText, Download, Eye, Printer, Camera, ScanLine } from "lucide-react";
 import { toast } from "sonner";
 
 export const DOC_TYPES = [["passport", "جواز السفر"], ["visa", "التأشيرة"], ["photo", "صورة"], ["ticket", "تذكرة السفر"], ["other", "أخرى"]];
@@ -22,6 +22,27 @@ export default function TravelerDocs({ bookingId, registrantIndex, passportNo })
   const [docType, setDocType] = useState("passport");
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState(null); // { doc, url }
+  const [scanBusy, setScanBusy] = useState(false);
+  const [scanMsg, setScanMsg] = useState("");
+
+  const probeScanner = async () => {
+    setScanBusy(true); setScanMsg("");
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 2500);
+      const r = await fetch("https://127.0.0.1:8787/api/scanners", { signal: ctrl.signal });
+      clearTimeout(t);
+      const data = await r.json();
+      const devices = data.devices || [];
+      setScanMsg(devices.length
+        ? `تم العثور على ${devices.length} ماسح: ${devices.map((d) => d.name).join(" • ")} — اختر الجهاز لبدء المسح.`
+        : "خدمة المسح تعمل لكن لا يوجد ماسح متصل. تحقّق من توصيل الجهاز، أو استخدم «رفع ملفات».");
+    } catch {
+      setScanMsg("لم يتم العثور على خدمة المسح المحلية (Meraaj Scan Bridge) على هذا الجهاز. "
+        + "المتصفح لا يستطيع الوصول إلى الماسح مباشرةً (TWAIN/WIA)، لذلك تُثبَّت الخدمة على Windows مرة واحدة. "
+        + "يمكنك حالياً استخدام «رفع ملفات» أو «تصوير بالكاميرا».");
+    } finally { setScanBusy(false); }
+  };
 
   const load = () => api.get(`/bookings/${bookingId}/documents?registrant_index=${registrantIndex}`)
     .then((r) => setDocs(r.data)).catch(() => {});
@@ -128,11 +149,22 @@ export default function TravelerDocs({ bookingId, registrantIndex, passportNo })
           <input type="file" multiple className="hidden" accept="image/png,image/jpeg,image/webp,application/pdf" onChange={onFile} disabled={busy} />
         </label>
         <label className="inline-flex items-center gap-1.5 text-xs bg-white border border-[#0A2540] text-[#0A2540] rounded-md px-3 h-8 cursor-pointer hover:bg-[#0A2540]/5" data-testid={`doc-camera-${registrantIndex}`}>
-          <Camera className="w-3.5 h-3.5" /> مسح / تصوير
+          <Camera className="w-3.5 h-3.5" /> تصوير بالكاميرا
           <input type="file" accept="image/*" capture="environment" className="hidden" onChange={onFile} disabled={busy} />
         </label>
-        <span className="text-[10px] text-muted-foreground">20MB لكل ملف</span>
+        <button type="button" data-testid={`doc-scanner-${registrantIndex}`} disabled={busy || scanBusy}
+          onClick={probeScanner}
+          className="inline-flex items-center gap-1.5 text-xs bg-white border border-[#D4AF37] text-[#0A2540] rounded-md px-3 h-8 hover:bg-[#D4AF37]/10">
+          <ScanLine className="w-3.5 h-3.5" /> {scanBusy ? "جارٍ البحث عن ماسح..." : "مسح من Scanner"}
+        </button>
+        <span className="text-[10px] text-muted-foreground">10MB لكل ملف • 20MB للدفعة</span>
       </div>
+
+      {scanMsg && (
+        <div className="mt-2 text-[11px] bg-[#FEFCE8] border border-[#FEF08A] text-[#A16207] rounded-lg px-3 py-2" data-testid={`scanner-msg-${registrantIndex}`}>
+          {scanMsg}
+        </div>
+      )}
 
       <Dialog open={!!preview} onOpenChange={(o) => !o && closePreview()}>
         <DialogContent dir="rtl" className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="doc-preview-dialog">

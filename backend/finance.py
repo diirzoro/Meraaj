@@ -19,11 +19,11 @@ CCY = ("SAR", "USD")
 
 # Withdrawal workflow: request → review → internal approval → accounting → executed → receipt → closed
 STAGES = ["requested", "under_review", "approved_internal", "sent_to_accounting",
-          "executed", "receipt_uploaded", "closed"]
+          "executed", "closed"]
 STAGE_LABEL = {
-    "requested": "طلب البائع", "under_review": "مراجعة الإدارة",
-    "approved_internal": "اعتماد داخلي", "sent_to_accounting": "إحالة للمحاسبة",
-    "executed": "تنفيذ التحويل", "receipt_uploaded": "رفع الإيصال", "closed": "إغلاق الطلب",
+    "requested": "١. طلب البائع", "under_review": "٢. مراجعة الإدارة",
+    "approved_internal": "٣. اعتماد داخلي", "sent_to_accounting": "٤. إحالة للمحاسبة",
+    "executed": "٥. تنفيذ التحويل ورفع الإيصال", "closed": "٦. إغلاق الطلب",
 }
 
 TXN_LABEL = {
@@ -239,8 +239,8 @@ async def set_stage(wid: str, payload: StageIn, admin: dict = Depends(require_ad
         raise HTTPException(400, "لا يمكن الرجوع لمرحلة سابقة")
     if payload.stage == "executed" and w.get("status") != "approved":
         raise HTTPException(400, "يجب اعتماد طلب السحب مالياً قبل تسجيل التنفيذ")
-    if payload.stage == "receipt_uploaded" and not w.get("receipt_url"):
-        raise HTTPException(400, "ارفع إيصال التحويل أولاً")
+    if payload.stage == "closed" and not w.get("receipt_url"):
+        raise HTTPException(400, "لا يمكن إغلاق الطلب قبل رفع إيصال التحويل")
     entry = {"stage": payload.stage, "label": STAGE_LABEL[payload.stage],
              "note": payload.note.strip(), "by": admin.get("email"), "at": now_iso()}
     await db.withdrawals.update_one({"_id": w["_id"]}, {
@@ -264,10 +264,83 @@ async def upload_receipt(wid: str, payload: ReceiptIn, admin: dict = Depends(req
                  "bank_reference": payload.reference.strip(),
                  "receipt_uploaded_by": admin.get("email"), "receipt_uploaded_at": now_iso()},
         "$push": {"stage_history": {"stage": "receipt_uploaded",
-                                    "label": STAGE_LABEL["receipt_uploaded"],
+                                    "label": "إيصال التحويل",
                                     "note": payload.reference.strip(),
                                     "by": admin.get("email"), "at": now_iso()}}})
     return {"ok": True}
+
+
+class AdjustIn(BaseModel):
+    office_id: str
+    currency: str
+    reason: str = Field(min_length=5)
+    dry_run: bool = False
+
+
+@router.post("/reconciliation/adjust")
+async def adjust_reconciliation(payload: AdjustIn, admin: dict = Depends(require_admin)):
+    """Documents a wallet/ledger difference with an OPENING-BALANCE ledger entry.
+    It NEVER edits a wallet balance and never deletes historic data: it only writes the
+    missing ledger counterpart so the books reconcile, with a mandatory reason + audit."""
+    if payload.currency not in CCY:
+        raise HTTPException(400, "عملة غير مدعومة")
+    u = await db.users.find_one({"_id": oid(payload.office_id)},
+                                {"office_name": 1, "email": 1, "wallet": 1})
+    if not u:
+        raise HTTPException(404, "الحساب غير موجود")
+    wallet_total = round(float(((u.get("wallet") or {}).get(payload.currency) or {}).get("total") or 0), 2)
+    ledger_total = 0.0
+    async for r in db.transactions.aggregate([
+            {"$match": {"office_id": payload.office_id, "currency": payload.currency}},
+            {"$group": {"_id": None, "t": {"$sum": "$amount"}}}]):
+        ledger_total = round(float(r["t"] or 0), 2)
+    diff = round(wallet_total - ledger_total, 2)
+    existing = await db.transactions.find_one({"office_id": payload.office_id,
+                                              "currency": payload.currency,
+                                              "type": "opening_balance"})
+    if existing:
+        raise HTTPException(400, "يوجد قيد افتتاحي مسجّل مسبقاً لهذا الحساب")
+    if abs(diff) < 0.5:
+        raise HTTPException(400, "لا يوجد فرق يستوجب قيد تسوية")
+    if payload.dry_run:
+        return {"dry_run": True, "office_id": payload.office_id, "currency": payload.currency,
+                "wallet_total": wallet_total, "ledger_total": ledger_total, "difference": diff}
+    txn = {"office_id": payload.office_id, "type": "opening_balance", "amount": diff,
+           "currency": payload.currency,
+           "description": f"قيد افتتاحي/تسوية موثّقة: {payload.reason.strip()}",
+           "ref": None, "meta": {"wallet_total": wallet_total, "ledger_total": ledger_total,
+                                 "by": admin.get("email")},
+           "created_at": now_iso()}
+    res = await db.transactions.insert_one(txn)
+    await db.audit_log.insert_one({
+        "entity": "reconciliation", "entity_id": payload.office_id,
+        "action": "opening_balance_entry", "actor": admin.get("email"),
+        "actor_id": str(admin["_id"]), "reason": payload.reason.strip(),
+        "before": {"ledger_total": ledger_total}, "after": {"ledger_total": round(ledger_total + diff, 2)},
+        "meta": {"currency": payload.currency, "amount": diff, "txn_id": str(res.inserted_id)},
+        "at": now_iso()})
+    return {"ok": True, "txn_id": str(res.inserted_id), "amount": diff,
+            "office": u.get("office_name") or u.get("email"),
+            "note": "لم يتم تعديل أي رصيد — تمت إضافة قيد افتتاحي موثّق فقط"}
+
+
+@router.post("/reconciliation/adjust-all")
+async def adjust_all(payload: AdjustIn, admin: dict = Depends(require_admin)):
+    """Bulk opening entries for every mismatching account (same rules, one entry each)."""
+    from finance import reconciliation as _recon
+    rec = await _recon(admin)
+    done, skipped = [], 0
+    for m in rec["mismatches"]:
+        try:
+            r = await adjust_reconciliation(AdjustIn(
+                office_id=m["office_id"], currency=m["currency"],
+                reason=payload.reason.strip(), dry_run=payload.dry_run), admin)
+            done.append({"office": m["name"], "currency": m["currency"],
+                         "amount": r.get("amount") or r.get("difference")})
+        except HTTPException:
+            skipped += 1
+    return {"processed": len(done), "skipped": skipped, "dry_run": payload.dry_run,
+            "entries": done[:100]}
 
 
 @router.get("/withdrawals/{wid}/detail")

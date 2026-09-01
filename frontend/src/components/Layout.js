@@ -4,7 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import {
   LayoutDashboard, Store, Package, ShoppingBag, TicketCheck, Wallet,
   Users, Banknote, ShieldAlert, LogOut, Building2, Network, Menu, X, TrendingUp, Ban,
-  BookOpen, ArrowDownCircle, Percent, Gauge,
+  BookOpen, ArrowDownCircle, Percent, Gauge, Bell, FileSpreadsheet, Settings2,
 } from "lucide-react";
 
 const officeNav = [
@@ -32,6 +32,14 @@ const adminNav = [
   { to: "/admin/withdrawals", label: "دورة السحوبات", icon: ArrowDownCircle },
   { to: "/admin/commissions", label: "محرك العمولات", icon: Percent },
   { to: "/admin/credit", label: "السقف الائتماني", icon: Gauge },
+  { to: "/admin/programs", label: "البرامج والمقاعد", icon: Package },
+  { to: "/admin/travelers", label: "المسافرون والمستندات", icon: TicketCheck },
+  { to: "/admin/integrations", label: "صحة التكامل", icon: Network },
+  { to: "/admin/orgs", label: "المؤسسات", icon: Building2 },
+  { to: "/admin/roles", label: "الصلاحيات والأمان", icon: ShieldAlert },
+  { to: "/admin/notifications", label: "الإشعارات والمهام", icon: Bell },
+  { to: "/admin/reports", label: "التقارير", icon: FileSpreadsheet },
+  { to: "/admin/system", label: "إعدادات النظام", icon: Settings2 },
   { to: "/admin/offices", label: "إدارة المكاتب", icon: Users },
   { to: "/admin/cancellations", label: "طلبات الإلغاء", icon: Ban },
   { to: "/admin/disputes", label: "النزاعات", icon: ShieldAlert },

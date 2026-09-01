@@ -140,7 +140,7 @@ export default function AdminCredit() {
       <div className="flex items-center justify-center gap-3 mt-5" data-testid="credit-pagination">
         <button disabled={page <= 1} onClick={() => setPage(page - 1)} data-testid="credit-prev"
           className="h-8 px-3 rounded-md border text-xs disabled:opacity-40">السابق</button>
-        <span className="text-xs tabular">صفحة {page} من {Math.max(1, Math.ceil((d.total || 0) / 50))} • {d.total || 0} حساب</span>
+        <span className="text-xs tabular">صفحة {page} من {Math.max(1, Math.ceil((d.total || 0) / 50))} • {d.items.length} معروض من {d.total || 0}</span>
         <button disabled={page >= Math.ceil((d.total || 0) / 50)} onClick={() => setPage(page + 1)} data-testid="credit-next"
           className="h-8 px-3 rounded-md border text-xs disabled:opacity-40">التالي</button>
       </div>

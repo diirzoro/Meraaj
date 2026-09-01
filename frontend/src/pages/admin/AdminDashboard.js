@@ -93,6 +93,7 @@ export default function AdminDashboard() {
         </button>
         <span className="text-[11px] text-muted-foreground mr-auto">
           الفترة: {d.range.from} ← {d.range.to} • {s.bookings_count} حجز
+          {d.counts_check && !d.counts_check.matches && ` (مجموع الحالات ${d.counts_check.status_sum})`}
         </span>
       </div>
 
@@ -183,7 +184,7 @@ export default function AdminDashboard() {
         <Tile title="تم إصدار التأشيرة" value={d.bookings_by_status.yellow || 0} onClick={() => goOrders("status=yellow")} tid="tile-yellow" />
         <Tile title="تم التفويج" value={d.bookings_by_status.green || 0} onClick={() => goOrders("status=green")} tid="tile-green" />
         <Tile title="ملغاة" value={d.bookings_by_status.cancelled || 0} onClick={() => goOrders("status=cancelled")} tid="tile-cancelled" />
-        <Tile title="بانتظار قبول البائع" value={d.bookings_by_approval.pending || 0} onClick={() => goOrders("approval_status=pending")} tid="tile-pending" />
+        <Tile title="بانتظار قبول البائع" value={d.bookings_by_approval.awaiting_seller ?? d.bookings_by_approval.pending ?? 0} onClick={() => goOrders("approval_status=pending")} tid="tile-pending" />
         <Tile title="مرفوضة" value={d.bookings_by_approval.rejected || 0} onClick={() => goOrders("approval_status=rejected")} tid="tile-rejected" />
       </div>
 
@@ -228,7 +229,7 @@ export default function AdminDashboard() {
         <Action to="/admin/disputes" title="نزاعات مفتوحة" count={at.open_disputes} icon={ShieldAlert} danger />
         <Action to="/admin/orders?attention=1" title="طلبات مُصعَّدة" count={at.escalated} icon={AlertTriangle} />
         <Action to="/admin/orders?attention=1" title="مهام مفتوحة" count={at.open_tasks} icon={ListChecks} />
-        <Action to="/admin/orders?attention=1" title="أحداث لم تُسلَّم لرحّال" count={at.failed_outbox} icon={PlugZap} />
+        <Action to="/admin/integrations" title="أحداث لم تُسلَّم لرحّال" count={at.failed_outbox} icon={PlugZap} />
       </div>
     </>
   );

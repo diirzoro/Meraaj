@@ -27,6 +27,14 @@ import AdminLedger from "@/pages/admin/AdminLedger";
 import AdminWithdrawals from "@/pages/admin/AdminWithdrawals";
 import AdminCommissions from "@/pages/admin/AdminCommissions";
 import AdminCredit from "@/pages/admin/AdminCredit";
+import AdminPrograms from "@/pages/admin/AdminPrograms";
+import AdminTravelers from "@/pages/admin/AdminTravelers";
+import AdminIntegrations from "@/pages/admin/AdminIntegrations";
+import AdminOrgs from "@/pages/admin/AdminOrgs";
+import AdminRoles from "@/pages/admin/AdminRoles";
+import AdminNotifications from "@/pages/admin/AdminNotifications";
+import AdminReports from "@/pages/admin/AdminReports";
+import AdminSystem from "@/pages/admin/AdminSystem";
 import AdminFinance from "@/pages/admin/AdminFinance";
 import AdminOffices from "@/pages/admin/AdminOffices";
 import AdminCancellations from "@/pages/admin/AdminCancellations";
@@ -92,6 +100,14 @@ function AppRoutes() {
       <Route path="/admin/withdrawals" element={<Protected role="admin"><AdminWithdrawals /></Protected>} />
       <Route path="/admin/commissions" element={<Protected role="admin"><AdminCommissions /></Protected>} />
       <Route path="/admin/credit" element={<Protected role="admin"><AdminCredit /></Protected>} />
+      <Route path="/admin/programs" element={<Protected role="admin"><AdminPrograms /></Protected>} />
+      <Route path="/admin/travelers" element={<Protected role="admin"><AdminTravelers /></Protected>} />
+      <Route path="/admin/integrations" element={<Protected role="admin"><AdminIntegrations /></Protected>} />
+      <Route path="/admin/orgs" element={<Protected role="admin"><AdminOrgs /></Protected>} />
+      <Route path="/admin/roles" element={<Protected role="admin"><AdminRoles /></Protected>} />
+      <Route path="/admin/notifications" element={<Protected role="admin"><AdminNotifications /></Protected>} />
+      <Route path="/admin/reports" element={<Protected role="admin"><AdminReports /></Protected>} />
+      <Route path="/admin/system" element={<Protected role="admin"><AdminSystem /></Protected>} />
       <Route path="/admin/finance" element={<Protected role="admin"><AdminFinance /></Protected>} />
       <Route path="/admin/offices" element={<Protected role="admin"><AdminOffices /></Protected>} />
       <Route path="/admin/cancellations" element={<Protected role="admin"><AdminCancellations /></Protected>} />

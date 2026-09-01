@@ -83,6 +83,30 @@ async def resolve_commission(*, buyer_type: str, currency: str, package: dict,
     return default
 
 
+async def ensure_default_rule():
+    """Startup seed: makes the current hard-coded 10% platform commission an explicit,
+    visible and manageable rule. Value is identical to PLATFORM_COMMISSION_PCT, so behaviour
+    does not change; admins can now see and edit it."""
+    if await db.commission_rules.count_documents({}) > 0:
+        return
+    await db.commission_rules.insert_one({
+        "name": "عمولة المنصة الأساسية — المكاتب",
+        "mode": "percent", "value": platform_pct(), "charge_side": "buyer",
+        "per_category": None, "priority": 0, "active": True,
+        "note": "القاعدة الأساسية المعتمدة (10%) — تُطبَّق على حجوزات المكاتب بكل العملات.",
+        "scope": {"buyer_type": "office", "currency": "any", "package_type": "any",
+                  "source": "any", "seller_id": "", "package_id": ""},
+        "created_by": "system", "created_at": now_iso(), "updated_at": now_iso()})
+    await db.commission_rules.insert_one({
+        "name": "قاعدة المشتري الفرد (B2C) — معطّلة افتراضياً",
+        "mode": "percent", "value": platform_pct(), "charge_side": "seller",
+        "per_category": None, "priority": 0, "active": False,
+        "note": "في B2C تُحتسب العمولة من هامش البائع؛ تُفعّل فقط بقرار إداري.",
+        "scope": {"buyer_type": "individual", "currency": "any", "package_type": "any",
+                  "source": "any", "seller_id": "", "package_id": ""},
+        "created_by": "system", "created_at": now_iso(), "updated_at": now_iso()})
+
+
 # ---------------- CRUD ----------------
 class Scope(BaseModel):
     buyer_type: str = "any"       # office | individual | any

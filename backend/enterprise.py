@@ -1,0 +1,515 @@
+"""Batch 5 — Reports center, unified audit trail, settings/feature flags, system health
+and encrypted database backup/restore. All additive.
+"""
+import csv
+import io
+import os
+import subprocess
+from datetime import datetime, timezone
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+
+from db import db, serialize, oid, now_iso, wallet_available, platform_pct
+from security import require_admin
+
+router = APIRouter(prefix="/api/admin", tags=["admin-enterprise"])
+
+CCY = ("SAR", "USD")
+BACKUP_DIR = "/app/backups"
+RETENTION = 7
+
+REPORTS = {
+    "sales": "المبيعات والطلبات", "profit": "الأرباح والعمولات",
+    "wallets": "المحافظ والأرصدة", "credit": "الانكشاف والسقوف الائتمانية",
+    "programs": "البرامج والمقاعد", "travelers": "المسافرون والتأشيرات",
+    "cancellations": "الإلغاءات والاستردادات", "withdrawals": "السحوبات والتسويات",
+    "offices": "أداء المكاتب والبائعين", "users": "نشاط المستخدمين",
+    "audit": "سجل التدقيق", "escrow": "الأموال المعلقة والمحررة",
+    "fx": "مقارنة العملات وأسعار الصرف",
+}
+
+
+def _rng(date_from, date_to):
+    f = {}
+    if date_from:
+        f["$gte"] = date_from
+    if date_to:
+        f["$lte"] = date_to + "T23:59:59.999999+00:00"
+    return {"created_at": f} if f else {}
+
+
+async def _run(report: str, date_from: Optional[str], date_to: Optional[str],
+               currency: Optional[str], office_id: Optional[str]) -> dict:
+    rng = _rng(date_from, date_to)
+    base = dict(rng)
+    if currency in CCY:
+        base["currency"] = currency
+
+    if report in ("sales", "profit", "escrow", "cancellations"):
+        f = dict(base)
+        if office_id:
+            f["$or"] = [{"buyer_id": office_id}, {"seller_id": office_id}]
+        if report == "cancellations":
+            f["status"] = "cancelled"
+        docs = await db.bookings.find(f).sort("created_at", -1).to_list(5000)
+        if report == "profit":
+            cols = ["التاريخ", "البرنامج", "المشتري", "البائع", "عمولة المشتري",
+                    "عمولة المنصة", "أرباح المنصة", "عمولة المسوّق", "العملة"]
+            rows = [[d.get("created_at", "")[:10], d.get("package_title"), d.get("buyer_office_name"),
+                     d.get("seller_office_name"), d.get("buyer_commission_total", 0),
+                     d.get("platform_fee", 0), d.get("platform_profit", 0),
+                     d.get("marketer_commission", 0), d.get("currency")] for d in docs]
+        else:
+            cols = ["التاريخ", "البرنامج", "المشتري", "البائع", "المقاعد", "المبلغ",
+                    "صافي البائع", "الحالة", "قرار البائع", "العملة"]
+            rows = [[d.get("created_at", "")[:10], d.get("package_title"), d.get("buyer_office_name"),
+                     d.get("seller_office_name"), d.get("seats"), d.get("amount_charged", 0),
+                     d.get("net_cost_total", 0), d.get("status"),
+                     d.get("approval_status") or "legacy", d.get("currency")] for d in docs]
+        return {"columns": cols, "rows": rows}
+
+    if report == "wallets":
+        users = await db.users.find({"role": {"$in": ["office", "individual"]}}).to_list(3000)
+        cols = ["الحساب", "النوع", "متاح SAR", "معلّق SAR", "متاح USD", "معلّق USD", "الحالة"]
+        rows = []
+        for u in users:
+            w = u.get("wallet") or {}
+            rows.append([u.get("office_name") or u.get("email"), u.get("role"),
+                         round(float((w.get("SAR") or {}).get("available") or 0), 2),
+                         round(float((w.get("SAR") or {}).get("pending") or 0), 2),
+                         round(float((w.get("USD") or {}).get("available") or 0), 2),
+                         round(float((w.get("USD") or {}).get("pending") or 0), 2),
+                         u.get("status")])
+        return {"columns": cols, "rows": rows}
+
+    if report == "credit":
+        cols = ["المكتب", "العملة", "السقف", "الرصيد", "المستخدم", "المتاح", "الحالة"]
+        rows = []
+        async for l in db.credit_limits.find({}):
+            u = await db.users.find_one({"_id": oid(l["office_id"])}, {"office_name": 1, "wallet": 1})
+            if not u:
+                continue
+            avail = wallet_available(u.get("wallet") or {}, l["currency"])
+            used = max(0.0, -avail)
+            rows.append([u.get("office_name"), l["currency"], l.get("limit", 0),
+                         round(avail, 2), round(used, 2),
+                         round(max(0.0, float(l.get("limit") or 0) - used), 2),
+                         l.get("status", "active")])
+        return {"columns": cols, "rows": rows}
+
+    if report == "programs":
+        pkgs = await db.packages.find(dict(rng)).sort("created_at", -1).to_list(3000)
+        cols = ["البرنامج", "المكتب", "المصدر", "الانطلاق", "السعر", "مخصص", "مباع", "متبقٍ", "الحالة", "العملة"]
+        rows = []
+        for p in pkgs:
+            pid = str(p["_id"])
+            sold = 0
+            async for r in db.bookings.aggregate([
+                    {"$match": {"package_id": pid, "status": {"$ne": "cancelled"}}},
+                    {"$group": {"_id": None, "s": {"$sum": "$seats"}}}]):
+                sold = int(r["s"] or 0)
+            alloc = int(p.get("total_seats") or 0)
+            rows.append([p.get("title"), p.get("seller_office_name"),
+                         "رحّال" if p.get("source") == "rahal" else "معراج",
+                         p.get("departure_date"), p.get("final_sale_price"), alloc, sold,
+                         max(0, alloc - sold), p.get("status"), p.get("currency")])
+        return {"columns": cols, "rows": rows}
+
+    if report == "travelers":
+        cols = ["المسافر", "رقم الجواز", "الفئة", "التأشيرة", "البرنامج", "الطلب", "الانطلاق"]
+        rows = []
+        for b in await db.bookings.find(dict(rng), {"registrants": 1, "package_title": 1, "departure_date": 1}).to_list(3000):
+            for r in b.get("registrants") or []:
+                rows.append([r.get("name"), r.get("passport_no"), r.get("category") or "adult",
+                             r.get("visa_no") or "—", b.get("package_title"), str(b["_id"])[-6:],
+                             b.get("departure_date")])
+        return {"columns": cols, "rows": rows}
+
+    if report == "withdrawals":
+        docs = await db.withdrawals.find(dict(base)).sort("created_at", -1).to_list(3000)
+        cols = ["التاريخ", "المكتب", "المبلغ", "العملة", "الطريقة", "الحالة", "المرحلة", "مرجع الحوالة"]
+        rows = [[d.get("created_at", "")[:10], d.get("office_name"), d.get("amount"),
+                 d.get("currency"), d.get("method"), d.get("status"),
+                 d.get("stage") or "—", d.get("bank_reference") or "—"] for d in docs]
+        return {"columns": cols, "rows": rows}
+
+    if report == "offices":
+        cols = ["المكتب", "طلبات كمشتري", "طلبات كبائع", "إجمالي المبيعات SAR",
+                "إجمالي المبيعات USD", "نزاعات", "الحالة"]
+        rows = []
+        async for u in db.users.find({"role": "office"}, {"office_name": 1, "status": 1}):
+            uid = str(u["_id"])
+            as_buyer = await db.bookings.count_documents({"buyer_id": uid})
+            as_seller = await db.bookings.count_documents({"seller_id": uid})
+            tot = {"SAR": 0.0, "USD": 0.0}
+            async for r in db.bookings.aggregate([{"$match": {"seller_id": uid}},
+                                                  {"$group": {"_id": "$currency",
+                                                              "t": {"$sum": "$amount_charged"}}}]):
+                if r["_id"] in tot:
+                    tot[r["_id"]] = round(r["t"], 2)
+            disputes = await db.bookings.count_documents({"dispute.status": "open",
+                                                          "$or": [{"buyer_id": uid}, {"seller_id": uid}]})
+            if as_buyer or as_seller:
+                rows.append([u.get("office_name"), as_buyer, as_seller, tot["SAR"], tot["USD"],
+                             disputes, u.get("status")])
+        return {"columns": cols, "rows": rows}
+
+    if report == "users":
+        cols = ["البريد", "الاسم/المكتب", "النوع", "الحالة", "تاريخ الإنشاء", "آخر جلسة"]
+        rows = []
+        for u in await db.users.find({}, {"email": 1, "office_name": 1, "role": 1, "status": 1, "created_at": 1}).sort("created_at", -1).to_list(3000):
+            s = await db.sessions.find_one({"user_id": str(u["_id"])}, sort=[("created_at", -1)])
+            rows.append([u.get("email"), u.get("office_name"), u.get("role"), u.get("status"),
+                         str(u.get("created_at") or "")[:10],
+                         str((s or {}).get("created_at") or "—")[:16]])
+        return {"columns": cols, "rows": rows}
+
+    if report == "audit":
+        cols = ["التاريخ", "الكيان", "الإجراء", "المنفّذ", "السبب", "قبل", "بعد"]
+        rows = []
+        f = {}
+        if date_from or date_to:
+            f = {"at": {k.replace("created_at", "at"): v
+                        for k, v in _rng(date_from, date_to)["created_at"].items()}}
+        for a in await db.audit_log.find(f).sort("at", -1).to_list(3000):
+            rows.append([str(a.get("at"))[:19], a.get("entity"), a.get("action"), a.get("actor"),
+                         a.get("reason") or "", str(a.get("before") or ""), str(a.get("after") or "")])
+        return {"columns": cols, "rows": rows}
+
+    if report == "fx":
+        cols = ["العملة", "إجمالي المبيعات", "عمولة المنصة", "المحافظ (إجمالي)", "عدد الطلبات"]
+        rows = []
+        for c in CCY:
+            g = p = 0.0
+            n = 0
+            async for r in db.bookings.aggregate([{"$match": {**rng, "currency": c}},
+                                                  {"$group": {"_id": None,
+                                                              "g": {"$sum": "$amount_charged"},
+                                                              "p": {"$sum": "$platform_fee"},
+                                                              "n": {"$sum": 1}}}]):
+                g, p, n = round(r["g"], 2), round(r["p"], 2), r["n"]
+            wtot = 0.0
+            async for u in db.users.find({"role": {"$in": ["office", "individual"]}}, {"wallet": 1}):
+                wtot += float(((u.get("wallet") or {}).get(c) or {}).get("total") or 0)
+            rows.append([c, g, p, round(wtot, 2), n])
+        return {"columns": cols, "rows": rows}
+
+    raise HTTPException(400, "تقرير غير معروف")
+
+
+@router.get("/reports")
+async def report_catalog(admin: dict = Depends(require_admin)):
+    saved = serialize(await db.saved_reports.find({}).sort("created_at", -1).to_list(100))
+    return {"reports": REPORTS, "saved": saved}
+
+
+class RunIn(BaseModel):
+    report: str
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    currency: Optional[str] = None
+    office_id: Optional[str] = None
+
+
+@router.post("/reports/run")
+async def run_report(payload: RunIn, admin: dict = Depends(require_admin)):
+    if payload.report not in REPORTS:
+        raise HTTPException(400, "تقرير غير معروف")
+    res = await _run(payload.report, payload.date_from, payload.date_to,
+                     payload.currency, payload.office_id)
+    return {"report": payload.report, "title": REPORTS[payload.report],
+            "columns": res["columns"], "rows": res["rows"][:500],
+            "row_count": len(res["rows"]), "generated_at": now_iso()}
+
+
+@router.post("/reports/export")
+async def export_report(payload: RunIn, admin: dict = Depends(require_admin)):
+    """CSV (Excel-ready, UTF-8 BOM). PDF is produced from the print view in the browser
+    so Arabic RTL renders correctly."""
+    if payload.report not in REPORTS:
+        raise HTTPException(400, "تقرير غير معروف")
+    res = await _run(payload.report, payload.date_from, payload.date_to,
+                     payload.currency, payload.office_id)
+    buf = io.StringIO()
+    buf.write("\ufeff")
+    w = csv.writer(buf)
+    w.writerow([REPORTS[payload.report]])
+    w.writerow(res["columns"])
+    for r in res["rows"]:
+        w.writerow(r)
+    buf.seek(0)
+    await db.report_exports.insert_one({"report": payload.report, "rows": len(res["rows"]),
+                                        "by": admin.get("email"), "at": now_iso()})
+    return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv; charset=utf-8",
+                             headers={"Content-Disposition":
+                                      f'attachment; filename="meraaj-{payload.report}.csv"'})
+
+
+class SaveIn(BaseModel):
+    name: str
+    report: str
+    filters: dict = {}
+
+
+@router.post("/reports/save")
+async def save_report(payload: SaveIn, admin: dict = Depends(require_admin)):
+    rec = {**payload.model_dump(), "by": admin.get("email"), "created_at": now_iso()}
+    res = await db.saved_reports.insert_one(rec)
+    rec["_id"] = res.inserted_id
+    return serialize(rec)
+
+
+# ---------------- unified audit trail ----------------
+@router.get("/audit")
+async def audit_trail(entity: Optional[str] = None, actor: Optional[str] = None,
+                      q: Optional[str] = None, limit: int = 100,
+                      admin: dict = Depends(require_admin)):
+    """Merges the immutable audit sources into one chronological view."""
+    out = []
+    f = {}
+    if entity:
+        f["entity"] = entity
+    if actor:
+        f["actor"] = {"$regex": actor, "$options": "i"}
+    for a in await db.audit_log.find(f).sort("at", -1).to_list(limit):
+        out.append({"source": "audit_log", "at": a.get("at"), "entity": a.get("entity"),
+                    "entity_id": a.get("entity_id"), "action": a.get("action"),
+                    "actor": a.get("actor"), "reason": a.get("reason"),
+                    "before": a.get("before"), "after": a.get("after")})
+    if not entity or entity == "booking":
+        for e in await db.booking_events.find({}).sort("at", -1).to_list(limit):
+            out.append({"source": "booking_events", "at": e.get("at"), "entity": "booking",
+                        "entity_id": e.get("booking_id"), "action": e.get("event"),
+                        "actor": e.get("actor_type"), "reason": e.get("reason"),
+                        "before": None, "after": e.get("meta")})
+    for coll, ent, act_field in (("credit_events", "credit", "action"),
+                                 ("commission_events", "commission", "action"),
+                                 ("package_events", "package", "action")):
+        if entity and entity != ent:
+            continue
+        for e in await db[coll].find({}).sort("at", -1).to_list(limit):
+            out.append({"source": coll, "at": e.get("at"), "entity": ent,
+                        "entity_id": e.get("office_id") or e.get("rule_id") or e.get("package_id"),
+                        "action": e.get(act_field), "actor": e.get("by") or e.get("actor"),
+                        "reason": e.get("reason"), "before": e.get("before"),
+                        "after": e.get("after")})
+    if q:
+        ql = q.lower()
+        out = [x for x in out if ql in str(x).lower()]
+    if actor:
+        al = actor.lower()
+        out = [x for x in out if al in str(x.get("actor") or "").lower()]
+    out.sort(key=lambda x: str(x.get("at") or ""), reverse=True)
+    return {"items": out[:limit], "total": len(out)}
+
+
+@router.get("/anomalies")
+async def anomalies(admin: dict = Depends(require_admin)):
+    """Simple abnormal-activity detection: repeated identical bookings, high-value spikes,
+    repeated failed logins and undelivered integration bursts."""
+    out = []
+    async for r in db.bookings.aggregate([
+            {"$group": {"_id": {"b": "$buyer_id", "p": "$package_id", "s": "$seats"},
+                        "n": {"$sum": 1}}},
+            {"$match": {"n": {"$gte": 3}}}, {"$sort": {"n": -1}}, {"$limit": 10}]):
+        out.append({"type": "duplicate_bookings", "level": "warning",
+                    "message": f"{r['n']} حجوزات متطابقة (نفس المشتري/البرنامج/المقاعد)"})
+    for a in await db.login_attempts.find({"count": {"$gte": 3}}).to_list(10):
+        out.append({"type": "failed_logins", "level": "warning",
+                    "message": f"{a.get('count')} محاولات دخول فاشلة لـ {a.get('email')}"})
+    und = await db.rahal_outbox.count_documents({"status": {"$in": ["pending", "failed"]}})
+    if und > 20:
+        out.append({"type": "integration_burst", "level": "critical",
+                    "message": f"{und} حدثاً غير مُسلَّم إلى رحّال"})
+    big = await db.bookings.find({"amount_charged": {"$gte": 100000}},
+                                 {"package_title": 1, "amount_charged": 1, "currency": 1}
+                                 ).sort("amount_charged", -1).to_list(5)
+    for b in big:
+        out.append({"type": "high_value", "level": "info",
+                    "message": f"عملية مرتفعة: {b.get('package_title')} — {b.get('amount_charged')} {b.get('currency')}"})
+    return {"items": out, "total": len(out)}
+
+
+# ---------------- settings & feature flags ----------------
+DEFAULT_SETTINGS = {
+    "currencies": {"base": "USD", "supported": ["SAR", "USD"], "fx_rate_sar_per_usd": 3.75},
+    "commission": {"platform_pct_default": None},
+    "order_flow": {"statuses": ["blue", "yellow", "green", "cancelled"],
+                   "transitions": {"blue": ["yellow", "cancelled"],
+                                   "yellow": ["green", "cancelled"], "green": [], "cancelled": []},
+                   "approval_timeout_hours": None},
+    "reasons": {"rejection": ["مقاعد غير متاحة", "بيانات ناقصة", "سعر غير صحيح", "أخرى"],
+                "cancellation": ["طلب العميل", "عدم اكتمال المستندات", "قرار إداري", "أخرى"]},
+    "documents": {"per_file_mb": 10, "per_batch_mb": 20,
+                  "types": ["passport", "visa", "ticket", "authorization", "receipt", "voucher"]},
+    "credit": {"max_limit_sar": 100000, "max_limit_usd": 30000,
+               "alert_thresholds": [70, 90, 100]},
+    "funds_release": {"stages": ["visa_issued", "dispatched", "settled"]},
+    "numbering": {"booking_prefix": "MRJ-B", "voucher_prefix": "MRJ-V", "next_seq": 1},
+    "locale": {"language": "ar", "direction": "rtl", "timezone": "Asia/Riyadh"},
+    "integrations": {"rahal_enabled": True, "email_enabled": False, "whatsapp_enabled": False},
+    "feature_flags": {"orders_center": True, "finance_center": True, "commission_engine": True,
+                      "credit_control": True, "programs_admin": True, "travelers_admin": True,
+                      "rbac": True, "notifications": True, "reports": True, "backup": True,
+                      "scanner_bridge": False},
+}
+
+
+@router.get("/settings")
+async def get_settings(admin: dict = Depends(require_admin)):
+    doc = await db.settings.find_one({"_id": "system"}) or {}
+    merged = {**DEFAULT_SETTINGS,
+              **{k: v for k, v in doc.items() if k != "_id" and not k.startswith("updated_")}}
+    merged["commission"]["platform_pct_default"] = platform_pct()
+    return {"settings": merged, "updated_at": doc.get("updated_at"),
+            "updated_by": doc.get("updated_by")}
+
+
+class SettingsIn(BaseModel):
+    section: str
+    values: dict
+    reason: str = Field(min_length=3)
+
+
+@router.post("/settings")
+async def update_settings(payload: SettingsIn, admin: dict = Depends(require_admin)):
+    if payload.section not in DEFAULT_SETTINGS:
+        raise HTTPException(400, "قسم إعدادات غير معروف")
+    doc = await db.settings.find_one({"_id": "system"}) or {}
+    before = doc.get(payload.section, DEFAULT_SETTINGS[payload.section])
+    await db.settings.update_one({"_id": "system"}, {"$set": {
+        payload.section: payload.values, "updated_at": now_iso(),
+        "updated_by": admin.get("email")}}, upsert=True)
+    await db.audit_log.insert_one({
+        "entity": "settings", "entity_id": payload.section, "action": "settings_updated",
+        "actor": admin.get("email"), "actor_id": str(admin["_id"]),
+        "reason": payload.reason.strip(), "before": before, "after": payload.values,
+        "at": now_iso()})
+    return {"ok": True, "section": payload.section, "values": payload.values}
+
+
+@router.get("/system/health")
+async def system_health(admin: dict = Depends(require_admin)):
+    checks = []
+    try:
+        await db.command("ping")
+        checks.append({"service": "MongoDB", "status": "ok"})
+    except Exception as e:
+        checks.append({"service": "MongoDB", "status": "fail", "error": str(e)[:200]})
+    checks.append({"service": "Backend API", "status": "ok"})
+    und = await db.rahal_outbox.count_documents({"status": {"$in": ["pending", "failed"]}})
+    checks.append({"service": "تكامل رحّال (Outbox)",
+                   "status": "warn" if und else "ok",
+                   "detail": f"{und} حدث غير مُسلَّم"})
+    st = os.statvfs("/app")
+    free_gb = round((st.f_bavail * st.f_frsize) / (1024 ** 3), 2)
+    checks.append({"service": "مساحة القرص", "status": "ok" if free_gb > 1 else "warn",
+                   "detail": f"{free_gb} GB متاح"})
+    last_backup = await db.backups.find_one({}, sort=[("at", -1)])
+    checks.append({"service": "النسخ الاحتياطي",
+                   "status": "ok" if last_backup else "warn",
+                   "detail": f"آخر نسخة: {(last_backup or {}).get('at', 'لا يوجد')}"})
+    counts = {c: await db[c].count_documents({}) for c in
+              ("users", "bookings", "packages", "transactions", "audit_log", "notifications")}
+    return {"checks": checks, "collections": counts, "generated_at": now_iso()}
+
+
+# ---------------- backup & restore ----------------
+def _passphrase() -> Optional[str]:
+    return os.environ.get("BACKUP_PASSPHRASE")
+
+
+@router.get("/backups")
+async def list_backups(admin: dict = Depends(require_admin)):
+    docs = serialize(await db.backups.find({}).sort("at", -1).to_list(100))
+    return {"items": docs, "retention": RETENTION,
+            "encrypted": bool(_passphrase()),
+            "restore_enabled": os.environ.get("ALLOW_RESTORE") == "true",
+            "dir": BACKUP_DIR}
+
+
+class BackupIn(BaseModel):
+    reason: str = Field(min_length=3)
+
+
+@router.post("/backups/run")
+async def run_backup(payload: BackupIn, admin: dict = Depends(require_admin)):
+    """Database-only backup (mongodump archive + gzip), encrypted with BACKUP_PASSPHRASE
+    when configured. Keeps the newest RETENTION files."""
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    dbname = os.environ["DB_NAME"]
+    raw_path = f"{BACKUP_DIR}/meraaj-{dbname}-{stamp}.archive.gz"
+    cmd = ["mongodump", f"--uri={os.environ['MONGO_URL']}", f"--db={dbname}",
+           f"--archive={raw_path}", "--gzip"]
+    try:
+        p = subprocess.run(cmd, capture_output=True, timeout=600)
+        if p.returncode != 0:
+            raise RuntimeError(p.stderr.decode()[:300])
+        final_path, encrypted = raw_path, False
+        pw = _passphrase()
+        if pw:
+            enc_path = raw_path + ".enc"
+            e = subprocess.run(["openssl", "enc", "-aes-256-cbc", "-pbkdf2", "-salt",
+                                "-in", raw_path, "-out", enc_path, "-pass", f"pass:{pw}"],
+                               capture_output=True, timeout=600)
+            if e.returncode == 0:
+                os.remove(raw_path)
+                final_path, encrypted = enc_path, True
+        size = os.path.getsize(final_path)
+        rec = {"file": os.path.basename(final_path), "path": final_path, "size": size,
+               "encrypted": encrypted, "result": "success", "error": None,
+               "by": admin.get("email"), "reason": payload.reason.strip(), "at": now_iso()}
+    except Exception as e:
+        rec = {"file": None, "path": None, "size": 0, "encrypted": False, "result": "failed",
+               "error": str(e)[:300], "by": admin.get("email"),
+               "reason": payload.reason.strip(), "at": now_iso()}
+    res = await db.backups.insert_one(rec)
+    rec["_id"] = res.inserted_id
+    await db.audit_log.insert_one({"entity": "backup", "entity_id": str(res.inserted_id),
+                                   "action": "backup_run", "actor": admin.get("email"),
+                                   "reason": payload.reason.strip(),
+                                   "after": {"result": rec["result"], "file": rec["file"]},
+                                   "at": now_iso()})
+    # retention
+    files = sorted([f for f in os.listdir(BACKUP_DIR) if f.startswith("meraaj-")], reverse=True)
+    for old in files[RETENTION:]:
+        try:
+            os.remove(f"{BACKUP_DIR}/{old}")
+            await db.backups.update_many({"file": old}, {"$set": {"pruned": True}})
+        except Exception:
+            pass
+    if rec["result"] == "failed":
+        raise HTTPException(500, f"فشل النسخ الاحتياطي: {rec['error']}")
+    return serialize(rec)
+
+
+class RestoreIn(BaseModel):
+    file: str
+    confirm_phrase: str
+    reason: str = Field(min_length=5)
+
+
+@router.post("/backups/restore")
+async def restore_backup(payload: RestoreIn, admin: dict = Depends(require_admin)):
+    """Triple-guarded restore: ALLOW_RESTORE=true env, an exact confirmation phrase and a
+    reason. Refuses to run when the environment is marked as live."""
+    if os.environ.get("ALLOW_RESTORE") != "true":
+        raise HTTPException(403, "الاستعادة معطّلة في هذه البيئة (ALLOW_RESTORE غير مفعّل) — "
+                                 "تُجرى على Test فقط")
+    if os.environ.get("ENVIRONMENT", "").lower() in ("live", "production", "prod"):
+        raise HTTPException(403, "ممنوع الاستعادة على بيئة Live")
+    if payload.confirm_phrase.strip() != "أؤكد الاستعادة":
+        raise HTTPException(400, "عبارة التأكيد غير صحيحة")
+    path = f"{BACKUP_DIR}/{os.path.basename(payload.file)}"
+    if not os.path.exists(path):
+        raise HTTPException(404, "ملف النسخة غير موجود")
+    await db.audit_log.insert_one({"entity": "backup", "entity_id": payload.file,
+                                   "action": "restore_requested", "actor": admin.get("email"),
+                                   "reason": payload.reason.strip(), "at": now_iso()})
+    return {"ok": True, "status": "authorized",
+            "note": "تم تسجيل الطلب والتحقق من الحواجز. التنفيذ الفعلي يتم على بيئة Test بأمر "
+                    "mongorestore خارج التطبيق لتفادي أي استعادة خاطئة أثناء التشغيل.",
+            "command": f"mongorestore --uri=$MONGO_URL --archive={path} --gzip --drop"}

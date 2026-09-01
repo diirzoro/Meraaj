@@ -60,7 +60,7 @@ async def credit_allows(user: dict, currency: str, required: float) -> tuple:
 async def list_credit(q: Optional[str] = None, currency: Optional[str] = None,
                       only_exposed: bool = False, page: int = 1, limit: int = 50,
                       admin: dict = Depends(require_admin)):
-    f = {"role": {"$in": ["office", "individual"]}}
+    f = {"role": "office"}
     if q:
         f["$or"] = [{"office_name": {"$regex": q, "$options": "i"}},
                     {"email": {"$regex": q, "$options": "i"}}]
@@ -101,7 +101,7 @@ async def list_credit(q: Optional[str] = None, currency: Optional[str] = None,
             totals[c]["headroom"] += headroom
             if used > 0 or lim_val > 0:
                 exposed = True
-        if only_exposed and not exposed:
+        if only_exposed and not q and not exposed:
             continue
         out.append(row)
     for c in CCY:
