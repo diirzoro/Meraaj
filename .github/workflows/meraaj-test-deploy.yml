@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:
 
 concurrency:
   group: meraaj-test-deploy
@@ -21,20 +20,20 @@ env:
 jobs:
   deploy-test:
     runs-on: ubuntu-latest
-    # Job-level guard: main only, and only push-to-main or manual dispatch on main
-    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    # Job-level guard: ONLY a real push to main (i.e. after an actual merge) may deploy Test
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     steps:
-      - name: Guard - refuse any ref other than main
+      - name: Guard - only push to main may deploy Test
         run: |
           echo "event=${{ github.event_name }} ref=${{ github.ref }}"
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "BLOCKED: only a push to main (merge) may deploy Test. Event: ${{ github.event_name }}"
+            exit 1
+          fi
           if [ "${{ github.ref }}" != "refs/heads/main" ]; then
             echo "BLOCKED: Test deploy may only run on refs/heads/main. Current: ${{ github.ref }}"
             exit 1
           fi
-          case "${{ github.event_name }}" in
-            push|workflow_dispatch) : ;;
-            *) echo "BLOCKED: event ${{ github.event_name }} may not deploy Test."; exit 1 ;;
-          esac
           echo "Guard OK - deploying Test from main."
 
       - name: Checkout
