@@ -70,6 +70,22 @@ async def get_current_user(request: Request) -> dict:
                     raise HTTPException(status_code=401, detail="تم إنهاء الجلسة من الإدارة")
             except (ValueError, TypeError):
                 pass
+        if user.get("parent_office_id"):
+            # Staff account: acts INSIDE the office identity, so it shares the office wallet,
+            # ledger and bookings. No separate wallet is ever created for staff.
+            if user.get("status") != "active":
+                raise HTTPException(status_code=403, detail="حساب الموظف معطّل")
+            parent = await db.users.find_one({"_id": oid(user["parent_office_id"])})
+            if not parent:
+                raise HTTPException(status_code=401, detail="المكتب المرتبط غير موجود")
+            if parent.get("status") == "suspended":
+                raise HTTPException(status_code=403, detail="حساب المكتب معلَّق")
+            parent["_acting_staff"] = {
+                "id": str(user["_id"]), "email": user.get("email"),
+                "name": user.get("staff_name") or user.get("email"),
+                "roles": user.get("staff_roles") or [],
+            }
+            return parent
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="انتهت صلاحية الجلسة")

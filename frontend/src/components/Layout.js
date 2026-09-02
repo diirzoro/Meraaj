@@ -101,7 +101,7 @@ export default function Layout({ children }) {
           <button className="lg:hidden" onClick={() => setOpen(false)} data-testid="menu-close-btn"><X className="w-5 h-5" /></button>
         </div>
 
-        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+        <nav className="flex-1 px-3 py-4 pb-24 space-y-1 overflow-y-auto">
           {nav.map((item) => (
             <NavLink
               key={item.to} to={item.to} end={item.to === "/admin"}

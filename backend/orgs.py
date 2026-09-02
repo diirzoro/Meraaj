@@ -147,6 +147,73 @@ async def del_branch(branch_id: str, admin: dict = Depends(require_admin)):
     return {"ok": True}
 
 
+class StaffAccountIn(BaseModel):
+    email: str = Field(min_length=5)
+    password: str = Field(min_length=8)
+    roles: list = []
+
+
+@router.post("/admin/staff/{staff_id}/account")
+async def create_staff_account(staff_id: str, payload: StaffAccountIn,
+                               admin: dict = Depends(require_admin)):
+    """Creates a LOGIN account for an office staff member.
+    The account has NO wallet of its own: at authentication it acts inside the office identity,
+    so it shares the office wallet, ledger and bookings. Rahal users are untouched."""
+    from security import hash_password
+    from rbac import ROLES
+    s = await db.office_staff.find_one({"_id": oid(staff_id)})
+    if not s:
+        raise HTTPException(404, "الموظف غير موجود")
+    if s.get("linked_user_id"):
+        raise HTTPException(400, "للموظف حساب دخول بالفعل")
+    email = payload.email.strip().lower()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(400, "البريد مستخدم مسبقاً — لا يُسمح بحساب مكرر")
+    bad = [r for r in payload.roles if r not in ROLES]
+    if bad:
+        raise HTTPException(400, f"أدوار غير معروفة: {', '.join(bad)}")
+    office = await db.users.find_one({"_id": oid(s["office_id"])}, {"office_name": 1, "role": 1})
+    if not office:
+        raise HTTPException(404, "المكتب غير موجود")
+    doc = {
+        "email": email, "password_hash": hash_password(payload.password),
+        "role": "office", "status": "active",
+        "parent_office_id": s["office_id"], "office_name": office.get("office_name"),
+        "staff_name": s.get("name"), "staff_roles": payload.roles,
+        "staff_record_id": staff_id, "is_staff_account": True,
+        # deliberately NO wallet key: staff never own a wallet
+        "created_by": admin.get("email"), "created_at": now_iso(),
+    }
+    res = await db.users.insert_one(doc)
+    await db.office_staff.update_one({"_id": s["_id"]},
+                                     {"$set": {"linked_user_id": str(res.inserted_id),
+                                               "login_email": email, "roles": payload.roles}})
+    await db.user_roles.update_one({"user_id": str(res.inserted_id)}, {"$set": {
+        "roles": payload.roles, "office_id": s["office_id"],
+        "branch_id": s.get("branch_id", ""), "granted_by": admin.get("email"),
+        "at": now_iso()}}, upsert=True)
+    await db.audit_log.insert_one({
+        "entity": "office", "entity_id": s["office_id"], "action": "staff_account_created",
+        "actor": admin.get("email"), "actor_id": str(admin["_id"]),
+        "after": {"staff": s.get("name"), "email": email, "roles": payload.roles,
+                  "shared_wallet": True}, "at": now_iso()})
+    return {"ok": True, "user_id": str(res.inserted_id), "email": email,
+            "shares_office_wallet": True}
+
+
+@router.post("/admin/staff/{staff_id}/account/disable")
+async def disable_staff_account(staff_id: str, admin: dict = Depends(require_admin)):
+    s = await db.office_staff.find_one({"_id": oid(staff_id)})
+    if not s or not s.get("linked_user_id"):
+        raise HTTPException(404, "لا يوجد حساب دخول لهذا الموظف")
+    await db.users.update_one({"_id": oid(s["linked_user_id"])},
+                              {"$set": {"status": "suspended", "force_logout_at": now_iso()}})
+    await db.audit_log.insert_one({
+        "entity": "office", "entity_id": s["office_id"], "action": "staff_account_disabled",
+        "actor": admin.get("email"), "after": {"staff": s.get("name")}, "at": now_iso()})
+    return {"ok": True}
+
+
 class StaffIn(BaseModel):
     name: str = Field(min_length=2)
     job_title: str = ""

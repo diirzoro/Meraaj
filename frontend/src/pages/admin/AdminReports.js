@@ -68,6 +68,17 @@ export default function AdminReports() {
           <Button size="sm" variant="outline" onClick={exportCsv} disabled={!res} data-testid="export-report-btn">
             <Download className="w-4 h-4" /> تصدير Excel
           </Button>
+          <Button size="sm" variant="outline" disabled={!res} data-testid="export-pdf-btn"
+            onClick={async () => {
+              try {
+                const r = await api.post("/admin/reports/export-pdf", body(), { responseType: "blob" });
+                const url = URL.createObjectURL(new Blob([r.data], { type: "application/pdf" }));
+                window.open(url, "_blank");
+                toast.success("تم إنشاء PDF عربي");
+              } catch (e) { toast.error(apiError(e)); }
+            }}>
+            <Printer className="w-4 h-4" /> تصدير PDF (عربي)
+          </Button>
           <Button size="sm" variant="outline" onClick={() => window.print()} disabled={!res} data-testid="print-report-btn">
             <Printer className="w-4 h-4" /> طباعة / PDF
           </Button>

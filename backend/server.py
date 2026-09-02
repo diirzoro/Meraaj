@@ -22,6 +22,7 @@ from admin_travelers import router as admin_travelers_router
 from rbac import router as rbac_router
 from orgs import router as orgs_router
 from enterprise import router as enterprise_router
+from cron import router as cron_router
 from commissions import router as commissions_router, ensure_default_rule
 from credit import router as credit_router
 from finance import router as finance_router
@@ -55,6 +56,7 @@ app.include_router(admin_travelers_router)
 app.include_router(rbac_router)
 app.include_router(orgs_router)
 app.include_router(enterprise_router)
+app.include_router(cron_router)
 app.include_router(integration_router)
 app.include_router(rahal_sim_router)
 app.include_router(individual_router)

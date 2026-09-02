@@ -247,6 +247,25 @@ async def export_report(payload: RunIn, admin: dict = Depends(require_admin)):
                                       f'attachment; filename="meraaj-{payload.report}.csv"'})
 
 
+@router.post("/reports/export-pdf")
+async def export_report_pdf(payload: RunIn, admin: dict = Depends(require_admin)):
+    """Real server-side Arabic RTL PDF (shaped + bidi ordered)."""
+    if payload.report not in REPORTS:
+        raise HTTPException(400, "تقرير غير معروف")
+    res = await _run(payload.report, payload.date_from, payload.date_to,
+                     payload.currency, payload.office_id)
+    from pdfgen import build_table_pdf
+    meta = (f"عدد السجلات: {len(res['rows'])} • الفترة: {payload.date_from or 'الكل'} ← "
+            f"{payload.date_to or 'الآن'} • أصدره: {admin.get('email')} • {now_iso()[:19]}")
+    pdf = build_table_pdf(REPORTS[payload.report], res["columns"], res["rows"], meta)
+    await db.report_exports.insert_one({"report": payload.report, "rows": len(res["rows"]),
+                                        "format": "pdf", "by": admin.get("email"),
+                                        "at": now_iso()})
+    return StreamingResponse(iter([pdf]), media_type="application/pdf",
+                             headers={"Content-Disposition":
+                                      f'attachment; filename="meraaj-{payload.report}.pdf"'})
+
+
 class SaveIn(BaseModel):
     name: str
     report: str

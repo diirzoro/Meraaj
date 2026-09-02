@@ -214,10 +214,28 @@ export default function AdminOrgs() {
               <div className="border-t pt-3">
                 <div className="text-xs font-semibold text-[#0A2540] mb-2">الموظفون ({detail.staff.length})</div>
                 {detail.staff.map((s) => (
-                  <div key={s.id} className="text-[11px] bg-[#F4F6F8] rounded-lg px-3 py-1.5 mb-1 flex justify-between" data-testid={`staff-${s.id}`}>
-                    <span>{s.name} — {s.job_title || "—"} • {s.email || s.phone || ""}</span>
-                    <button className="text-[#B91C1C]" data-testid={`del-staff-${s.id}`}
-                      onClick={() => act(() => api.delete(`/admin/staff/${s.id}`), "تم حذف الموظف")}>حذف</button>
+                  <div key={s.id} className="text-[11px] bg-[#F4F6F8] rounded-lg px-3 py-1.5 mb-1 flex flex-wrap justify-between gap-2" data-testid={`staff-${s.id}`}>
+                    <span>{s.name} — {s.job_title || "—"} • {s.login_email || s.email || s.phone || ""}
+                      {s.linked_user_id && <span className="mr-1 text-[9px] px-1.5 py-0.5 rounded bg-[#F0FDF4] text-[#15803D]">حساب دخول (محفظة المكتب)</span>}
+                    </span>
+                    <span className="flex gap-2">
+                      {!s.linked_user_id && (
+                        <button className="text-[#0A2540] underline" data-testid={`staff-account-${s.id}`}
+                          onClick={() => {
+                            const email = window.prompt("بريد دخول الموظف؟");
+                            if (!email) return;
+                            const pw = window.prompt("كلمة مرور مؤقتة (8 أحرف على الأقل)؟");
+                            if (!pw || pw.length < 8) return;
+                            act(() => api.post(`/admin/staff/${s.id}/account`, { email, password: pw, roles: ["limited_user"] }), "تم إنشاء حساب الموظف");
+                          }}>إنشاء حساب دخول</button>
+                      )}
+                      {s.linked_user_id && (
+                        <button className="text-[#B45309] underline" data-testid={`staff-disable-${s.id}`}
+                          onClick={() => act(() => api.post(`/admin/staff/${s.id}/account/disable`), "تم تعطيل حساب الموظف")}>تعطيل الحساب</button>
+                      )}
+                      <button className="text-[#B91C1C]" data-testid={`del-staff-${s.id}`}
+                        onClick={() => act(() => api.delete(`/admin/staff/${s.id}`), "تم حذف الموظف")}>حذف</button>
+                    </span>
                   </div>
                 ))}
                 <div className="flex flex-wrap gap-2 mt-2">
@@ -233,7 +251,7 @@ export default function AdminOrgs() {
                   </Button>
                 </div>
                 <div className="text-[10px] text-muted-foreground mt-2">
-                  ملاحظة: سجلات الموظفين إدارية. منح الموظف حساب دخول يشارك محفظة المكتب يتطلب فصل الكيانات المذكور في DEV_NOTES.
+                  الموظف يحصل على حساب دخول مستقل بصلاحيات محدودة، ويعمل على <b>محفظة المكتب نفسها</b> — لا تُنشأ له محفظة أو حساب مالي منفصل.
                 </div>
               </div>
 

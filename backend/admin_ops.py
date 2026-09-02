@@ -69,6 +69,59 @@ class RetryIn(BaseModel):
     reason: str = Field(min_length=3)
 
 
+@router.get("/integrations/diagnose")
+async def diagnose(admin: dict = Depends(require_admin)):
+    """Classifies every undelivered outbox event by root cause and states who must fix it."""
+    causes = {
+        "hmac": {"key": "توقيع HMAC مرفوض من رحّال", "owner": "rahal",
+                 "action": "على رحّال ضبط MERAAJ_SHARED_SECRET بنفس قيمة معراج والتحقق من "
+                           "أنه يتحقق من التوقيع على الجسم الخام (JSON مضغوط بدون مسافات)."},
+        "not_found": {"key": "المسار غير موجود (404) على رحّال", "owner": "rahal",
+                      "action": "على رحّال تنفيذ/تصحيح مسار الـWebhook لهذا النوع من الأحداث "
+                                "(مثل meraaj.booking.cancellation_finalized)."},
+        "unknown_ref": {"key": "مرجع غير معروف لدى رحّال", "owner": "rahal",
+                        "action": "الحجز/البرنامج غير موجود في بيئة رحّال (بيانات معاينة) — "
+                                  "يُعاد الإرسال بعد مزامنة المراجع."},
+        "network": {"key": "تعذّر الوصول للخادم", "owner": "shared",
+                    "action": "تحقق من RAHAL_WEBHOOK_URL وتوفر خادم رحّال."},
+        "pending": {"key": "لم تُرسل بعد", "owner": "meraaj",
+                    "action": "أعد المعالجة من هذه الشاشة (يعيد التوقيع بالسر الحالي)."},
+        "other": {"key": "سبب آخر", "owner": "shared", "action": "راجع نص الخطأ."},
+    }
+
+    def classify(item):
+        if item.get("status") == "pending":
+            return "pending"
+        e = (item.get("last_error") or "").lower()
+        if "signature" in e or "hmac" in e or "401" in e or "403" in e:
+            return "hmac"
+        if "404" in e or "not found" in e:
+            return "not_found"
+        if "unknown" in e or ("ref" in e and "not" in e):
+            return "unknown_ref"
+        if "timeout" in e or "connect" in e or "resolve" in e:
+            return "network"
+        return "other"
+
+    groups = {}
+    items = await db.rahal_outbox.find({"status": {"$in": ["pending", "failed"]}}).to_list(500)
+    for it in items:
+        c = classify(it)
+        g = groups.setdefault(c, {"cause": c, **causes[c], "count": 0, "events": {},
+                                  "samples": []})
+        g["count"] += 1
+        g["events"][it.get("event")] = g["events"].get(it.get("event"), 0) + 1
+        if len(g["samples"]) < 3:
+            g["samples"].append({"id": str(it["_id"]), "event": it.get("event"),
+                                 "attempts": it.get("attempts"),
+                                 "last_error": (it.get("last_error") or "")[:160]})
+    out = sorted(groups.values(), key=lambda x: -x["count"])
+    return {"undelivered": len(items), "groups": out,
+             "meraaj_side_fixable": sum(g["count"] for g in out if g["owner"] == "meraaj"),
+             "rahal_side_fixable": sum(g["count"] for g in out if g["owner"] == "rahal"),
+             "generated_at": now_iso()}
+
+
 @router.post("/integrations/outbox/{item_id}/retry")
 async def retry_one(item_id: str, payload: RetryIn, admin: dict = Depends(require_admin)):
     """Manual re-processing of a failed integration event — requires a reason and is audited.

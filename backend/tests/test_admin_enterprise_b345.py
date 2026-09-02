@@ -274,37 +274,18 @@ class TestReconciliation:
         assert self._wallets() == before_w, "dry_run touched a wallet"
 
     def test_real_entry_is_ledger_only_and_single(self, admin_s, mismatch):
+        """UPDATED (iteration_13): real execution is now gated behind ALLOW_RECONCILIATION=true
+        (explicit client approval). While the gate is off the endpoint must refuse with 403 and
+        write nothing at all."""
         before_w = self._wallets()
+        before_txn = mdb.transactions.count_documents({})
         r = admin_s.post(f"{API}/admin/reconciliation/adjust",
                          json={"office_id": mismatch["office_id"], "currency": mismatch["currency"],
                                "reason": "TEST_QA قيد افتتاحي موثّق"}, timeout=120)
-        assert r.status_code == 200, r.text[:300]
-        txn_id = r.json()["txn_id"]
-        try:
-            assert self._wallets() == before_w, "WALLET BALANCE CHANGED by reconciliation"
-            txn = mdb.transactions.find_one({"_id": ObjectId(txn_id)})
-            assert txn["type"] == "opening_balance"
-            assert txn["office_id"] == mismatch["office_id"]
-            assert mdb.audit_log.count_documents(
-                {"action": "opening_balance_entry", "meta.txn_id": txn_id}) == 1
-            dup = admin_s.post(f"{API}/admin/reconciliation/adjust",
-                               json={"office_id": mismatch["office_id"],
-                                     "currency": mismatch["currency"],
-                                     "reason": "TEST_QA تكرار"}, timeout=120)
-            assert dup.status_code == 400, dup.status_code
-            # NOTE: the "no difference" guard fires before the duplicate guard, but the
-            # second entry is still refused (money-safety requirement satisfied).
-            assert ("افتتاحي" in dup.json()["detail"]
-                    or "لا يوجد فرق" in dup.json()["detail"]), dup.json()
-            # ledger now reconciles
-            r2 = admin_s.post(f"{API}/admin/reconciliation/adjust",
-                              json={"office_id": mismatch["office_id"],
-                                    "currency": mismatch["currency"],
-                                    "reason": "TEST_QA فحص جاف بعد", "dry_run": True}, timeout=120)
-            assert r2.status_code == 400 or abs(r2.json().get("difference", 1)) < 0.5
-        finally:
-            mdb.transactions.delete_one({"_id": ObjectId(txn_id)})
-            mdb.audit_log.delete_many({"action": "opening_balance_entry", "meta.txn_id": txn_id})
+        assert r.status_code == 403, f"{r.status_code} {r.text[:200]}"
+        assert "ALLOW_RECONCILIATION" in r.json()["detail"]
+        assert mdb.transactions.count_documents({}) == before_txn, "gated call wrote a transaction"
+        assert self._wallets() == before_w, "gated call touched a wallet"
 
     def test_adjust_all_dry_run(self, admin_s):
         before_txn = mdb.transactions.count_documents({})
@@ -317,10 +298,16 @@ class TestReconciliation:
         assert mdb.transactions.count_documents({}) == before_txn, "adjust-all dry_run wrote data"
 
     def test_bad_currency(self, admin_s):
+        # UPDATED (iteration_13): the ALLOW_RECONCILIATION gate is the outermost guard,
+        # so a real call returns 403; currency validation is still enforced on dry-run.
         r = admin_s.post(f"{API}/admin/reconciliation/adjust",
                          json={"office_id": str(ObjectId()), "currency": "EUR",
                                "reason": "TEST_QA عملة"})
-        assert r.status_code == 400, r.status_code
+        assert r.status_code == 403, r.status_code
+        d = admin_s.post(f"{API}/admin/reconciliation/adjust",
+                         json={"office_id": str(ObjectId()), "currency": "EUR",
+                               "reason": "TEST_QA عملة", "dry_run": True})
+        assert d.status_code == 400, d.status_code
 
 
 # =============================================================================
@@ -852,8 +839,8 @@ class TestSessionsAndAccountControl:
                           json={"suspend": False, "reason": "TEST_QA رفع التعليق"})
         assert un.status_code == 200 and un.json()["status"] == "active"
         mdb.users.update_one({"_id": ObjectId(user["id"])}, {"$set": {"force_logout_at": None}})
-        assert blocked.status_code == 401, (
-            "SUSPENDED account could still log in (status_code "
+        assert blocked.status_code == 403, (
+            "SUSPENDED account login must be rejected with 403 (status_code "
             f"{blocked.status_code})")
 
     def test_2fa_setup_and_verify(self, admin_s):

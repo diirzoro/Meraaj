@@ -1,0 +1,35 @@
+name: PR Checks (build only - never deploys)
+
+on:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Guard - this workflow must never deploy
+        run: |
+          echo "event=${{ github.event_name }} ref=${{ github.ref }}"
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "BLOCKED: this workflow only runs on pull_request."
+            exit 1
+          fi
+          echo "PR build/static checks only. No Test or Live deployment happens here."
+
+      - name: Build backend image (no deploy)
+        run: docker build -f Dockerfile.backend -t meraaj_backend:pr-check .
+
+      - name: Build frontend image (no deploy)
+        run: docker build -f Dockerfile.frontend -t meraaj_frontend:pr-check .
+
+      - name: Python syntax check
+        run: python -m compileall -q backend

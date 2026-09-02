@@ -12,6 +12,7 @@ export default function AdminLedger() {
   const [d, setD] = useState({ items: [], total: 0, inflow: {}, outflow: {}, net: {}, types: {} });
   const [recon, setRecon] = useState(null);
   const [voucher, setVoucher] = useState(null);
+  const [voucherId, setVoucherId] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const qs = useCallback(() => {
@@ -112,7 +113,7 @@ export default function AdminLedger() {
                     </td>
                     <td className="px-3 py-2.5">
                       <button data-testid={`voucher-${t.id}`} className="text-[#0A2540] underline inline-flex items-center gap-1"
-                        onClick={async () => { const r = await api.get(`/admin/vouchers/${t.id}`); setVoucher(r.data); }}>
+                        onClick={async () => { const r = await api.get(`/admin/vouchers/${t.id}`); setVoucher(r.data); setVoucherId(t.id); }}>
                         <FileText className="w-3 h-3" /> سند
                       </button>
                     </td>
@@ -179,8 +180,12 @@ export default function AdminLedger() {
                 <span className="text-xs text-muted-foreground">المبلغ</span>
                 <span className="tabular text-lg font-bold text-[#0A2540]">{money(voucher.amount, voucher.currency)}</span>
               </div>
-              <Button className="w-full bg-[#0A2540] hover:bg-[#061A2E]" onClick={() => window.print()} data-testid="print-voucher">
-                <Printer className="w-4 h-4" /> طباعة السند
+              <Button className="w-full bg-[#0A2540] hover:bg-[#061A2E]" data-testid="voucher-pdf-btn"
+                onClick={async () => {
+                  const r = await api.get(`/admin/vouchers/${voucher.txn_id || voucherId}/pdf`, { responseType: "blob" });
+                  window.open(URL.createObjectURL(new Blob([r.data], { type: "application/pdf" })), "_blank");
+                }}>
+                <Printer className="w-4 h-4" /> تنزيل السند PDF
               </Button>
             </div>
           )}

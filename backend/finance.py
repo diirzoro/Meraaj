@@ -116,7 +116,7 @@ async def export_ledger(office_id: Optional[str] = None, currency: Optional[str]
 
 # ---------------- reconciliation ----------------
 @router.get("/reconciliation")
-async def reconciliation(admin: dict = Depends(require_admin)):
+async def reconciliation(admin: dict = Depends(require_admin), full: bool = False):
     """Compares wallet balances against the transaction ledger per currency and lists
     offices whose ledger sum does not match their wallet total."""
     wallets = {c: {"available": 0.0, "pending": 0.0, "total": 0.0} for c in CCY}
@@ -162,7 +162,8 @@ async def reconciliation(admin: dict = Depends(require_admin)):
         "wallets": {c: {k: round(v, 2) for k, v in wallets[c].items()} for c in CCY},
         "ledger_totals": {c: round(ledger_tot[c], 2) for c in CCY},
         "platform_revenue": revenue,
-        "mismatch_count": len(mismatches), "mismatches": mismatches[:100],
+        "mismatch_count": len(mismatches),
+        "mismatches": mismatches if full else mismatches[:100],
         "generated_at": now_iso(),
     }
 
@@ -190,6 +191,16 @@ async def voucher(txn_id: str, admin: dict = Depends(require_admin)):
         "description": t.get("description"), "ref": t.get("ref"),
         "issued_by": admin.get("email"), "issued_at": now_iso(),
     }
+
+
+@router.get("/vouchers/{txn_id}/pdf")
+async def voucher_pdf(txn_id: str, admin: dict = Depends(require_admin)):
+    v = await voucher(txn_id, admin)
+    from pdfgen import build_voucher_pdf
+    pdf = build_voucher_pdf(v)
+    return StreamingResponse(iter([pdf]), media_type="application/pdf",
+                             headers={"Content-Disposition":
+                                      f'attachment; filename="{v["voucher_no"]}.pdf"'})
 
 
 # ---------------- withdrawal 6-stage cycle ----------------
@@ -280,8 +291,12 @@ class AdjustIn(BaseModel):
 @router.post("/reconciliation/adjust")
 async def adjust_reconciliation(payload: AdjustIn, admin: dict = Depends(require_admin)):
     """Documents a wallet/ledger difference with an OPENING-BALANCE ledger entry.
-    It NEVER edits a wallet balance and never deletes historic data: it only writes the
-    missing ledger counterpart so the books reconcile, with a mandatory reason + audit."""
+    It NEVER edits a wallet balance and never deletes historic data.
+    Real execution is additionally gated by ALLOW_RECONCILIATION=true (client approval)."""
+    import os as _os
+    if not payload.dry_run and _os.environ.get("ALLOW_RECONCILIATION") != "true":
+        raise HTTPException(403, "تشغيل قيود التسوية معطّل حتى الاعتماد الصريح "
+                                 "(ALLOW_RECONCILIATION=false) — استخدم Dry-run للمعاينة")
     if payload.currency not in CCY:
         raise HTTPException(400, "عملة غير مدعومة")
     u = await db.users.find_one({"_id": oid(payload.office_id)},
@@ -324,11 +339,38 @@ async def adjust_reconciliation(payload: AdjustIn, admin: dict = Depends(require
             "note": "لم يتم تعديل أي رصيد — تمت إضافة قيد افتتاحي موثّق فقط"}
 
 
+@router.get("/reconciliation/preview")
+async def reconciliation_preview(admin: dict = Depends(require_admin)):
+    """Full pre-execution list of every proposed opening entry (no writes at all)."""
+    import os as _os
+    rec = await reconciliation(admin, full=True)
+    rows, totals = [], {c: 0.0 for c in CCY}
+    for m in rec["mismatches"]:
+        exists = await db.transactions.find_one({"office_id": m["office_id"],
+                                                 "currency": m["currency"],
+                                                 "type": "opening_balance"})
+        rows.append({**m, "proposed_entry": m["difference"],
+                     "already_adjusted": bool(exists),
+                     "entry_type": "opening_balance",
+                     "description": "قيد افتتاحي/تسوية موثّقة"})
+        if not exists:
+            totals[m["currency"]] += m["difference"]
+    return {"count": len(rows), "totals": {c: round(v, 2) for c, v in totals.items()},
+            "execution_enabled": _os.environ.get("ALLOW_RECONCILIATION") == "true",
+            "note": "معاينة فقط — لا يوجد أي تعديل على الأرصدة ولا كتابة أي قيد. "
+                    "التشغيل الفعلي يحتاج ALLOW_RECONCILIATION=true بعد اعتمادكم.",
+            "items": rows}
+
+
 @router.post("/reconciliation/adjust-all")
 async def adjust_all(payload: AdjustIn, admin: dict = Depends(require_admin)):
     """Bulk opening entries for every mismatching account (same rules, one entry each)."""
+    import os as _os
+    if not payload.dry_run and _os.environ.get("ALLOW_RECONCILIATION") != "true":
+        raise HTTPException(403, "تشغيل قيود التسوية معطّل حتى الاعتماد الصريح "
+                                 "(ALLOW_RECONCILIATION=false) — استخدم Dry-run للمعاينة")
     from finance import reconciliation as _recon
-    rec = await _recon(admin)
+    rec = await _recon(admin, full=True)
     done, skipped = [], 0
     for m in rec["mismatches"]:
         try:
