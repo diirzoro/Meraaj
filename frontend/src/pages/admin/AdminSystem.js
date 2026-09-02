@@ -189,9 +189,12 @@ export default function AdminSystem() {
                 تشغيل نسخة الآن
               </Button>
             </div>
-            <div className="mt-3 text-[11px] bg-[#F4F6F8] rounded-lg px-3 py-2" data-testid="backup-env">
-              البيئة: <b>{backups.environment}</b> • ملفات على القرص: <b>{(backups.files_on_disk || []).length}</b> •
-              الاستعادة والترحيل ممنوعان تمامًا على Live • جدولة يومية 01:00 بتوقيت الرياض
+            <div className="mt-3 text-[11px] bg-[#F4F6F8] rounded-lg px-3 py-2 space-y-1" data-testid="backup-env">
+              <div>البيئة: <b>{backups.environment}</b> • ملفات على القرص: <b>{(backups.files_on_disk || []).length}</b> • سياسة الاحتفاظ: <b>{backups.retention}</b> نسخ (حُذف تلقائيًا: {backups.pruned_count})</div>
+              <div>الجدولة اليومية: <b>{backups.schedule?.local_time}</b> عبر <code dir="ltr">{backups.schedule?.endpoint}</code> ({backups.schedule?.enabled ? "مُفعّلة" : "معطّلة"})</div>
+              <div>التشفير: <b>{backups.encryption?.enabled ? "مُفعّل" : "غير مُفعّل"}</b> — {backups.encryption?.algorithm} بمفتاح {backups.encryption?.passphrase_source}</div>
+              <div>آخر نسخة ناجحة: <b>{backups.last_successful?.file || "—"}</b>{backups.last_successful?.at ? ` • ${fmtDate(backups.last_successful.at)}` : ""}</div>
+              <div>حواجز الاستعادة: {(backups.restore_guards || []).join(" • ")}</div>
             </div>
           </div>
 

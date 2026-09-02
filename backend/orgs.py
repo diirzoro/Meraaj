@@ -78,9 +78,17 @@ async def org_detail(office_id: str, admin: dict = Depends(require_admin)):
     txns = serialize(await db.transactions.find({"office_id": office_id})
                      .sort("created_at", -1).to_list(30))
     credit = serialize(await db.credit_limits.find({"office_id": office_id}).to_list(10))
+    from credit import credit_room
+    credit_summary = {}
+    for cur in ("SAR", "USD"):
+        try:
+            credit_summary[cur] = await credit_room(u, cur)
+        except Exception:
+            credit_summary[cur] = None
     return {"office": {**serialize(u), "password_hash": None},
             "profile": serialize(p) if p else {}, "branches": branches, "staff": staff,
-            "recent_bookings": bookings, "recent_transactions": txns, "credit": credit}
+            "recent_bookings": bookings, "recent_transactions": txns, "credit": credit,
+            "credit_summary": credit_summary}
 
 
 class ProfileIn(BaseModel):

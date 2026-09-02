@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Search, Building2, Plus, Trash2 } from "lucide-react";
+import { Search, Building2, Plus, Trash2, RefreshCw, MessageCircle } from "lucide-react";
 
 const RISK_CLASS = {
   low: "bg-[#F0FDF4] text-[#15803D] border-[#BBF7D0]",
@@ -26,6 +26,13 @@ export default function AdminOrgs() {
   const [branch, setBranch] = useState({ name: "", city: "", phone: "", manager: "" });
   const [staff, setStaff] = useState({ name: "", job_title: "", phone: "", email: "", branch_id: "" });
   const [busy, setBusy] = useState(false);
+  const [resyncing, setResyncing] = useState(false);
+
+  // Normalize a stored phone into a wa.me-ready international number (moved from /admin/offices)
+  const waNumber = (raw) => {
+    const digits = String(raw || "").replace(/\D/g, "").replace(/^0+/, "");
+    return digits.length >= 8 ? digits : null;
+  };
 
   const load = useCallback(() => {
     const p = new URLSearchParams({ page: String(f.page), limit: "25" });
@@ -55,9 +62,28 @@ export default function AdminOrgs() {
   const pages = Math.max(1, Math.ceil(d.total / 25));
   const o = detail?.office;
 
+  const resync = async () => {
+    if (resyncing) return;
+    setResyncing(true);
+    try {
+      const r = await api.post("/admin/packages/resync");
+      toast.success(`تمت إعادة المزامنة — حُدّث ${r.data.updated} برنامج، وأُرسل ${r.data.rahal_notified} إلى رحال`);
+    } catch (e) { toast.error(apiError(e)); } finally { setResyncing(false); }
+  };
+
+  const setStatus = (id, status) =>
+    act(() => api.patch(`/admin/offices/${id}/status`, { status }),
+      status === "active" ? "تم التفعيل" : "تم الإيقاف");
+
   return (
     <>
-      <PageHeader title="المؤسسات والمكاتب" subtitle="ملف شامل لكل مؤسسة: الحالة القانونية والتشغيلية والمالية، الفروع والموظفون، وتصنيف المخاطر" />
+      <PageHeader title="المؤسسات والمكاتب"
+        subtitle="القسم الموحّد: الحالة القانونية والتشغيلية والمالية، الأرصدة بالريال والدولار، التفعيل والإيقاف، الفروع والموظفون، الائتمان والتعرّض، والطلبات والنزاعات"
+        action={<Button onClick={resync} disabled={resyncing} data-testid="batch-resync-btn"
+          className="bg-[#0A2540] hover:bg-[#061A2E]">
+          <RefreshCw className={`w-4 h-4 ${resyncing ? "animate-spin" : ""}`} />
+          {resyncing ? "جارٍ المزامنة..." : "إعادة مزامنة الأسعار"}
+        </Button>} />
 
       <div className="bg-white rounded-2xl border card-shadow p-4 mb-5 flex flex-wrap gap-3 items-center" data-testid="orgs-filters">
         <div className="relative flex-1 min-w-[220px]">
@@ -80,30 +106,49 @@ export default function AdminOrgs() {
       <div className="bg-white rounded-2xl border card-shadow overflow-x-auto" data-testid="orgs-table">
         <table className="w-full text-xs min-w-[900px]">
           <thead className="bg-[#F4F6F8] text-muted-foreground">
-            <tr>{["المؤسسة", "المالك", "المحافظة", "المخاطر", "الفروع", "الموظفون", "الطلبات", "نزاعات", "الرصيد", ""].map((h) => (
+            <tr>{["المؤسسة", "المالك", "المحافظة", "المخاطر", "واتساب", "متاح (ريال)", "متاح (دولار)",
+              "الفروع", "الموظفون", "الطلبات", "نزاعات", "الحالة", ""].map((h) => (
               <th key={h} className="text-right font-semibold px-3 py-2.5">{h}</th>))}</tr>
           </thead>
           <tbody>
             {d.items.length === 0 ? (
-              <tr><td colSpan={10} className="text-center py-12 text-muted-foreground" data-testid="orgs-empty">لا توجد نتائج</td></tr>
+              <tr><td colSpan={13} className="text-center py-12 text-muted-foreground" data-testid="orgs-empty">لا توجد نتائج</td></tr>
             ) : d.items.map((x) => (
               <tr key={x.id} className="border-t hover:bg-[#FAFBFC]" data-testid={`org-row-${x.id}`}>
                 <td className="px-3 py-2.5 font-semibold text-[#0A2540]">{x.name}
                   {x.is_rahal && <span className="mr-1 text-[9px] px-1.5 py-0.5 rounded bg-[#FEFCE8] text-[#A16207]">رحّال</span>}
-                  {x.status !== "active" && <span className="mr-1 text-[9px] px-1.5 py-0.5 rounded bg-[#FEF2F2] text-[#B91C1C]">موقوف</span>}
                 </td>
                 <td className="px-3 py-2.5">{x.owner}</td>
                 <td className="px-3 py-2.5">{x.governorate}</td>
                 <td className="px-3 py-2.5">
                   <span className={`text-[10px] px-2 py-0.5 rounded-full border ${RISK_CLASS[x.risk_class]}`}>{RISK_LABEL[x.risk_class]}</span>
                 </td>
+                <td className="px-3 py-2.5">
+                  {waNumber(x.phone) ? (
+                    <a href={`https://wa.me/${waNumber(x.phone)}?text=${encodeURIComponent(`مرحباً ${x.name || ""}، معك إدارة معراج نتورك`)}`}
+                      target="_blank" rel="noopener noreferrer" data-testid={`whatsapp-${x.id}`}
+                      className="inline-flex items-center gap-1 text-[#15803D] bg-[#F0FDF4] hover:bg-[#DCFCE7] border border-[#BBF7D0] px-2 py-1 rounded-lg text-[10px] font-semibold transition-colors">
+                      <MessageCircle className="w-3 h-3" /> {waNumber(x.phone)}
+                    </a>
+                  ) : <span className="text-[10px] text-muted-foreground">—</span>}
+                </td>
+                <td className="px-3 py-2.5 tabular font-semibold text-[#0A2540]">{money(x.balance.SAR, "SAR")}</td>
+                <td className="px-3 py-2.5 tabular font-semibold text-[#0A2540]">{money(x.balance.USD, "USD")}</td>
                 <td className="px-3 py-2.5 tabular">{x.branches_count}</td>
                 <td className="px-3 py-2.5 tabular">{x.staff_count}</td>
                 <td className="px-3 py-2.5 tabular">{x.bookings_count}</td>
                 <td className={`px-3 py-2.5 tabular ${x.open_disputes ? "text-[#B91C1C] font-bold" : ""}`}>{x.open_disputes}</td>
-                <td className="px-3 py-2.5 tabular text-[10px]">{money(x.balance.SAR, "SAR")}<br />{money(x.balance.USD, "USD")}</td>
                 <td className="px-3 py-2.5">
-                  <button onClick={() => open(x.id)} data-testid={`org-open-${x.id}`} className="text-[#0A2540] underline font-semibold">الملف</button>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-md font-semibold ${x.status === "active" ? "bg-[#F0FDF4] text-[#15803D]" : "bg-[#FEF2F2] text-[#B91C1C]"}`}
+                    data-testid={`org-status-${x.id}`}>{x.status === "active" ? "مفعّل" : "موقوف"}</span>
+                </td>
+                <td className="px-3 py-2.5 whitespace-nowrap">
+                  <button onClick={() => open(x.id)} data-testid={`org-open-${x.id}`} className="text-[#0A2540] underline font-semibold ml-2">الملف</button>
+                  {x.status === "active"
+                    ? <button className="text-[#B91C1C] underline font-semibold" disabled={busy}
+                      onClick={() => setStatus(x.id, "suspended")} data-testid={`suspend-${x.id}`}>إيقاف</button>
+                    : <button className="text-[#15803D] underline font-semibold" disabled={busy}
+                      onClick={() => setStatus(x.id, "active")} data-testid={`activate-${x.id}`}>تفعيل</button>}
                 </td>
               </tr>
             ))}
@@ -130,7 +175,53 @@ export default function AdminOrgs() {
                 <Box label="البريد" v={o.email} />
                 <Box label="الهاتف" v={o.phone} />
                 <Box label="السجل التجاري" v={o.commercial_license || "—"} />
-                <Box label="الحالة" v={o.status} />
+                <Box label="الحالة" v={o.status === "active" ? "مفعّل" : "موقوف"} />
+                <Box label="متاح (ريال)" v={money(o.wallet?.SAR?.available, "SAR")} />
+                <Box label="معلّق (ريال)" v={money(o.wallet?.SAR?.pending, "SAR")} />
+                <Box label="متاح (دولار)" v={money(o.wallet?.USD?.available, "USD")} />
+                <Box label="معلّق (دولار)" v={money(o.wallet?.USD?.pending, "USD")} />
+              </div>
+
+              <div className="flex flex-wrap gap-2 items-center">
+                {o.status === "active" ? (
+                  <Button size="sm" variant="outline" className="text-[#B91C1C] border-[#FECACA]" disabled={busy}
+                    data-testid="org-suspend-btn" onClick={() => setStatus(o.id, "suspended")}>إيقاف المؤسسة</Button>
+                ) : (
+                  <Button size="sm" className="bg-[#15803D] hover:bg-[#166534]" disabled={busy}
+                    data-testid="org-activate-btn" onClick={() => setStatus(o.id, "active")}>تفعيل المؤسسة</Button>
+                )}
+                {waNumber(o.phone) && (
+                  <a href={`https://wa.me/${waNumber(o.phone)}?text=${encodeURIComponent(`مرحباً ${o.office_name || ""}، معك إدارة معراج نتورك`)}`}
+                    target="_blank" rel="noopener noreferrer" data-testid="org-whatsapp"
+                    className="inline-flex items-center gap-1.5 text-[#15803D] bg-[#F0FDF4] hover:bg-[#DCFCE7] border border-[#BBF7D0] px-3 py-1.5 rounded-lg text-xs font-semibold">
+                    <MessageCircle className="w-3.5 h-3.5" /> مراسلة واتساب
+                  </a>
+                )}
+              </div>
+
+              <div className="border-t pt-3" data-testid="org-credit">
+                <div className="text-xs font-semibold text-[#0A2540] mb-2">الائتمان والتعرّض</div>
+                <div className="grid sm:grid-cols-2 gap-2">
+                  {["SAR", "USD"].map((c) => {
+                    const s = detail.credit_summary?.[c];
+                    return (
+                      <div key={c} className="bg-[#F4F6F8] rounded-lg px-3 py-2 text-[11px]" data-testid={`org-credit-${c}`}>
+                        <div className="font-bold text-[#0A2540] mb-1">{c === "SAR" ? "الريال" : "الدولار"}</div>
+                        {!s ? <span className="text-muted-foreground">لا يوجد سقف ائتماني</span> : (
+                          <div className="space-y-0.5">
+                            <div>السقف: <b>{money(s.limit, c)}</b>{s.frozen && <span className="mr-1 text-[#B91C1C]">مجمّد</span>}</div>
+                            <div>التعرّض الحالي: <b>{money(s.used, c)}</b> ({s.utilization}%)</div>
+                            <div>المتبقي من السقف: <b>{money(s.credit_headroom, c)}</b></div>
+                            <div>القوة الشرائية: <b>{money(s.spending_power, c)}</b></div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-1">
+                  تعديل السقوف والتجميد يتم من «التحكم الائتماني» بسبب مُسجَّل في سجل التدقيق.
+                </div>
               </div>
 
               <div className="border-t pt-3">

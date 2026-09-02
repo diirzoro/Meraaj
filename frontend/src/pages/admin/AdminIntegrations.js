@@ -204,12 +204,27 @@ export default function AdminIntegrations() {
                     {it.status === "delivered" ? "مُسلَّم" : it.status === "failed" ? "فاشل" : "معلّق"}
                   </span>
                 </td>
-                <td className="px-3 py-2.5 max-w-[220px] truncate text-[10px] text-muted-foreground">{it.last_error || "—"}</td>
+                <td className="px-3 py-2.5 max-w-[260px] text-[10px]">
+                  {it.diagnosis?.cause === "business" ? (
+                    <span className="text-[#A16207]" data-testid={`biz-reason-${it.id}`}>
+                      <b>{it.diagnosis.title}</b>
+                      {it.diagnosis.required_reference && <> — المرجع المطلوب: <code dir="ltr">{it.diagnosis.required_reference}</code></>}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">{it.diagnosis?.title || it.last_error || "—"}</span>
+                  )}
+                </td>
                 <td className="px-3 py-2.5 whitespace-nowrap">
                   <button onClick={() => openDetail(it.id)} data-testid={`detail-${it.id}`}
                     className="text-[#0A2540] underline font-semibold ml-2">السبب الدقيق</button>
-                  <button onClick={() => setRetry({ id: it.id })} data-testid={`retry-${it.id}`}
-                    className="text-[#0A2540] underline font-semibold">إعادة المعالجة</button>
+                  {it.diagnosis?.retry_useful === false ? (
+                    <span className="text-[10px] text-muted-foreground" data-testid={`no-retry-${it.id}`}>
+                      إعادة المعالجة لا تُفيد
+                    </span>
+                  ) : (
+                    <button onClick={() => setRetry({ id: it.id })} data-testid={`retry-${it.id}`}
+                      className="text-[#0A2540] underline font-semibold">إعادة المعالجة</button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -244,6 +259,19 @@ export default function AdminIntegrations() {
                 <Row k="الوجهة" v={detail.url} tid="detail-url" />
                 <Row k="أُنشئ في" v={fmtDate(detail.created_at)} tid="detail-created" />
               </div>
+              <div className={`rounded-lg px-3 py-2 border ${detail.diagnosis?.cause === "business" ? "bg-[#FEFCE8] border-[#FEF08A] text-[#A16207]" : "bg-[#FEF2F2] border-[#FECACA] text-[#B91C1C]"}`}
+                data-testid="detail-diagnosis">
+                <b>{detail.diagnosis?.title}</b>
+                <div className="mt-1">{detail.diagnosis?.reason_ar}</div>
+                {detail.diagnosis?.required_reference && (
+                  <div className="mt-1">المرجع المطلوب من رحّال: <code dir="ltr" data-testid="detail-required-ref">{detail.diagnosis.required_reference}</code></div>
+                )}
+                <div className="mt-1"><b>الإجراء التالي:</b> {detail.diagnosis?.next_action}</div>
+                <div className="mt-1 text-[10px]">
+                  المسؤول: {detail.diagnosis?.owner === "rahal" ? "فريق رحّال" : detail.diagnosis?.owner === "ok" ? "لا شيء" : "مشترك"}
+                  {detail.diagnosis?.retry_useful === false && " • إعادة المعالجة لن تُفيد قبل معالجة السبب"}
+                </div>
+              </div>
               <div className="bg-[#FEF2F2] border border-[#FECACA] text-[#B91C1C] rounded-lg px-3 py-2" data-testid="detail-error">
                 <b>نص الخطأ الحرفي من الخادم:</b>
                 <pre className="mt-1 whitespace-pre-wrap" dir="ltr">{detail.last_error || "—"}</pre>
@@ -269,7 +297,12 @@ export default function AdminIntegrations() {
                 <pre className="mt-1 bg-[#0A2540] text-white rounded p-2 overflow-x-auto text-[10px]" dir="ltr" data-testid="detail-curl">{detail.curl}</pre>
               </div>
               <Button className="w-full bg-[#0A2540] hover:bg-[#061A2E]" data-testid="detail-retry-btn"
-                onClick={() => setRetry({ id: detail.id })}>إعادة المعالجة بسبب مُسجَّل</Button>
+                disabled={detail.diagnosis?.retry_useful === false}
+                onClick={() => setRetry({ id: detail.id })}>
+                {detail.diagnosis?.retry_useful === false
+                  ? "إعادة المعالجة معطّلة — السبب يحتاج معالجة من رحّال أولاً"
+                  : "إعادة المعالجة بسبب مُسجَّل"}
+              </Button>
             </div>
           )}
         </DialogContent>

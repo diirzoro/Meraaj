@@ -36,7 +36,6 @@ import AdminNotifications from "@/pages/admin/AdminNotifications";
 import AdminReports from "@/pages/admin/AdminReports";
 import AdminSystem from "@/pages/admin/AdminSystem";
 import AdminFinance from "@/pages/admin/AdminFinance";
-import AdminOffices from "@/pages/admin/AdminOffices";
 import AdminCancellations from "@/pages/admin/AdminCancellations";
 import AdminDisputes from "@/pages/admin/AdminDisputes";
 
@@ -109,7 +108,9 @@ function AppRoutes() {
       <Route path="/admin/reports" element={<Protected role="admin"><AdminReports /></Protected>} />
       <Route path="/admin/system" element={<Protected role="admin"><AdminSystem /></Protected>} />
       <Route path="/admin/finance" element={<Protected role="admin"><AdminFinance /></Protected>} />
-      <Route path="/admin/offices" element={<Protected role="admin"><AdminOffices /></Protected>} />
+      {/* Unified into /admin/orgs — old route kept as a backward-compatible redirect
+          until every function is manually confirmed as transferred. */}
+      <Route path="/admin/offices" element={<Navigate to="/admin/orgs" replace />} />
       <Route path="/admin/cancellations" element={<Protected role="admin"><AdminCancellations /></Protected>} />
       <Route path="/admin/disputes" element={<Protected role="admin"><AdminDisputes /></Protected>} />
 

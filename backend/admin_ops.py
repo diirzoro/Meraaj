@@ -73,7 +73,12 @@ async def outbox_list(status: Optional[str] = None, limit: int = 100,
                       admin: dict = Depends(require_admin)):
     f = {"status": status} if status else {"status": {"$in": ["pending", "failed"]}}
     docs = await db.rahal_outbox.find(f).sort("created_at", -1).to_list(min(limit, 300))
-    return serialize(docs)
+    out = []
+    for x in docs:
+        d = serialize(x)
+        d["diagnosis"] = classify_outbox_error(x.get("http_status"), x.get("last_error"))
+        out.append(d)
+    return out
 
 
 class RetryIn(BaseModel):
@@ -131,6 +136,61 @@ async def diagnose(admin: dict = Depends(require_admin)):
              "meraaj_side_fixable": sum(g["count"] for g in out if g["owner"] == "meraaj"),
              "rahal_side_fixable": sum(g["count"] for g in out if g["owner"] == "rahal"),
              "generated_at": now_iso()}
+
+
+def classify_outbox_error(status, last_error: str) -> dict:
+    """Turns a raw endpoint error into an actionable statement: what went wrong, who owns
+    the fix, which reference is required and what the next step is. No guessing, no retry."""
+    raw = str(last_error or "")
+    detail = {}
+    try:
+        detail = json.loads(raw) if raw.strip().startswith("{") else {}
+    except ValueError:
+        detail = {}
+    code = detail.get("error") or ""
+    if code == "unknown_package_ref":
+        ref = detail.get("received_package_ref")
+        return {
+            "cause": "business",
+            "code": code,
+            "title": "مرجع باكج غير معروف عند رحّال",
+            "reason_ar": (f"رحّال لا يعرف مرجع الباكج «{ref}» — الحدث وصل وتم التحقق من "
+                          "توقيعه، لكن المرجع غير موجود في قاعدة رحّال."),
+            "required_reference": ref,
+            "owner": "rahal",
+            "next_action": ("لا تُعِد المعالجة قبل الحصول على مرجع باكج صحيح من رحّال لهذا "
+                            "البرنامج. إن كان المرجع من بيانات اختبار QA فلا إجراء مطلوب."),
+            "retry_useful": False,
+        }
+    if status == 404 and "page not found" in raw.lower():
+        return {"cause": "endpoint", "code": "route_not_found",
+                "title": "المسار غير موجود على خادم رحّال",
+                "reason_ar": "الخادم لا يُخدّم مسار الـWebhook المضبوط (404 على مستوى التوجيه).",
+                "required_reference": None, "owner": "rahal",
+                "next_action": "تأكيد عنوان/مسار Webhook حيّ من رحّال ثم إعادة المعالجة.",
+                "retry_useful": True}
+    if status in (401, 403):
+        return {"cause": "signature", "code": "signature_rejected",
+                "title": "التوقيع أو المصادقة مرفوضة",
+                "reason_ar": "الخادم موجود لكنه رفض التوقيع — تحقق من تطابق السر المشترك.",
+                "required_reference": None, "owner": "shared",
+                "next_action": "مطابقة بصمة السر بين الطرفين ثم إعادة المعالجة.",
+                "retry_useful": True}
+    if status is None:
+        return {"cause": "transport", "code": "unreachable",
+                "title": "تعذّر الوصول إلى الخادم",
+                "reason_ar": raw[:200] or "انتهت المهلة أو تعذّر الاتصال.",
+                "required_reference": None, "owner": "shared",
+                "next_action": "التحقق من توفّر الخادم والشبكة ثم إعادة المعالجة.",
+                "retry_useful": True}
+    if status and 200 <= status < 300:
+        return {"cause": "none", "code": "ok", "title": "مُسلَّم",
+                "reason_ar": "", "required_reference": None, "owner": "ok",
+                "next_action": "", "retry_useful": False}
+    return {"cause": "unexpected", "code": f"http_{status}",
+            "title": f"استجابة غير متوقعة ({status})",
+            "reason_ar": raw[:200], "required_reference": None, "owner": "shared",
+            "next_action": "مراجعة نص الاستجابة مع فريق رحّال.", "retry_useful": True}
 
 
 @router.get("/integrations/target")
@@ -240,6 +300,7 @@ async def outbox_detail(item_id: str, admin: dict = Depends(require_admin)):
     d["signed_body"] = raw
     d["current_signature"] = sig
     d["attempt_history"] = item.get("attempt_history") or []
+    d["diagnosis"] = classify_outbox_error(item.get("http_status"), item.get("last_error"))
     d["curl"] = (f"curl -i -X POST '{url}' -H 'Content-Type: application/json' "
                  f"-H 'X-Meraaj-Signature: {sig}' -d '{raw[:1200]}'")
     audit_rows = await db.audit_log.find({"entity": "integration", "entity_id": item_id}

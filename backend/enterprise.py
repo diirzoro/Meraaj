@@ -489,9 +489,23 @@ async def list_backups(admin: dict = Depends(require_admin)):
         for f in sorted(os.listdir(BACKUP_DIR), reverse=True):
             if f.startswith("meraaj-"):
                 files.append({"file": f, "size": os.path.getsize(f"{BACKUP_DIR}/{f}")})
+    last_ok = await db.backups.find_one({"result": "success"}, sort=[("at", -1)])
+    schedule = {"cron": "0 22 * * *", "local_time": "01:00 بتوقيت الرياض (22:00 UTC)",
+                "endpoint": "/api/cron/backup", "enabled": True,
+                "source": ".emergent/crons.yml"}
     return {"items": docs, "retention": RETENTION,
             "encrypted": bool(_passphrase()),
+            "encryption": {"enabled": bool(_passphrase()),
+                           "algorithm": "AES-256-CBC + PBKDF2 (openssl)",
+                           "passphrase_source": "BACKUP_PASSPHRASE"},
+            "schedule": schedule,
+            "last_successful": {"file": (last_ok or {}).get("file"),
+                                "at": (last_ok or {}).get("at"),
+                                "size": (last_ok or {}).get("size")},
+            "pruned_count": await db.backups.count_documents({"pruned": True}),
             "restore_enabled": os.environ.get("ALLOW_RESTORE") == "true",
+            "restore_guards": ["ALLOW_RESTORE=true", "عبارة تأكيد حرفية: أؤكد الاستعادة",
+                               "سبب إلزامي", "رفض قاطع على بيئة Live"],
             "environment": os.environ.get("ENVIRONMENT", "unknown"),
             "files_on_disk": files, "drills": drills,
             "dir": BACKUP_DIR}
