@@ -257,6 +257,13 @@ async def set_stage(wid: str, payload: StageIn, admin: dict = Depends(require_ad
     await db.withdrawals.update_one({"_id": w["_id"]}, {
         "$set": {"stage": payload.stage, "stage_updated_at": now_iso()},
         "$push": {"stage_history": entry}})
+    from orgs import notify
+    await notify(w.get("office_id"), "withdrawal_stage", "تحديث طلب السحب",
+                 f"انتقل طلب السحب {w.get('amount')} {w.get('currency')} إلى مرحلة: "
+                 f"{STAGE_LABEL[payload.stage]}",
+                 "/wallet", {"withdrawal_id": wid, "amount": w.get("amount"),
+                             "currency": w.get("currency"),
+                             "stage_label": STAGE_LABEL[payload.stage]})
     return {"ok": True, "stage": payload.stage, "history_entry": entry}
 
 
@@ -349,14 +356,31 @@ async def reconciliation_preview(admin: dict = Depends(require_admin)):
         exists = await db.transactions.find_one({"office_id": m["office_id"],
                                                  "currency": m["currency"],
                                                  "type": "opening_balance"})
+        u = await db.users.find_one({"_id": oid(m["office_id"])},
+                                    {"email": 1, "wallet": 1, "role": 1})
+        cw = ((u or {}).get("wallet") or {}).get(m["currency"]) or {}
         rows.append({**m, "proposed_entry": m["difference"],
                      "already_adjusted": bool(exists),
                      "entry_type": "opening_balance",
+                     "account_email": (u or {}).get("email"),
+                     "account_role": (u or {}).get("role"),
+                     # before/after preview — the WALLET never changes, only the ledger
+                     "before": {"wallet_total": m["wallet_total"],
+                                "wallet_available": round(float(cw.get("available") or 0), 2),
+                                "wallet_pending": round(float(cw.get("pending") or 0), 2),
+                                "ledger_total": m["ledger_total"]},
+                     "after": {"wallet_total": m["wallet_total"],
+                               "wallet_available": round(float(cw.get("available") or 0), 2),
+                               "wallet_pending": round(float(cw.get("pending") or 0), 2),
+                               "ledger_total": round(m["ledger_total"] + m["difference"], 2)},
+                     "wallet_changed": False,
                      "description": "قيد افتتاحي/تسوية موثّقة"})
         if not exists:
             totals[m["currency"]] += m["difference"]
     return {"count": len(rows), "totals": {c: round(v, 2) for c, v in totals.items()},
             "execution_enabled": _os.environ.get("ALLOW_RECONCILIATION") == "true",
+            "wallet_writes": 0,
+            "idempotency": "قيد افتتاحي واحد فقط لكل (حساب + عملة) — أي تشغيل ثانٍ يُرفض",
             "note": "معاينة فقط — لا يوجد أي تعديل على الأرصدة ولا كتابة أي قيد. "
                     "التشغيل الفعلي يحتاج ALLOW_RECONCILIATION=true بعد اعتمادكم.",
             "items": rows}

@@ -435,6 +435,46 @@ async def system_health(admin: dict = Depends(require_admin)):
     return {"checks": checks, "collections": counts, "generated_at": now_iso()}
 
 
+@router.get("/system/test-data-report")
+async def test_data_report(admin: dict = Depends(require_admin)):
+    """Read-only classification of QA/test records vs real records in THIS database.
+    Nothing is deleted; this exists so any cleanup decision is documented first."""
+    qa_email = {"email": {"$regex": r"@qa-example\.com$", "$options": "i"}}
+    qa_title = {"title": {"$regex": r"^TEST_"}}
+    users_total = await db.users.count_documents({})
+    users_qa = await db.users.count_documents(qa_email)
+    pkgs_total = await db.packages.count_documents({})
+    pkgs_qa = await db.packages.count_documents(qa_title)
+    qa_ids = [str(u["_id"]) async for u in db.users.find(qa_email, {"_id": 1})]
+    bookings_total = await db.bookings.count_documents({})
+    bookings_qa = await db.bookings.count_documents(
+        {"$or": [{"buyer_id": {"$in": qa_ids}}, {"seller_id": {"$in": qa_ids}}]})
+    dup_titles = []
+    async for r in db.packages.aggregate([
+            {"$group": {"_id": "$title", "n": {"$sum": 1}}},
+            {"$match": {"n": {"$gt": 1}}}, {"$sort": {"n": -1}}, {"$limit": 10}]):
+        dup_titles.append({"title": r["_id"], "count": r["n"]})
+    return {
+        "database": os.environ["DB_NAME"],
+        "environment": os.environ.get("ENVIRONMENT", "unknown"),
+        "isolation_note": ("قاعدة بيانات هذه البيئة محلية ومنفصلة تمامًا عن قاعدتي Test و Live "
+                           "على السيرفر (ملفات بيئة مختلفة لكل بيئة)."),
+        "rows": [
+            {"collection": "users", "total": users_total, "qa": users_qa,
+             "real": users_total - users_qa, "rule": "البريد ينتهي بـ@qa-example.com"},
+            {"collection": "packages", "total": pkgs_total, "qa": pkgs_qa,
+             "real": pkgs_total - pkgs_qa, "rule": "العنوان يبدأ بـTEST_"},
+            {"collection": "bookings", "total": bookings_total, "qa": bookings_qa,
+             "real": bookings_total - bookings_qa, "rule": "المشتري أو البائع حساب QA"},
+        ],
+        "repeated_titles": dup_titles,
+        "repetition_verdict": ("التكرار مقصود: كل تشغيل لمجموعة الاختبار يُنشئ مكتبًا وبرنامجًا "
+                               "جديدين بمعرّفات فريدة — وليس تكرارًا مرضيًا في منطق النظام."),
+        "deletion_policy": "لم يُحذف أي سجل. أي تنظيف يتم على Test فقط وبتقرير موثّق قبل/بعد.",
+        "generated_at": now_iso(),
+    }
+
+
 # ---------------- backup & restore ----------------
 def _passphrase() -> Optional[str]:
     return os.environ.get("BACKUP_PASSPHRASE")
@@ -443,9 +483,17 @@ def _passphrase() -> Optional[str]:
 @router.get("/backups")
 async def list_backups(admin: dict = Depends(require_admin)):
     docs = serialize(await db.backups.find({}).sort("at", -1).to_list(100))
+    drills = serialize(await db.backup_drills.find({}).sort("at", -1).to_list(20))
+    files = []
+    if os.path.isdir(BACKUP_DIR):
+        for f in sorted(os.listdir(BACKUP_DIR), reverse=True):
+            if f.startswith("meraaj-"):
+                files.append({"file": f, "size": os.path.getsize(f"{BACKUP_DIR}/{f}")})
     return {"items": docs, "retention": RETENTION,
             "encrypted": bool(_passphrase()),
             "restore_enabled": os.environ.get("ALLOW_RESTORE") == "true",
+            "environment": os.environ.get("ENVIRONMENT", "unknown"),
+            "files_on_disk": files, "drills": drills,
             "dir": BACKUP_DIR}
 
 
@@ -503,6 +551,76 @@ async def run_backup(payload: BackupIn, admin: dict = Depends(require_admin)):
     if rec["result"] == "failed":
         raise HTTPException(500, f"فشل النسخ الاحتياطي: {rec['error']}")
     return serialize(rec)
+
+
+class VerifyIn(BaseModel):
+    file: str
+    reason: str = Field(min_length=3)
+
+
+@router.post("/backups/verify")
+async def verify_backup(payload: VerifyIn, admin: dict = Depends(require_admin)):
+    """Restore DRILL: decrypts the archive and restores it into a THROWAWAY database
+    (`<DB>_restore_drill`), reports the collection counts, then drops that database.
+    The live/preview database is never touched. Refuses to run on a live environment."""
+    if os.environ.get("ENVIRONMENT", "").lower() in ("live", "production", "prod"):
+        raise HTTPException(403, "ممنوع تشغيل اختبار الاستعادة على بيئة Live")
+    path = f"{BACKUP_DIR}/{os.path.basename(payload.file)}"
+    if not os.path.exists(path):
+        raise HTTPException(404, "ملف النسخة غير موجود")
+    dbname = os.environ["DB_NAME"]
+    drill_db = f"{dbname}_restore_drill"
+    work = f"{BACKUP_DIR}/.drill.archive.gz"
+    started = now_iso()
+    try:
+        if path.endswith(".enc"):
+            pw = _passphrase()
+            if not pw:
+                raise RuntimeError("النسخة مشفّرة ولا يوجد BACKUP_PASSPHRASE")
+            d = subprocess.run(["openssl", "enc", "-d", "-aes-256-cbc", "-pbkdf2",
+                                "-in", path, "-out", work, "-pass", f"pass:{pw}"],
+                               capture_output=True, timeout=600)
+            if d.returncode != 0:
+                raise RuntimeError("فشل فك التشفير: " + d.stderr.decode()[:200])
+        else:
+            subprocess.run(["cp", path, work], capture_output=True, timeout=600)
+        r = subprocess.run(["mongorestore", f"--uri={os.environ['MONGO_URL']}",
+                            f"--archive={work}", "--gzip", "--drop",
+                            f"--nsFrom={dbname}.*", f"--nsTo={drill_db}.*"],
+                           capture_output=True, timeout=900)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.decode()[-400:])
+        client = db.client
+        counts = {}
+        for c in await client[drill_db].list_collection_names():
+            counts[c] = await client[drill_db][c].count_documents({})
+        await client.drop_database(drill_db)
+        rec = {"file": os.path.basename(path), "result": "success",
+               "drill_db": drill_db, "collections": len(counts),
+               "documents": sum(counts.values()), "counts": counts,
+               "decrypted": path.endswith(".enc"), "error": None,
+               "by": admin.get("email"), "reason": payload.reason.strip(),
+               "started_at": started, "at": now_iso()}
+    except Exception as e:
+        rec = {"file": os.path.basename(path), "result": "failed", "error": str(e)[:400],
+               "by": admin.get("email"), "reason": payload.reason.strip(),
+               "started_at": started, "at": now_iso()}
+    finally:
+        for f in (work,):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+    await db.backup_drills.insert_one(dict(rec))
+    await db.audit_log.insert_one({"entity": "backup", "entity_id": rec["file"],
+                                   "action": "restore_drill", "actor": admin.get("email"),
+                                   "reason": payload.reason.strip(),
+                                   "after": {"result": rec["result"],
+                                             "documents": rec.get("documents")},
+                                   "at": now_iso()})
+    if rec["result"] == "failed":
+        raise HTTPException(500, f"فشل اختبار الاستعادة: {rec['error']}")
+    return rec
 
 
 class RestoreIn(BaseModel):

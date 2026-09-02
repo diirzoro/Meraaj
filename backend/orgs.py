@@ -5,6 +5,7 @@ uses the office user's id as `_id` link (`user_id`), so all existing money/ledge
 working unchanged. Staff are management records under an office/branch; giving a staff member a
 LOGIN that shares the office wallet remains the documented structural refactor (see DEV_NOTES).
 """
+import re
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -251,14 +252,23 @@ async def del_staff(staff_id: str, admin: dict = Depends(require_admin)):
 
 
 # ---------------- notifications ----------------
+def _render(text: str, meta: Optional[dict]) -> str:
+    out = text or ""
+    for k, v in (meta or {}).items():
+        out = out.replace("{{" + str(k) + "}}", str(v))
+    return out
+
+
 async def notify(user_id: Optional[str], kind: str, title: str, body: str = "",
                  link: str = "", meta: Optional[dict] = None, channel: str = "in_app"):
-    """Fire-and-forget in-app notification + delivery log. Never raises."""
+    """Fire-and-forget in-app notification + delivery log. Never raises.
+    An active template for the kind overrides the default text; `{{var}}` placeholders are
+    filled from `meta` (unknown placeholders are left untouched)."""
     try:
         tpl = await db.notification_templates.find_one({"kind": kind, "active": True})
         if tpl:
-            title = (tpl.get("title") or title)
-            body = (tpl.get("body") or body)
+            title = _render(tpl.get("title") or title, meta)
+            body = _render(tpl.get("body") or body, meta)
         rec = {"user_id": user_id, "kind": kind, "title": title, "body": body, "link": link,
                "meta": meta or {}, "read": False, "at": now_iso()}
         res = await db.notifications.insert_one(rec)
@@ -311,28 +321,98 @@ KINDS = {
     "escalation": "تصعيد إداري",
 }
 
+# Who receives each kind (recipient rules). buyer/seller/admin are resolved at send time.
+RECIPIENTS = {
+    "booking_created": ["seller", "admin"],
+    "booking_approved": ["buyer"],
+    "booking_rejected": ["buyer"],
+    "booking_cancelled": ["buyer", "seller"],
+    "cancellation_requested": ["seller", "admin"],
+    "documents_missing": ["buyer"],
+    "passport_expiring": ["buyer"],
+    "credit_threshold": ["admin"],
+    "withdrawal_stage": ["seller"],
+    "task_overdue": ["admin"],
+    "escalation": ["admin"],
+}
+
+# Editable defaults, seeded once so the screen is never empty and text is fully editable.
+DEFAULT_TEMPLATES = {
+    "booking_created": ("طلب حجز جديد", "طلب جديد على: {{package_title}} — عدد المقاعد {{seats}}"),
+    "booking_approved": ("تم قبول طلبك", "قبل البائع طلبك على: {{package_title}}"),
+    "booking_rejected": ("تم رفض طلبك", "رفض البائع طلبك على: {{package_title}} — {{reason}}"),
+    "booking_cancelled": ("تم إلغاء الطلب", "أُلغي الطلب على: {{package_title}} — {{reason}}"),
+    "cancellation_requested": ("طلب إلغاء بانتظار القرار",
+                               "طلب إلغاء على: {{package_title}} — السبب: {{reason}}"),
+    "documents_missing": ("مستندات ناقصة", "لا يوجد جواز مرفوع في الطلب: {{package_title}}"),
+    "passport_expiring": ("جواز قارب الانتهاء", "{{name}} — تاريخ الانتهاء {{expiry}}"),
+    "credit_threshold": ("تنبيه سقف ائتماني",
+                         "{{office_name}} بلغ {{pct}}% من السقف ({{currency}})"),
+    "withdrawal_stage": ("تحديث طلب السحب",
+                         "انتقل طلب السحب {{amount}} {{currency}} إلى مرحلة: {{stage_label}}"),
+    "task_overdue": ("مهمة متأخرة", "{{title}} — المسؤول {{assignee}}"),
+    "escalation": ("تصعيد إداري", "{{message}}"),
+}
+
+
+async def seed_notification_templates() -> int:
+    """Idempotent: creates any missing default template. Never overwrites admin edits."""
+    created = 0
+    for kind, (title, body) in DEFAULT_TEMPLATES.items():
+        res = await db.notification_templates.update_one(
+            {"kind": kind},
+            {"$setOnInsert": {"kind": kind, "title": title, "body": body,
+                              "channels": ["in_app"], "active": True,
+                              "recipients": RECIPIENTS.get(kind, []),
+                              "is_default": True, "updated_by": "system",
+                              "updated_at": now_iso()}}, upsert=True)
+        if res.upserted_id:
+            created += 1
+    return created
+
 
 class TemplateIn(BaseModel):
     kind: str
     title: str
     body: str = ""
     channels: list = ["in_app"]
+    recipients: Optional[list] = None
     active: bool = True
 
 
 @router.get("/admin/notification-templates")
 async def templates(admin: dict = Depends(require_admin)):
-    return {"kinds": KINDS,
+    return {"kinds": KINDS, "recipients_rules": RECIPIENTS,
+            "variables": {k: sorted(set(re.findall(r"{{(\w+)}}", f"{t[0]} {t[1]}")))
+                          for k, t in DEFAULT_TEMPLATES.items()},
             "items": serialize(await db.notification_templates.find({}).to_list(200))}
+
+
+@router.post("/admin/notification-templates/seed")
+async def seed_templates(admin: dict = Depends(require_admin)):
+    created = await seed_notification_templates()
+    await db.audit_log.insert_one({
+        "entity": "settings", "entity_id": "notification_templates",
+        "action": "templates_seeded", "actor": admin.get("email"),
+        "after": {"created": created}, "at": now_iso()})
+    return {"ok": True, "created": created,
+            "total": await db.notification_templates.count_documents({})}
 
 
 @router.post("/admin/notification-templates")
 async def upsert_template(payload: TemplateIn, admin: dict = Depends(require_admin)):
     if payload.kind not in KINDS:
         raise HTTPException(400, "نوع إشعار غير معروف")
+    doc = payload.model_dump()
+    if doc.get("recipients") is None:
+        doc["recipients"] = RECIPIENTS.get(payload.kind, [])
     await db.notification_templates.update_one({"kind": payload.kind}, {"$set": {
-        **payload.model_dump(), "updated_by": admin.get("email"), "updated_at": now_iso()}},
+        **doc, "is_default": False, "updated_by": admin.get("email"), "updated_at": now_iso()}},
         upsert=True)
+    await db.audit_log.insert_one({
+        "entity": "settings", "entity_id": f"notification_template:{payload.kind}",
+        "action": "template_updated", "actor": admin.get("email"),
+        "after": {"title": payload.title, "active": payload.active}, "at": now_iso()})
     return serialize(await db.notification_templates.find_one({"kind": payload.kind}))
 
 

@@ -58,6 +58,28 @@ def _rahal_webhook_url() -> str:
     return os.environ.get("RAHAL_WEBHOOK_URL", "").strip()
 
 
+async def rahal_target() -> dict:
+    """Effective outbound target. An admin-configured override (audited, stored in
+    `settings/integration_target`) wins over the RAHAL_WEBHOOK_URL env value so the exact
+    Rahaal Test endpoint can be corrected without a redeploy."""
+    doc = await db.settings.find_one({"_id": "integration_target"}) or {}
+    url = (doc.get("webhook_url") or "").strip()
+    if url:
+        return {"url": url, "source": "settings", "updated_by": doc.get("updated_by"),
+                "updated_at": doc.get("updated_at")}
+    return {"url": _rahal_webhook_url(), "source": "env", "updated_by": None,
+            "updated_at": None}
+
+
+async def rahal_target_url() -> str:
+    return (await rahal_target())["url"]
+
+
+def secret_fingerprint() -> str:
+    """Non-reversible fingerprint so both sides can confirm they share the same secret."""
+    return hashlib.sha256(_meraaj_secret().encode()).hexdigest()[:12]
+
+
 def _rahal_base_url() -> str:
     """Base URL for interactive/server-to-server Rahal calls. Prefer explicit RAHAL_BASE_URL;
     otherwise derive it from the configured webhook URL so existing deployments need no new env.
@@ -77,6 +99,7 @@ def _outbound_signature(raw: bytes) -> str:
 
 
 async def _deliver(outbox_id, url: str, raw: bytes, sig: str):
+    started = time.time()
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.post(url, content=raw, headers={
@@ -86,16 +109,24 @@ async def _deliver(outbox_id, url: str, raw: bytes, sig: str):
                 "X-Meraaj-Signature": sig,
             })
         ok = 200 <= r.status_code < 300
+        attempt = {"at": now_iso(), "url": url, "http_status": r.status_code,
+                   "ms": int((time.time() - started) * 1000),
+                   "error": None if ok else r.text[:500]}
         await db.rahal_outbox.update_one({"_id": outbox_id}, {
             "$set": {"status": "delivered" if ok else "failed",
                      "http_status": r.status_code,
+                     "url": url,
                      "last_error": None if ok else r.text[:500],
                      "delivered_at": now_iso() if ok else None},
-            "$inc": {"attempts": 1}})
+            "$inc": {"attempts": 1},
+            "$push": {"attempt_history": {"$each": [attempt], "$slice": -10}}})
     except Exception as e:
+        attempt = {"at": now_iso(), "url": url, "http_status": None,
+                   "ms": int((time.time() - started) * 1000), "error": str(e)[:500]}
         await db.rahal_outbox.update_one({"_id": outbox_id}, {
-            "$set": {"status": "failed", "last_error": str(e)[:500]},
-            "$inc": {"attempts": 1}})
+            "$set": {"status": "failed", "last_error": str(e)[:500], "url": url},
+            "$inc": {"attempts": 1},
+            "$push": {"attempt_history": {"$each": [attempt], "$slice": -10}}})
 
 
 async def notify_rahal(event: str, payload: dict, *, envelope: dict = None):
@@ -112,7 +143,7 @@ async def notify_rahal(event: str, payload: dict, *, envelope: dict = None):
         "event": event, "payload": body, "signature": sig,
         "status": "pending", "attempts": 0, "last_error": None, "created_at": now_iso(),
     })
-    url = _rahal_webhook_url()
+    url = await rahal_target_url()
     if url:
         asyncio.create_task(_deliver(res.inserted_id, url, raw, sig))
 
@@ -126,7 +157,7 @@ async def list_outbox(status: str = "all", admin: dict = Depends(require_admin))
 
 @router.post("/outbox/retry")
 async def retry_outbox(admin: dict = Depends(require_admin)):
-    url = _rahal_webhook_url()
+    url = await rahal_target_url()
     if not url:
         raise HTTPException(400, "لم يتم ضبط عنوان Webhook الخاص برحال (RAHAL_WEBHOOK_URL)")
     pending = await db.rahal_outbox.find({"status": {"$in": ["pending", "failed"]}}).to_list(300)
@@ -942,6 +973,8 @@ async def rahal_sso(payload: SSOInput):
             user = await db.users.find_one({"_id": user["_id"]})
 
     token = create_access_token(str(user["_id"]), user["email"], user.get("role", "office"))
+    from security import record_session
+    await record_session(user, None, "rahal_sso", token)
     return {"access_token": token, "user": serialize(user)}
 
 

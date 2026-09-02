@@ -637,8 +637,11 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
                               f"عمولة تسويق (معلّقة): {pkg['title']}", bid, currency=cur)
             if platform_profit:
                 await log_platform_revenue(platform_profit, f"أرباح المنصة من حجز مباشر: {pkg['title']}", bid, currency=cur)
+    await notify(pkg["seller_id"], "booking_created", "طلب حجز جديد",
+                 f"طلب جديد على: {pkg['title']} — عدد المقاعد {len(payload.registrants)}",
+                 "/bookings", {"booking_id": bid, "package_title": pkg["title"],
+                               "seats": len(payload.registrants)})
     if pkg.get("source") == "rahal" and pkg.get("rahal_ref"):
-        # Rahaal Production v2 contract: {id, type, timestamp, data{...}}
         await notify_rahal("meraaj.booking.created", {}, envelope={
             "id": str(uuid.uuid4()),
             "type": "meraaj.booking.created",
@@ -867,6 +870,12 @@ async def cancel_request(booking_id: str, payload: Optional[Dict] = Body(default
                 "cancellation_reason": reason}})
             await audit(str(b["_id"]), "cancellation_requested", "buyer",
                         actor_id=str(user["_id"]), reason=reason)
+            await notify(b.get("seller_id"), "cancellation_requested",
+                         "طلب إلغاء بانتظار القرار",
+                         f"طلب إلغاء على: {b.get('package_title')} — السبب: {reason or 'غير محدد'}",
+                         "/bookings", {"booking_id": str(b["_id"]),
+                                       "package_title": b.get("package_title"),
+                                       "reason": reason or "غير محدد"})
             if b.get("rahal_ref"):
                 await notify_rahal("meraaj.booking.cancellation_requested", {}, envelope={
                     "id": str(uuid.uuid4()), "type": "meraaj.booking.cancellation_requested",
@@ -907,6 +916,12 @@ async def cancel_request(booking_id: str, payload: Optional[Dict] = Body(default
         await db.bookings.update_one({"_id": b["_id"]}, {"$set": {"status": "cancelled",
                                      "cancellation": {"type": "auto_blue", "refund": refund, "admin_fee": admin_fee}}})
         await log_txn(user["_id"], "cancel_refund", refund, f"استرداد إلغاء: {b['package_title']}", booking_id, currency=cur)
+        for uid in (b.get("buyer_id"), b.get("seller_id")):
+            await notify(uid, "booking_cancelled", "تم إلغاء الطلب",
+                         f"أُلغي الطلب على: {b.get('package_title')} — استرداد {refund} {cur}",
+                         "/bookings", {"booking_id": booking_id,
+                                       "package_title": b.get("package_title"),
+                                       "reason": "إلغاء قبل التأشيرات"})
         if b.get("rahal_ref"):
             await notify_rahal("meraaj.booking.cancelled", {
                 "package_ref": b["rahal_ref"], "meraaj_booking_id": booking_id, "seats_released": b["seats"]})
@@ -961,6 +976,12 @@ async def cancel_accept(booking_id: str, user: dict = Depends(require_buyer)):
                                                   "refund": refund}}})
     await log_txn(user["_id"], "cancel_refund", refund, f"استرداد إلغاء (أصفر): {b['package_title']}", booking_id, currency=cur)
     await log_txn(b["seller_id"], "cancel_deduction", seller_keeps, f"خصم إلغاء: {b['package_title']}", booking_id, currency=cur)
+    for uid in (b.get("buyer_id"), b.get("seller_id")):
+        await notify(uid, "booking_cancelled", "تم إلغاء الطلب",
+                     f"أُلغي الطلب على: {b.get('package_title')} — استرداد {refund} {cur}",
+                     "/bookings", {"booking_id": booking_id,
+                                   "package_title": b.get("package_title"),
+                                   "reason": "إلغاء بعد التأشيرات (تسوية)"})
     if b.get("platform_fee"):
         await log_platform_revenue(-b["platform_fee"], f"عكس عمولة منصة (إلغاء أصفر): {b['package_title']}", booking_id, currency=cur)
     if platform_cut:

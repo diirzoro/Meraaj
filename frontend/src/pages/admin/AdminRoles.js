@@ -17,6 +17,8 @@ export default function AdminRoles() {
   const [tab, setTab] = useState("roles");
   const [cat, setCat] = useState(null);
   const [users, setUsers] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [filter, setFilter] = useState("");
   const [q, setQ] = useState("");
   const [sessions, setSessions] = useState([]);
   const [history, setHistory] = useState({ sessions: [], failed_attempts: [] });
@@ -29,11 +31,16 @@ export default function AdminRoles() {
 
   const load = useCallback(() => {
     api.get("/admin/rbac/catalog").then((r) => { setCat(r.data); setDual(r.data.settings || {}); });
-    api.get(`/admin/rbac/users?${q ? `q=${encodeURIComponent(q)}` : ""}`).then((r) => setUsers(r.data.items));
+    const p = new URLSearchParams();
+    if (q) p.set("q", q);
+    if (filter === "assigned") p.set("unassigned", "false");
+    if (filter === "unassigned") p.set("unassigned", "true");
+    if (filter === "staff") p.set("staff_only", "true");
+    api.get(`/admin/rbac/users?${p.toString()}`).then((r) => { setUsers(r.data.items); setSummary(r.data.summary); });
     api.get("/admin/sessions?active_only=false&limit=100").then((r) => setSessions(r.data));
     api.get("/admin/login-history").then((r) => setHistory(r.data));
     api.get("/admin/approvals").then((r) => setApprovals(r.data));
-  }, [q]);
+  }, [q, filter]);
   useEffect(() => { load(); }, [load]);
 
   const act = async (fn, ok) => {
@@ -71,12 +78,25 @@ export default function AdminRoles() {
             </div>
           </div>
 
-          <div className="bg-white rounded-2xl border card-shadow p-4 mb-3 flex gap-3 items-center">
-            <div className="relative flex-1">
+          <div className="bg-white rounded-2xl border card-shadow p-4 mb-3 flex flex-wrap gap-3 items-center">
+            <div className="relative flex-1 min-w-[200px]">
               <Search className="w-4 h-4 absolute top-2.5 right-3 text-muted-foreground" />
               <input value={q} onChange={(e) => setQ(e.target.value)} data-testid="rbac-search"
                 placeholder="ابحث بالبريد أو الاسم" className="w-full h-9 rounded-md border border-input pr-9 pl-3 text-xs" />
             </div>
+            <select value={filter} onChange={(e) => setFilter(e.target.value)} data-testid="rbac-filter"
+              className="h-9 rounded-md border border-input px-2 text-xs bg-white">
+              <option value="">كل الحسابات</option>
+              <option value="assigned">لها أدوار مؤسسية</option>
+              <option value="unassigned">بلا أدوار مؤسسية</option>
+              <option value="staff">حسابات موظفين فقط</option>
+            </select>
+            {summary && (
+              <span className="text-[11px] text-muted-foreground mr-auto" data-testid="rbac-summary">
+                معروض {summary.total_returned} • بأدوار {summary.with_roles} • بلا أدوار {summary.without_roles} •
+                موظفون {summary.staff_accounts} • حسابات اختبار QA {summary.qa_accounts}
+              </span>
+            )}
           </div>
 
           <div className="bg-white rounded-2xl border card-shadow overflow-x-auto" data-testid="rbac-users-table">
@@ -92,10 +112,16 @@ export default function AdminRoles() {
                       <div className="font-semibold text-[#0A2540]">{u.office_name || u.email}</div>
                       <div className="text-[10px] text-muted-foreground">{u.email}</div>
                     </td>
-                    <td className="px-3 py-2.5">{u.role}{u.is_rahal && " • رحّال"}</td>
                     <td className="px-3 py-2.5">
-                      {(u.enterprise_roles || []).length === 0 ? "—" :
-                        u.enterprise_roles.map((r) => cat.roles[r]?.ar || r).join(", ")}
+                      {u.role}{u.is_rahal && " • رحّال"}
+                      {u.is_staff && <span className="mr-1 text-[9px] px-1.5 py-0.5 rounded bg-[#EFF6FF] text-[#1D4ED8]">موظف مكتب</span>}
+                      {u.is_staff && !u.has_own_wallet && <span className="mr-1 text-[9px] px-1.5 py-0.5 rounded bg-[#F0FDF4] text-[#15803D]">محفظة المكتب</span>}
+                      {u.is_qa_account && <span className="mr-1 text-[9px] px-1.5 py-0.5 rounded bg-[#F4F6F8] text-muted-foreground">QA</span>}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      {(u.enterprise_roles || []).length === 0 ? (
+                        <span className="text-[10px] text-muted-foreground" data-testid={`roles-note-${u.id}`}>{u.roles_note || "—"}</span>
+                      ) : u.enterprise_roles.map((r) => cat.roles[r]?.ar || r).join(", ")}
                     </td>
                     <td className="px-3 py-2.5 tabular">{u.permissions.includes("*") ? "الكل" : u.permissions.length}</td>
                     <td className="px-3 py-2.5">{u.status}</td>

@@ -7,7 +7,8 @@ import { toast } from "sonner";
 
 export const DOC_TYPES = [["passport", "جواز السفر"], ["visa", "التأشيرة"], ["photo", "صورة"], ["ticket", "تذكرة السفر"], ["other", "أخرى"]];
 export const docLabel = (t) => (DOC_TYPES.find((x) => x[0] === t) || [null, t])[1];
-const MAX_FILE = 20 * 1024 * 1024; // 20MB per single file
+const MAX_FILE = 10 * 1024 * 1024;   // 10MB per single file (server-enforced)
+const MAX_BATCH = 20 * 1024 * 1024;  // 20MB per upload batch (server-enforced)
 const isPdf = (m, n) => m === "application/pdf" || /\.pdf$/i.test(n || "");
 
 // Fetch the private document as an authenticated Blob (Bearer header via axios),
@@ -53,7 +54,9 @@ export default function TravelerDocs({ bookingId, registrantIndex, passportNo })
     e.target.value = "";
     if (!files.length) return;
     const big = files.find((f) => f.size > MAX_FILE);
-    if (big) { toast.error(`${big.name}: يتجاوز 20 ميجابايت للملف الواحد`); return; }
+    if (big) { toast.error(`${big.name}: يتجاوز 10 ميجابايت للملف الواحد`); return; }
+    const batch = files.reduce((s, f) => s + f.size, 0);
+    if (batch > MAX_BATCH) { toast.error("حجم الدفعة يتجاوز 20 ميجابايت — ارفع الملفات على دفعات"); return; }
     setBusy(true);
     try {
       for (const file of files) {
@@ -62,7 +65,7 @@ export default function TravelerDocs({ bookingId, registrantIndex, passportNo })
         });
         await api.post(`/bookings/${bookingId}/documents`, {
           registrant_index: registrantIndex, doc_type: docType, filename: file.name,
-          content_base64: b64,
+          content_base64: b64, batch_total_bytes: batch,
           passport_no: docType === "passport" ? (passportNo || undefined) : undefined,
         });
       }

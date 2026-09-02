@@ -70,9 +70,16 @@ DUAL_CONTROL = {
 async def user_permissions(user: dict) -> List[str]:
     if user.get("role") == "super_admin":
         return ["*"]
-    doc = await db.user_roles.find_one({"user_id": str(user["_id"])})
+    # A staff account acts inside the office identity, so `user` is the OFFICE document.
+    # Enterprise permissions must still come from the STAFF member's own assignment.
+    acting = user.get("_acting_staff")
+    lookup_id = acting["id"] if acting else str(user["_id"])
+    doc = await db.user_roles.find_one({"user_id": lookup_id})
+    roles = list((doc or {}).get("roles", []))
+    if acting and not roles:
+        roles = list(acting.get("roles") or [])
     perms = set()
-    for r in (doc or {}).get("roles", []):
+    for r in roles:
         for p in ROLES.get(r, {}).get("perms", []):
             perms.add(p)
     return sorted(perms)
@@ -106,6 +113,7 @@ async def _dual_settings() -> dict:
 
 @router.get("/rbac/users")
 async def rbac_users(q: Optional[str] = None, role: Optional[str] = None,
+                     unassigned: Optional[bool] = None, staff_only: bool = False,
                      limit: int = 100, admin: dict = Depends(require_admin)):
     f = {}
     if q:
@@ -113,9 +121,13 @@ async def rbac_users(q: Optional[str] = None, role: Optional[str] = None,
                     {"office_name": {"$regex": q, "$options": "i"}}]
     if role:
         f["role"] = role
+    if staff_only:
+        f["is_staff_account"] = True
     users = await db.users.find(f, {"email": 1, "office_name": 1, "role": 1, "status": 1,
                                     "created_at": 1, "source": 1, "rahal_office_ref": 1,
-                                    "twofa_enabled": 1, "force_logout_at": 1}
+                                    "twofa_enabled": 1, "force_logout_at": 1,
+                                    "is_staff_account": 1, "parent_office_id": 1,
+                                    "staff_name": 1, "wallet": 1}
                                 ).sort("created_at", -1).to_list(min(limit, 500))
     assigns = {}
     async for a in db.user_roles.find({}):
@@ -124,13 +136,39 @@ async def rbac_users(q: Optional[str] = None, role: Optional[str] = None,
     for u in users:
         a = assigns.get(str(u["_id"]), {})
         d = serialize(u)
+        d.pop("wallet", None)
         d["enterprise_roles"] = a.get("roles", [])
         d["branch_id"] = a.get("branch_id")
         d["office_id"] = a.get("office_id")
         d["permissions"] = await user_permissions(u)
         d["is_rahal"] = bool(u.get("rahal_office_ref")) or u.get("source") == "rahal"
+        d["is_staff"] = bool(u.get("is_staff_account"))
+        d["parent_office_id"] = u.get("parent_office_id")
+        d["has_own_wallet"] = "wallet" in u
+        d["is_qa_account"] = str(u.get("email") or "").endswith("@qa-example.com")
+        # Explains an empty permission list instead of leaving it ambiguous in the UI
+        if u.get("role") == "super_admin":
+            d["roles_note"] = "المدير العام يملك كل الصلاحيات ضمناً"
+        elif d["enterprise_roles"]:
+            d["roles_note"] = None
+        elif d["is_staff"]:
+            d["roles_note"] = "حساب موظف بلا أدوار مؤسسية — امنحه دوراً لتفعيل صلاحياته"
+        else:
+            d["roles_note"] = ("حساب مالك (مكتب/فرد) بصلاحياته الأساسية فقط — الأدوار "
+                               "المؤسسية تُمنح صراحةً عند الحاجة")
         out.append(d)
-    return {"items": out, "total": len(out)}
+    if unassigned is True:
+        out = [x for x in out if not x["enterprise_roles"] and x.get("role") != "super_admin"]
+    elif unassigned is False:
+        out = [x for x in out if x["enterprise_roles"]]
+    summary = {
+        "total_returned": len(out),
+        "with_roles": sum(1 for x in out if x["enterprise_roles"]),
+        "without_roles": sum(1 for x in out if not x["enterprise_roles"]),
+        "staff_accounts": sum(1 for x in out if x["is_staff"]),
+        "qa_accounts": sum(1 for x in out if x["is_qa_account"]),
+    }
+    return {"items": out, "total": len(out), "summary": summary}
 
 
 class RolesIn(BaseModel):
@@ -360,5 +398,8 @@ async def twofa_disable(payload: SessionActionIn, admin: dict = Depends(require_
 
 @router.get("/my-permissions")
 async def my_permissions(request: Request, user: dict = Depends(get_current_user)):
+    acting = user.get("_acting_staff")
     return {"role": user.get("role"), "permissions": await user_permissions(user),
+            "acting_staff": {"name": acting["name"], "email": acting["email"]} if acting else None,
+            "office_id": str(user["_id"]),
             "twofa_enabled": bool(user.get("twofa_enabled"))}

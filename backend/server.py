@@ -85,6 +85,8 @@ async def startup():
     await db.cancellation_evidence.create_index("booking_id")
     await seed_admin()
     await ensure_indexes()
+    from orgs import seed_notification_templates
+    await seed_notification_templates()
     await ensure_default_rule()
     logger.info("Meraaj Network API started; admin seeded.")
 

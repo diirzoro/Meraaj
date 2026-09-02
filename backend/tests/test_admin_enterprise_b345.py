@@ -1002,7 +1002,13 @@ class TestAuditAnomalies:
         d = admin_s.get(f"{API}/admin/anomalies", timeout=240).json()
         assert d["total"] == len(d["items"])
         types = {i["type"] for i in d["items"]}
-        assert "integration_burst" in types, types
+        # `integration_burst` is state-dependent: it must appear only while more than 20
+        # events are undelivered (after the Rahaal endpoint recovered, it correctly clears).
+        health = admin_s.get(f"{API}/admin/integrations/health", timeout=180).json()
+        if health["outbox"]["undelivered"] > 20:
+            assert "integration_burst" in types, types
+        else:
+            assert "integration_burst" not in types, types
         assert all(i["level"] in ("info", "warning", "critical") for i in d["items"])
 
 

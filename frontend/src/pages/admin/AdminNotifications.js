@@ -73,14 +73,28 @@ export default function AdminNotifications() {
             <Bell className="w-4 h-4 text-[#D4AF37]" /> قوالب الإشعارات
           </div>
           <div className="space-y-2 mb-4 max-h-56 overflow-y-auto">
-            {tpl.items.length === 0 ? <div className="text-xs text-muted-foreground">لا توجد قوالب — تُستخدم النصوص الافتراضية</div> :
-              tpl.items.map((t) => (
-                <div key={t.id} className="text-[11px] bg-[#F4F6F8] rounded-lg px-3 py-2" data-testid={`template-${t.kind}`}>
+            {tpl.items.length === 0 ? (
+              <div className="text-xs text-muted-foreground" data-testid="templates-empty">
+                لا توجد قوالب — اضغط «تحميل القوالب الافتراضية» لإنشاء 11 قالبًا قابلًا للتحرير
+              </div>
+            ) : tpl.items.map((t) => (
+                <button key={t.id} type="button" data-testid={`template-${t.kind}`}
+                  onClick={() => setForm({ kind: t.kind, title: t.title, body: t.body || "", active: t.active })}
+                  className="w-full text-right text-[11px] bg-[#F4F6F8] hover:bg-[#E8EDF2] rounded-lg px-3 py-2 transition-colors">
                   <b>{tpl.kinds[t.kind] || t.kind}</b> {t.active ? "" : "(معطّل)"}
                   <div className="text-muted-foreground">{t.title}</div>
-                </div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">
+                    المستلمون: {(t.recipients || tpl.recipients_rules?.[t.kind] || []).map((r) => RECIP_AR[r] || r).join(" • ") || "—"}
+                    {t.is_default ? " • افتراضي" : " • مُعدَّل"}
+                  </div>
+                </button>
               ))}
           </div>
+          <Button size="sm" variant="outline" className="w-full mb-3" data-testid="seed-templates-btn" disabled={busy}
+            onClick={() => act(async () => {
+              const r = await api.post("/admin/notification-templates/seed");
+              toast.success(`تم إنشاء ${r.data.created} قالبًا — الإجمالي ${r.data.total}`);
+            }, "تم تحميل القوالب")}>تحميل القوالب الافتراضية</Button>
           <div className="space-y-2 border-t pt-3">
             <div><Label className="text-xs">نوع الإشعار</Label>
               <select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })} data-testid="template-kind"
@@ -102,6 +116,9 @@ export default function AdminNotifications() {
               onClick={() => act(async () => { await api.post("/admin/notification-templates", form); setForm({ kind: "", title: "", body: "", active: true }); }, "تم حفظ القالب")}>
               حفظ القالب
             </Button>
+            <div className="text-[10px] text-muted-foreground">
+              متغيّرات القالب المدعومة: {(tpl.variables?.[form.kind] || []).map((v) => `{{${v}}}`).join(" ") || "اختر نوعاً لعرض المتغيّرات"}
+            </div>
             <div className="text-[10px] text-muted-foreground">
               قنوات البريد وWhatsApp مُعدّة للإضافة لاحقاً من إعدادات التكامل — الإشعارات الداخلية تعمل الآن.
             </div>
@@ -162,6 +179,8 @@ export default function AdminNotifications() {
     </>
   );
 }
+
+const RECIP_AR = { buyer: "المشتري", seller: "البائع", admin: "الإدارة" };
 
 const Stat = ({ label, v, ok, danger, tid }) => (
   <div className="bg-white rounded-2xl border p-4 card-shadow" data-testid={tid}>

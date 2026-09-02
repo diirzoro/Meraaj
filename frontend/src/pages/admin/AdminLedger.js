@@ -11,6 +11,7 @@ export default function AdminLedger() {
   const [f, setF] = useState({ q: "", currency: "", txn_type: "", date_from: "", date_to: "", page: 1 });
   const [d, setD] = useState({ items: [], total: 0, inflow: {}, outflow: {}, net: {}, types: {} });
   const [recon, setRecon] = useState(null);
+  const [prev, setPrev] = useState(null);
   const [voucher, setVoucher] = useState(null);
   const [voucherId, setVoucherId] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -87,6 +88,15 @@ export default function AdminLedger() {
           onClick={async () => { const r = await api.get("/admin/reconciliation"); setRecon(r.data); }}>
           <Scale className="w-4 h-4" /> المطابقة المالية
         </Button>
+        <Button size="sm" variant="outline" data-testid="recon-preview-btn"
+          onClick={async () => {
+            try {
+              const r = await api.get("/admin/reconciliation/preview");
+              setPrev(r.data);
+            } catch (e) { toast.error(apiError(e)); }
+          }}>
+          <Scale className="w-4 h-4" /> معاينة قيود التسوية (Dry-run)
+        </Button>
         <span className="text-[11px] text-muted-foreground mr-auto" data-testid="ledger-count">
           {d.total} حركة
         </span>
@@ -159,6 +169,54 @@ export default function AdminLedger() {
                   <span className="tabular">محفظة {m.wallet_total} • دفتر {m.ledger_total} • فرق <b className="text-[#B91C1C]">{m.difference}</b></span>
                 </div>
               ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Reconciliation dry-run preview: account by account, before/after, no writes */}
+      <Dialog open={!!prev} onOpenChange={(o) => !o && setPrev(null)}>
+        <DialogContent dir="rtl" className="max-w-4xl max-h-[85vh] overflow-y-auto" data-testid="recon-preview-dialog">
+          <DialogHeader><DialogTitle>معاينة قيود التسوية — حساب بحساب (بدون أي تنفيذ)</DialogTitle></DialogHeader>
+          {prev && (
+            <div className="space-y-3">
+              <div className="text-xs bg-[#FEFCE8] border border-[#FEF08A] text-[#A16207] rounded-lg px-3 py-2" data-testid="recon-preview-note">
+                {prev.note}
+              </div>
+              <div className="grid sm:grid-cols-4 gap-3 text-xs">
+                <Box label="حسابات غير مطابقة" v={prev.count} />
+                <Box label="إجمالي القيود المقترحة SAR" v={money(prev.totals.SAR, "SAR")} />
+                <Box label="إجمالي القيود المقترحة USD" v={money(prev.totals.USD, "USD")} />
+                <Box label="تعديلات على الأرصدة" v={prev.wallet_writes} accent />
+              </div>
+              <div className="text-[11px] text-muted-foreground" data-testid="recon-idempotency">
+                الحماية من التكرار: {prev.idempotency} • التنفيذ الفعلي: {prev.execution_enabled ? "مُفعّل" : "معطّل حتى اعتمادكم"}
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[11px] min-w-[900px]">
+                  <thead className="bg-[#F4F6F8] text-muted-foreground">
+                    <tr>{["الحساب", "البريد", "العملة", "محفظة (قبل)", "دفتر (قبل)", "الفرق",
+                      "محفظة (بعد)", "دفتر (بعد)", "القيد", "الحالة"].map((h) => (
+                        <th key={h} className="text-right font-semibold px-2 py-2">{h}</th>))}</tr>
+                  </thead>
+                  <tbody>
+                    {prev.items.map((r, i) => (
+                      <tr key={i} className="border-t" data-testid={`recon-preview-row-${i}`}>
+                        <td className="px-2 py-1.5 font-semibold text-[#0A2540]">{r.name}</td>
+                        <td className="px-2 py-1.5 text-[10px]">{r.account_email}</td>
+                        <td className="px-2 py-1.5">{r.currency}</td>
+                        <td className="px-2 py-1.5 tabular">{r.before.wallet_total}</td>
+                        <td className="px-2 py-1.5 tabular">{r.before.ledger_total}</td>
+                        <td className="px-2 py-1.5 tabular font-bold text-[#B91C1C]">{r.difference}</td>
+                        <td className="px-2 py-1.5 tabular">{r.after.wallet_total} <span className="text-[9px] text-[#15803D]">(بلا تغيير)</span></td>
+                        <td className="px-2 py-1.5 tabular">{r.after.ledger_total}</td>
+                        <td className="px-2 py-1.5 text-[10px]">{r.description}</td>
+                        <td className="px-2 py-1.5">{r.already_adjusted ? "مُسوّى مسبقاً" : "بانتظار الاعتماد"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </DialogContent>

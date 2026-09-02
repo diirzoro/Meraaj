@@ -20,6 +20,8 @@ export default function AdminSystem() {
   const [anom, setAnom] = useState({ items: [] });
   const [backups, setBackups] = useState({ items: [] });
   const [q, setQ] = useState("");
+  const [drillFile, setDrillFile] = useState("");
+  const [tdr, setTdr] = useState(null);
   const [draft, setDraft] = useState({});
   const [busy, setBusy] = useState(false);
 
@@ -186,6 +188,81 @@ export default function AdminSystem() {
                 onClick={() => act(() => api.post("/admin/backups/run", { reason: "نسخ احتياطي يدوي من لوحة الإدارة" }), "تم إنشاء النسخة")}>
                 تشغيل نسخة الآن
               </Button>
+            </div>
+            <div className="mt-3 text-[11px] bg-[#F4F6F8] rounded-lg px-3 py-2" data-testid="backup-env">
+              البيئة: <b>{backups.environment}</b> • ملفات على القرص: <b>{(backups.files_on_disk || []).length}</b> •
+              الاستعادة والترحيل ممنوعان تمامًا على Live • جدولة يومية 01:00 بتوقيت الرياض
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border card-shadow p-5" data-testid="testdata-panel">
+            <div className="font-head font-bold text-[#0A2540] text-sm mb-2">تصنيف بيانات الاختبار (بدون أي حذف)</div>
+            {!tdr ? (
+              <Button size="sm" variant="outline" data-testid="testdata-btn"
+                onClick={() => act(async () => { const r = await api.get("/admin/system/test-data-report"); setTdr(r.data); }, "تم إنشاء التقرير")}>
+                إنشاء التقرير
+              </Button>
+            ) : (
+              <div className="space-y-3">
+                <div className="text-[11px] bg-[#F4F6F8] rounded-lg px-3 py-2" data-testid="testdata-db">
+                  القاعدة: <b>{tdr.database}</b> • البيئة: <b>{tdr.environment}</b><br />{tdr.isolation_note}
+                </div>
+                <table className="w-full text-[11px]">
+                  <thead className="bg-[#F4F6F8] text-muted-foreground">
+                    <tr>{["المجموعة", "الإجمالي", "بيانات QA", "بيانات حقيقية", "قاعدة التصنيف"].map((h) => (
+                      <th key={h} className="text-right font-semibold px-2 py-2">{h}</th>))}</tr>
+                  </thead>
+                  <tbody>
+                    {tdr.rows.map((r) => (
+                      <tr key={r.collection} className="border-t" data-testid={`testdata-${r.collection}`}>
+                        <td className="px-2 py-1.5 font-semibold">{r.collection}</td>
+                        <td className="px-2 py-1.5 tabular">{r.total}</td>
+                        <td className="px-2 py-1.5 tabular text-[#A16207]">{r.qa}</td>
+                        <td className="px-2 py-1.5 tabular text-[#15803D]">{r.real}</td>
+                        <td className="px-2 py-1.5 text-[10px] text-muted-foreground">{r.rule}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="text-[11px] bg-[#FEFCE8] border border-[#FEF08A] text-[#A16207] rounded-lg px-3 py-2" data-testid="testdata-verdict">
+                  {tdr.repetition_verdict}<br />{tdr.deletion_policy}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-2xl border card-shadow p-5" data-testid="drill-panel">
+            <div className="font-head font-bold text-[#0A2540] text-sm mb-2">اختبار الاستعادة (Restore Drill)</div>
+            <div className="text-[11px] text-muted-foreground mb-3">
+              يفكّ التشفير ويستعيد النسخة إلى قاعدة مؤقتة منفصلة، يعدّ المجموعات والمستندات، ثم يحذفها.
+              <b> قاعدة البيانات العاملة لا تُمَس إطلاقًا.</b>
+            </div>
+            <div className="flex flex-wrap gap-2 items-center">
+              <select className="h-9 rounded-md border border-input px-2 text-xs bg-white" data-testid="drill-file-select"
+                value={drillFile} onChange={(e) => setDrillFile(e.target.value)}>
+                <option value="">اختر ملف نسخة</option>
+                {(backups.files_on_disk || []).map((f) => (
+                  <option key={f.file} value={f.file}>{f.file} — {(f.size / 1048576).toFixed(2)} MB</option>
+                ))}
+              </select>
+              <Button size="sm" variant="outline" data-testid="run-drill-btn" disabled={busy || !drillFile}
+                onClick={() => act(async () => {
+                  const r = await api.post("/admin/backups/verify",
+                    { file: drillFile, reason: "اختبار استعادة على قاعدة مؤقتة" });
+                  toast.success(`نجح الاختبار: ${r.data.collections} مجموعة و${r.data.documents} مستند`);
+                }, "تم اختبار الاستعادة")}>تشغيل اختبار الاستعادة</Button>
+            </div>
+            <div className="mt-3 space-y-1.5">
+              {(backups.drills || []).length === 0 ? (
+                <div className="text-[11px] text-muted-foreground" data-testid="drills-empty">لم يُجرَ اختبار استعادة بعد</div>
+              ) : backups.drills.map((d) => (
+                <div key={d.id} className={`text-[11px] rounded-lg px-3 py-1.5 ${d.result === "success" ? "bg-[#F0FDF4] text-[#15803D]" : "bg-[#FEF2F2] text-[#B91C1C]"}`}
+                  data-testid={`drill-${d.id}`}>
+                  {fmtDate(d.at)} • {d.file} • {d.result === "success"
+                    ? `${d.collections} مجموعة / ${d.documents} مستند • ${d.decrypted ? "فُكّ التشفير" : "غير مشفّرة"}`
+                    : `فشل: ${(d.error || "").slice(0, 60)}`} • {d.by}
+                </div>
+              ))}
             </div>
           </div>
           <div className="bg-white rounded-2xl border card-shadow overflow-x-auto" data-testid="backups-table">
