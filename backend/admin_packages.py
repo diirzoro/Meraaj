@@ -34,6 +34,74 @@ async def _sold(pkg_id: str) -> int:
     return n
 
 
+class ProgramCreateIn(BaseModel):
+    seller_id: str
+    type: str = "umrah"                 # umrah | tourism
+    title: str = Field(min_length=3)
+    description: str = ""
+    departure_date: str
+    return_date: str
+    departure_city: str = ""
+    route: str = ""
+    transport: str = ""
+    net_cost_per_seat: float
+    final_sale_price: float
+    buyer_office_commission: float = 0
+    child_net_cost: Optional[float] = None
+    child_sale_price: Optional[float] = None
+    child_commission: Optional[float] = None
+    infant_net_cost: Optional[float] = None
+    infant_sale_price: Optional[float] = None
+    infant_commission: Optional[float] = None
+    currency: str = "USD"
+    total_seats: int = Field(gt=0)
+    images: list = []
+    features: list = []
+    status: str = "listed"              # listed | unlisted
+    reason: str = Field(min_length=3)
+
+
+@router.post("/programs")
+async def create_program(payload: ProgramCreateIn, admin: dict = Depends(require_admin)):
+    """Admin-side program creation on behalf of a seller office. Deliberately marked
+    `source: "admin"` so it is never confused with a Rahaal-sourced program, and it does
+    NOT touch the seller publish flow or the Rahaal dispatcher."""
+    if payload.currency not in ("SAR", "USD"):
+        raise HTTPException(400, "عملة غير مدعومة")
+    if payload.type not in ("umrah", "tourism"):
+        raise HTTPException(400, "نوع برنامج غير مدعوم")
+    if payload.status not in ("listed", "unlisted"):
+        raise HTTPException(400, "حالة غير مدعومة")
+    seller = await db.users.find_one({"_id": oid(payload.seller_id)},
+                                     {"office_name": 1, "role": 1, "status": 1})
+    if not seller or seller.get("role") != "office":
+        raise HTTPException(404, "المكتب البائع غير موجود")
+    if seller.get("status") != "active":
+        raise HTTPException(400, "المكتب البائع موقوف — فعّله قبل إنشاء برنامج له")
+    doc = payload.model_dump(exclude={"reason"})
+    doc.pop("seller_id")
+    doc.update({
+        "seller_id": payload.seller_id, "seller_office_name": seller.get("office_name"),
+        "available_seats": payload.total_seats,
+        "is_active": payload.status == "listed",
+        "source": "admin", "rahal_ref": None,
+        "hotels": [], "room_pricing": [],
+        "created_at": now_iso(), "created_by": admin.get("email"),
+    })
+    res = await db.packages.insert_one(doc)
+    pid = str(res.inserted_id)
+    await _log(pid, "program_created", admin, after={
+        "title": doc["title"], "seller_id": payload.seller_id,
+        "total_seats": payload.total_seats, "currency": payload.currency},
+        reason=payload.reason.strip())
+    await db.audit_log.insert_one({
+        "entity": "package", "entity_id": pid, "action": "program_created",
+        "actor": admin.get("email"), "actor_id": str(admin["_id"]),
+        "reason": payload.reason.strip(),
+        "after": {"title": doc["title"], "seller": seller.get("office_name")}, "at": now_iso()})
+    return {"id": pid, "title": doc["title"], "status": doc["status"], "source": "admin"}
+
+
 @router.get("/programs")
 async def list_programs(q: Optional[str] = None, source: Optional[str] = None,
                         status: Optional[str] = None, currency: Optional[str] = None,

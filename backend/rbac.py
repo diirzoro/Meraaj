@@ -82,6 +82,9 @@ async def user_permissions(user: dict) -> List[str]:
     for r in roles:
         for p in ROLES.get(r, {}).get("perms", []):
             perms.add(p)
+    for p in (doc or {}).get("extra_permissions", []):
+        if p in PERMISSIONS:
+            perms.add(p)
     return sorted(perms)
 
 
@@ -138,6 +141,7 @@ async def rbac_users(q: Optional[str] = None, role: Optional[str] = None,
         d = serialize(u)
         d.pop("wallet", None)
         d["enterprise_roles"] = a.get("roles", [])
+        d["extra_permissions"] = a.get("extra_permissions", [])
         d["branch_id"] = a.get("branch_id")
         d["office_id"] = a.get("office_id")
         d["permissions"] = await user_permissions(u)
@@ -198,6 +202,165 @@ async def assign_roles(user_id: str, payload: RolesIn, admin: dict = Depends(req
         "at": now_iso()})
     return {"ok": True, "roles": payload.roles,
             "permissions": await user_permissions(await db.users.find_one({"_id": oid(user_id)}))}
+
+
+class ExtraPermsIn(BaseModel):
+    permissions: list
+    reason: str = Field(min_length=3)
+
+
+@router.post("/rbac/users/{user_id}/permissions")
+async def set_extra_permissions(user_id: str, payload: ExtraPermsIn,
+                                admin: dict = Depends(require_admin)):
+    """Grants/removes individual permissions ON TOP of the assigned roles. Only known
+    permission keys are accepted, and `*` can never be granted this way."""
+    u = await db.users.find_one({"_id": oid(user_id)}, {"email": 1})
+    if not u:
+        raise HTTPException(404, "المستخدم غير موجود")
+    perms = sorted({str(p) for p in payload.permissions})
+    bad = [p for p in perms if p not in PERMISSIONS]
+    if bad:
+        raise HTTPException(400, f"صلاحيات غير معروفة: {', '.join(bad)}")
+    before = await db.user_roles.find_one({"user_id": user_id})
+    await db.user_roles.update_one({"user_id": user_id}, {"$set": {
+        "extra_permissions": perms, "granted_by": admin.get("email"), "at": now_iso()}},
+        upsert=True)
+    await db.audit_log.insert_one({
+        "entity": "user", "entity_id": user_id, "action": "permissions_assigned",
+        "actor": admin.get("email"), "actor_id": str(admin["_id"]),
+        "reason": payload.reason.strip(),
+        "before": {"extra_permissions": (before or {}).get("extra_permissions", [])},
+        "after": {"extra_permissions": perms}, "at": now_iso()})
+    return {"ok": True, "extra_permissions": perms,
+            "permissions": await user_permissions(await db.users.find_one({"_id": oid(user_id)}))}
+
+
+class UserCreateIn(BaseModel):
+    email: str = Field(min_length=5)
+    password: str = Field(min_length=8)
+    role: str                       # office | individual | marketer | staff
+    name: str = Field(min_length=2)
+    phone: str = ""
+    office_id: Optional[str] = None   # required for staff accounts
+    roles: list = []
+    reason: str = Field(min_length=3)
+
+
+@router.post("/rbac/users")
+async def create_user(payload: UserCreateIn, admin: dict = Depends(require_admin)):
+    """Creates a user or an office employee. Staff accounts are linked to their office and
+    never receive their own wallet — they operate on the office wallet."""
+    from security import hash_password
+    if payload.role not in ("office", "individual", "marketer", "staff"):
+        raise HTTPException(400, "دور غير مدعوم")
+    bad = [r for r in payload.roles if r not in ROLES]
+    if bad:
+        raise HTTPException(400, f"أدوار غير معروفة: {', '.join(bad)}")
+    email = payload.email.strip().lower()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(400, "البريد مستخدم مسبقاً")
+    doc = {"email": email, "password_hash": hash_password(payload.password),
+           "status": "active", "source": "admin_created",
+           "created_at": now_iso(), "created_by": admin.get("email")}
+    if payload.role == "staff":
+        if not payload.office_id:
+            raise HTTPException(400, "حساب الموظف يحتاج تحديد المكتب")
+        office = await db.users.find_one({"_id": oid(payload.office_id)},
+                                         {"office_name": 1, "role": 1})
+        if not office or office.get("role") != "office":
+            raise HTTPException(404, "المكتب غير موجود")
+        doc.update({"role": "office", "is_staff_account": True,
+                    "parent_office_id": payload.office_id,
+                    "staff_name": payload.name.strip(),
+                    "office_name": office.get("office_name"),
+                    "owner_name": payload.name.strip(), "phone": payload.phone.strip()})
+    else:
+        doc.update({"role": payload.role, "owner_name": payload.name.strip(),
+                    "office_name": payload.name.strip() if payload.role == "office" else None,
+                    "phone": payload.phone.strip(),
+                    "wallet": {c: {"total": 0.0, "pending": 0.0, "available": 0.0}
+                               for c in ("SAR", "USD")}})
+    res = await db.users.insert_one(doc)
+    uid = str(res.inserted_id)
+    if payload.role == "staff":
+        rec = await db.office_staff.insert_one({
+            "office_id": payload.office_id, "name": payload.name.strip(),
+            "job_title": "", "phone": payload.phone.strip(), "email": email,
+            "login_email": email, "linked_user_id": uid, "roles": payload.roles,
+            "active": True, "created_by": admin.get("email"), "created_at": now_iso()})
+        assert rec.inserted_id
+    if payload.roles:
+        await db.user_roles.update_one({"user_id": uid}, {"$set": {
+            "roles": payload.roles, "office_id": payload.office_id,
+            "granted_by": admin.get("email"), "at": now_iso()}}, upsert=True)
+    await db.audit_log.insert_one({
+        "entity": "user", "entity_id": uid, "action": "user_created",
+        "actor": admin.get("email"), "actor_id": str(admin["_id"]),
+        "reason": payload.reason.strip(),
+        "after": {"email": email, "role": payload.role, "roles": payload.roles,
+                  "office_id": payload.office_id}, "at": now_iso()})
+    return {"id": uid, "email": email, "role": doc["role"],
+            "is_staff_account": bool(doc.get("is_staff_account"))}
+
+
+class UserEditIn(BaseModel):
+    owner_name: Optional[str] = None
+    staff_name: Optional[str] = None
+    phone: Optional[str] = None
+    office_name: Optional[str] = None
+    governorate: Optional[str] = None
+    reason: str = Field(min_length=3)
+
+
+@router.patch("/rbac/users/{user_id}")
+async def edit_user(user_id: str, payload: UserEditIn, admin: dict = Depends(require_admin)):
+    """Edits profile information only. Email, password hash, role, wallet, SSO reference and
+    session state are protected and cannot be changed here."""
+    u = await db.users.find_one({"_id": oid(user_id)})
+    if not u:
+        raise HTTPException(404, "المستخدم غير موجود")
+    changes = {k: v.strip() for k, v in payload.model_dump(exclude={"reason"}).items()
+               if v is not None}
+    if not changes:
+        raise HTTPException(400, "لا يوجد تغيير")
+    await db.users.update_one({"_id": oid(user_id)}, {"$set": {
+        **changes, "updated_by": admin.get("email"), "updated_at": now_iso()}})
+    await db.audit_log.insert_one({
+        "entity": "user", "entity_id": user_id, "action": "user_updated",
+        "actor": admin.get("email"), "reason": payload.reason.strip(),
+        "before": {k: u.get(k) for k in changes}, "after": changes, "at": now_iso()})
+    return {"ok": True, "changes": changes}
+
+
+class PasswordResetIn(BaseModel):
+    new_password: str = Field(min_length=8)
+    reason: str = Field(min_length=3)
+
+
+@router.post("/rbac/users/{user_id}/password-reset")
+async def admin_password_reset(user_id: str, payload: PasswordResetIn,
+                               admin: dict = Depends(require_admin)):
+    """Sets a temporary password using the EXISTING password policy/hasher, then revokes all
+    active sessions of that user so the old tokens stop working. The password itself is
+    never logged — only the fact that a reset happened."""
+    from security import hash_password
+    u = await db.users.find_one({"_id": oid(user_id)}, {"email": 1, "role": 1})
+    if not u:
+        raise HTTPException(404, "المستخدم غير موجود")
+    if u.get("role") == "super_admin" and str(u["_id"]) != str(admin["_id"]):
+        raise HTTPException(403, "لا يمكن تصفير كلمة مرور مدير عام آخر")
+    await db.users.update_one({"_id": oid(user_id)}, {"$set": {
+        "password_hash": hash_password(payload.new_password),
+        "force_logout_at": now_iso(),
+        "password_reset_by": admin.get("email"), "password_reset_at": now_iso()}})
+    await db.sessions.update_many({"user_id": user_id},
+                                 {"$set": {"revoked": True, "revoked_at": now_iso()}})
+    await db.audit_log.insert_one({
+        "entity": "user", "entity_id": user_id, "action": "password_reset",
+        "actor": admin.get("email"), "actor_id": str(admin["_id"]),
+        "reason": payload.reason.strip(),
+        "after": {"email": u.get("email"), "sessions_revoked": True}, "at": now_iso()})
+    return {"ok": True, "email": u.get("email"), "sessions_revoked": True}
 
 
 class DualIn(BaseModel):

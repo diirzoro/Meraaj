@@ -3,14 +3,13 @@ import api, { apiError } from "@/lib/api";
 import { PageHeader } from "@/components/Layout";
 import { fmtDate } from "@/lib/format";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Settings2, ShieldAlert, Database, Activity, Search } from "lucide-react";
+import { Settings2, ShieldAlert, Activity, Search } from "lucide-react";
 
 const TABS = [["settings", "الإعدادات و Feature Flags"], ["health", "صحة الخدمات"],
-["audit", "سجل التدقيق"], ["anomalies", "عمليات غير طبيعية"], ["backup", "النسخ الاحتياطي"]];
+["audit", "سجل التدقيق"], ["anomalies", "عمليات غير طبيعية"], ["testdata", "تصنيف بيانات الاختبار"]];
 
 export default function AdminSystem() {
   const [tab, setTab] = useState("settings");
@@ -18,9 +17,7 @@ export default function AdminSystem() {
   const [health, setHealth] = useState(null);
   const [audit, setAudit] = useState({ items: [] });
   const [anom, setAnom] = useState({ items: [] });
-  const [backups, setBackups] = useState({ items: [] });
   const [q, setQ] = useState("");
-  const [drillFile, setDrillFile] = useState("");
   const [tdr, setTdr] = useState(null);
   const [draft, setDraft] = useState({});
   const [busy, setBusy] = useState(false);
@@ -30,7 +27,6 @@ export default function AdminSystem() {
     api.get("/admin/system/health").then((r) => setHealth(r.data));
     api.get(`/admin/audit?limit=100${q ? `&q=${encodeURIComponent(q)}` : ""}`).then((r) => setAudit(r.data));
     api.get("/admin/anomalies").then((r) => setAnom(r.data));
-    api.get("/admin/backups").then((r) => setBackups(r.data));
   }, [q]);
   useEffect(() => { load(); }, [load]);
 
@@ -48,7 +44,7 @@ export default function AdminSystem() {
 
   return (
     <>
-      <PageHeader title="إعدادات النظام والرقابة" subtitle="مركز الإعدادات وFeature Flags، صحة الخدمات، سجل التدقيق غير القابل للتعديل، كشف العمليات غير الطبيعية، والنسخ الاحتياطي" />
+      <PageHeader title="إعدادات النظام والرقابة" subtitle="مركز الإعدادات وFeature Flags، صحة الخدمات، سجل التدقيق غير القابل للتعديل، وكشف العمليات غير الطبيعية — النسخ الاحتياطي في قسمه المستقل" />
 
       <div className="flex flex-wrap gap-2 mb-5" data-testid="system-tabs">
         {TABS.map(([v, l]) => (
@@ -171,129 +167,44 @@ export default function AdminSystem() {
         </div>
       )}
 
-      {tab === "backup" && (
-        <div className="space-y-5">
-          <div className="bg-white rounded-2xl border card-shadow p-5" data-testid="backup-panel">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2 font-head font-bold text-[#0A2540] text-sm">
-                  <Database className="w-4 h-4 text-[#D4AF37]" /> نسخ قاعدة البيانات
-                </div>
-                <div className="text-[11px] text-muted-foreground mt-1">
-                  التشفير: {backups.encrypted ? "مُفعّل (BACKUP_PASSPHRASE)" : "غير مُفعّل — أضف BACKUP_PASSPHRASE"} •
-                  الاحتفاظ بآخر {backups.retention} نسخ • الاستعادة: {backups.restore_enabled ? "مسموحة (Test)" : "معطّلة"}
-                </div>
+      {tab === "testdata" && (
+        <div className="bg-white rounded-2xl border card-shadow p-5" data-testid="testdata-panel">
+          <div className="font-head font-bold text-[#0A2540] text-sm mb-2">تصنيف بيانات الاختبار (بدون أي حذف)</div>
+          {!tdr ? (
+            <Button size="sm" variant="outline" data-testid="testdata-btn"
+              onClick={() => act(async () => { const r = await api.get("/admin/system/test-data-report"); setTdr(r.data); }, "تم إنشاء التقرير")}>
+              إنشاء التقرير
+            </Button>
+          ) : (
+            <div className="space-y-3">
+              <div className="text-[11px] bg-[#F4F6F8] rounded-lg px-3 py-2" data-testid="testdata-db">
+                القاعدة: <b>{tdr.database}</b> • البيئة: <b>{tdr.environment}</b><br />{tdr.isolation_note}
               </div>
-              <Button size="sm" className="bg-[#0A2540] hover:bg-[#061A2E]" data-testid="run-backup-btn" disabled={busy}
-                onClick={() => act(() => api.post("/admin/backups/run", { reason: "نسخ احتياطي يدوي من لوحة الإدارة" }), "تم إنشاء النسخة")}>
-                تشغيل نسخة الآن
-              </Button>
-            </div>
-            <div className="mt-3 text-[11px] bg-[#F4F6F8] rounded-lg px-3 py-2 space-y-1" data-testid="backup-env">
-              <div>البيئة: <b>{backups.environment}</b> • ملفات على القرص: <b>{(backups.files_on_disk || []).length}</b> • سياسة الاحتفاظ: <b>{backups.retention}</b> نسخ (حُذف تلقائيًا: {backups.pruned_count})</div>
-              <div>الجدولة اليومية: <b>{backups.schedule?.local_time}</b> عبر <code dir="ltr">{backups.schedule?.endpoint}</code> ({backups.schedule?.enabled ? "مُفعّلة" : "معطّلة"})</div>
-              <div>التشفير: <b>{backups.encryption?.enabled ? "مُفعّل" : "غير مُفعّل"}</b> — {backups.encryption?.algorithm} بمفتاح {backups.encryption?.passphrase_source}</div>
-              <div>آخر نسخة ناجحة: <b>{backups.last_successful?.file || "—"}</b>{backups.last_successful?.at ? ` • ${fmtDate(backups.last_successful.at)}` : ""}</div>
-              <div>حواجز الاستعادة: {(backups.restore_guards || []).join(" • ")}</div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl border card-shadow p-5" data-testid="testdata-panel">
-            <div className="font-head font-bold text-[#0A2540] text-sm mb-2">تصنيف بيانات الاختبار (بدون أي حذف)</div>
-            {!tdr ? (
-              <Button size="sm" variant="outline" data-testid="testdata-btn"
-                onClick={() => act(async () => { const r = await api.get("/admin/system/test-data-report"); setTdr(r.data); }, "تم إنشاء التقرير")}>
-                إنشاء التقرير
-              </Button>
-            ) : (
-              <div className="space-y-3">
-                <div className="text-[11px] bg-[#F4F6F8] rounded-lg px-3 py-2" data-testid="testdata-db">
-                  القاعدة: <b>{tdr.database}</b> • البيئة: <b>{tdr.environment}</b><br />{tdr.isolation_note}
-                </div>
-                <table className="w-full text-[11px]">
-                  <thead className="bg-[#F4F6F8] text-muted-foreground">
-                    <tr>{["المجموعة", "الإجمالي", "بيانات QA", "بيانات حقيقية", "قاعدة التصنيف"].map((h) => (
-                      <th key={h} className="text-right font-semibold px-2 py-2">{h}</th>))}</tr>
-                  </thead>
-                  <tbody>
-                    {tdr.rows.map((r) => (
-                      <tr key={r.collection} className="border-t" data-testid={`testdata-${r.collection}`}>
-                        <td className="px-2 py-1.5 font-semibold">{r.collection}</td>
-                        <td className="px-2 py-1.5 tabular">{r.total}</td>
-                        <td className="px-2 py-1.5 tabular text-[#A16207]">{r.qa}</td>
-                        <td className="px-2 py-1.5 tabular text-[#15803D]">{r.real}</td>
-                        <td className="px-2 py-1.5 text-[10px] text-muted-foreground">{r.rule}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <div className="text-[11px] bg-[#FEFCE8] border border-[#FEF08A] text-[#A16207] rounded-lg px-3 py-2" data-testid="testdata-verdict">
-                  {tdr.repetition_verdict}<br />{tdr.deletion_policy}
-                </div>
+              <table className="w-full text-[11px]">
+                <thead className="bg-[#F4F6F8] text-muted-foreground">
+                  <tr>{["المجموعة", "الإجمالي", "بيانات QA", "بيانات حقيقية", "قاعدة التصنيف"].map((h) => (
+                    <th key={h} className="text-right font-semibold px-2 py-2">{h}</th>))}</tr>
+                </thead>
+                <tbody>
+                  {tdr.rows.map((r) => (
+                    <tr key={r.collection} className="border-t" data-testid={`testdata-${r.collection}`}>
+                      <td className="px-2 py-1.5 font-semibold">{r.collection}</td>
+                      <td className="px-2 py-1.5 tabular">{r.total}</td>
+                      <td className="px-2 py-1.5 tabular text-[#A16207]">{r.qa}</td>
+                      <td className="px-2 py-1.5 tabular text-[#15803D]">{r.real}</td>
+                      <td className="px-2 py-1.5 text-[10px] text-muted-foreground">{r.rule}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="text-[11px] bg-[#FEFCE8] border border-[#FEF08A] text-[#A16207] rounded-lg px-3 py-2" data-testid="testdata-verdict">
+                {tdr.repetition_verdict}<br />{tdr.deletion_policy}
               </div>
-            )}
-          </div>
-
-          <div className="bg-white rounded-2xl border card-shadow p-5" data-testid="drill-panel">
-            <div className="font-head font-bold text-[#0A2540] text-sm mb-2">اختبار الاستعادة (Restore Drill)</div>
-            <div className="text-[11px] text-muted-foreground mb-3">
-              يفكّ التشفير ويستعيد النسخة إلى قاعدة مؤقتة منفصلة، يعدّ المجموعات والمستندات، ثم يحذفها.
-              <b> قاعدة البيانات العاملة لا تُمَس إطلاقًا.</b>
             </div>
-            <div className="flex flex-wrap gap-2 items-center">
-              <select className="h-9 rounded-md border border-input px-2 text-xs bg-white" data-testid="drill-file-select"
-                value={drillFile} onChange={(e) => setDrillFile(e.target.value)}>
-                <option value="">اختر ملف نسخة</option>
-                {(backups.files_on_disk || []).map((f) => (
-                  <option key={f.file} value={f.file}>{f.file} — {(f.size / 1048576).toFixed(2)} MB</option>
-                ))}
-              </select>
-              <Button size="sm" variant="outline" data-testid="run-drill-btn" disabled={busy || !drillFile}
-                onClick={() => act(async () => {
-                  const r = await api.post("/admin/backups/verify",
-                    { file: drillFile, reason: "اختبار استعادة على قاعدة مؤقتة" });
-                  toast.success(`نجح الاختبار: ${r.data.collections} مجموعة و${r.data.documents} مستند`);
-                }, "تم اختبار الاستعادة")}>تشغيل اختبار الاستعادة</Button>
-            </div>
-            <div className="mt-3 space-y-1.5">
-              {(backups.drills || []).length === 0 ? (
-                <div className="text-[11px] text-muted-foreground" data-testid="drills-empty">لم يُجرَ اختبار استعادة بعد</div>
-              ) : backups.drills.map((d) => (
-                <div key={d.id} className={`text-[11px] rounded-lg px-3 py-1.5 ${d.result === "success" ? "bg-[#F0FDF4] text-[#15803D]" : "bg-[#FEF2F2] text-[#B91C1C]"}`}
-                  data-testid={`drill-${d.id}`}>
-                  {fmtDate(d.at)} • {d.file} • {d.result === "success"
-                    ? `${d.collections} مجموعة / ${d.documents} مستند • ${d.decrypted ? "فُكّ التشفير" : "غير مشفّرة"}`
-                    : `فشل: ${(d.error || "").slice(0, 60)}`} • {d.by}
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="bg-white rounded-2xl border card-shadow overflow-x-auto" data-testid="backups-table">
-            <table className="w-full text-xs min-w-[700px]">
-              <thead className="bg-[#F4F6F8] text-muted-foreground">
-                <tr>{["التاريخ", "الملف", "الحجم", "مشفّرة", "النتيجة", "المنفّذ"].map((h) => (
-                  <th key={h} className="text-right font-semibold px-3 py-2.5">{h}</th>))}</tr>
-              </thead>
-              <tbody>
-                {backups.items.length === 0 ? (
-                  <tr><td colSpan={6} className="text-center py-10 text-muted-foreground" data-testid="backups-empty">لا توجد نسخ بعد</td></tr>
-                ) : backups.items.map((b) => (
-                  <tr key={b.id} className="border-t" data-testid={`backup-${b.id}`}>
-                    <td className="px-3 py-2 whitespace-nowrap">{fmtDate(b.at)}</td>
-                    <td className="px-3 py-2 text-[10px] break-all">{b.file || "—"}{b.pruned ? " (محذوفة بالسياسة)" : ""}</td>
-                    <td className="px-3 py-2 tabular">{b.size ? `${(b.size / 1048576).toFixed(2)} MB` : "—"}</td>
-                    <td className="px-3 py-2">{b.encrypted ? "نعم" : "لا"}</td>
-                    <td className={`px-3 py-2 ${b.result === "success" ? "text-[#15803D]" : "text-[#B91C1C]"}`}>
-                      {b.result === "success" ? "ناجحة" : `فاشلة: ${(b.error || "").slice(0, 40)}`}
-                    </td>
-                    <td className="px-3 py-2">{b.by}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          )}
         </div>
       )}
+
     </>
   );
 }

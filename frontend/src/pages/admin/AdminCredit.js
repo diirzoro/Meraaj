@@ -26,6 +26,8 @@ export default function AdminCredit() {
   const [edit, setEdit] = useState(null);   // {office_id,name,currency,limit,reason}
   const [frz, setFrz] = useState(null);     // {office_id,name,currency,frozen,reason}
   const [events, setEvents] = useState(null);
+  const [grant, setGrant] = useState(null);
+  const [offices, setOffices] = useState([]);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
@@ -58,7 +60,13 @@ export default function AdminCredit() {
 
   return (
     <>
-      <PageHeader title="السقف الائتماني والانكشاف" subtitle="حد رقابي لكل مكتب — يسمح بالسالب داخل الحد فقط، ويرفض أي حجز يتجاوز المتاح" />
+      <PageHeader title="السقف الائتماني والانكشاف"
+        subtitle="منح السقوف وتعديلها، تجميد المكاتب وفكّ التجميد، ومتابعة المستخدم والمتبقي — بسبب إلزامي وسجل تدقيق"
+        action={<Button className="bg-[#15803D] hover:bg-[#166534]" data-testid="grant-limit-btn"
+          onClick={() => {
+            api.get("/admin/orgs?status=active&limit=200").then((r) => setOffices(r.data.items || []));
+            setGrant({ office_id: "", currency: "SAR", limit: "", reason: "" });
+          }}>منح سقف لمكتب</Button>} />
 
       <div className="grid sm:grid-cols-2 gap-5 mb-5">
         {["SAR", "USD"].map((c) => (
@@ -144,6 +152,47 @@ export default function AdminCredit() {
         <button disabled={page >= Math.ceil((d.total || 0) / 50)} onClick={() => setPage(page + 1)} data-testid="credit-next"
           className="h-8 px-3 rounded-md border text-xs disabled:opacity-40">التالي</button>
       </div>
+
+      <Dialog open={!!grant} onOpenChange={(o) => !o && setGrant(null)}>
+        <DialogContent dir="rtl" className="max-w-md" data-testid="grant-dialog">
+          <DialogHeader><DialogTitle>منح سقف ائتماني لمكتب</DialogTitle></DialogHeader>
+          {grant && (
+            <div className="space-y-3">
+              <div><Label className="text-xs">المكتب</Label>
+                <select className="w-full h-9 rounded-md border border-input px-2 text-xs bg-white" data-testid="grant-office"
+                  value={grant.office_id} onChange={(e) => setGrant({ ...grant, office_id: e.target.value })}>
+                  <option value="">اختر المكتب</option>
+                  {offices.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </select></div>
+              <div><Label className="text-xs">العملة</Label>
+                <select className="w-full h-9 rounded-md border border-input px-2 text-xs bg-white" data-testid="grant-currency"
+                  value={grant.currency} onChange={(e) => setGrant({ ...grant, currency: e.target.value })}>
+                  <option value="SAR">ريال سعودي</option><option value="USD">دولار أمريكي</option>
+                </select></div>
+              <div><Label className="text-xs">السقف</Label>
+                <Input type="number" value={grant.limit} data-testid="grant-limit-input"
+                  onChange={(e) => setGrant({ ...grant, limit: e.target.value })} /></div>
+              <div className="text-[10px] text-muted-foreground">
+                لا يمكن تخفيض السقف إلى أقل من المديونية القائمة — يرفض الخادم ذلك تلقائيًا.
+              </div>
+              <div><Label className="text-xs">السبب (إلزامي — يُسجَّل في سجل التدقيق)</Label>
+                <Textarea rows={2} value={grant.reason} data-testid="grant-reason"
+                  onChange={(e) => setGrant({ ...grant, reason: e.target.value })} /></div>
+              <Button className="w-full bg-[#0A2540] hover:bg-[#061A2E]" data-testid="save-grant-btn"
+                disabled={busy || !grant.office_id || grant.reason.trim().length < 3 || grant.limit === ""}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    await api.post(`/admin/credit/${grant.office_id}`, {
+                      currency: grant.currency, limit: Number(grant.limit), reason: grant.reason,
+                    });
+                    toast.success("تم منح السقف الائتماني"); setGrant(null); load();
+                  } catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
+                }}>منح</Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!edit} onOpenChange={(o) => !o && setEdit(null)}>
         <DialogContent dir="rtl" className="max-w-md" data-testid="limit-dialog">

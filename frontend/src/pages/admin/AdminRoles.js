@@ -24,6 +24,11 @@ export default function AdminRoles() {
   const [history, setHistory] = useState({ sessions: [], failed_attempts: [] });
   const [approvals, setApprovals] = useState([]);
   const [edit, setEdit] = useState(null);
+  const [perms, setPerms] = useState(null);
+  const [editUser, setEditUser] = useState(null);
+  const [pwd, setPwd] = useState(null);
+  const [newUser, setNewUser] = useState(null);
+  const [offices, setOffices] = useState([]);
   const [dual, setDual] = useState({});
   const [twofa, setTwofa] = useState(null);
   const [code, setCode] = useState("");
@@ -53,7 +58,13 @@ export default function AdminRoles() {
 
   return (
     <>
-      <PageHeader title="الصلاحيات والأمان (Enterprise RBAC)" subtitle="أدوار تفصيلية، صلاحيات حسّاسة منفصلة، موافقة شخص ثانٍ، جلسات نشطة ومصادقة ثنائية" />
+      <PageHeader title="الصلاحيات والأمان (Enterprise RBAC)"
+        subtitle="إنشاء وتعديل المستخدمين والموظفين، تعيين الأدوار والصلاحيات، التعليق وإنهاء الجلسات وتصفير كلمة المرور — مع سبب إلزامي وسجل تدقيق"
+        action={<Button className="bg-[#15803D] hover:bg-[#166534]" data-testid="new-user-btn"
+          onClick={() => {
+            api.get("/admin/orgs?limit=200").then((r) => setOffices(r.data.items || []));
+            setNewUser({ email: "", password: "", role: "office", name: "", phone: "", office_id: "", roles: [], reason: "" });
+          }}>مستخدم/موظف جديد</Button>} />
 
       <div className="flex flex-wrap gap-2 mb-5" data-testid="roles-tabs">
         {TABS.map(([v, l]) => (
@@ -129,6 +140,12 @@ export default function AdminRoles() {
                     <td className="px-3 py-2.5 whitespace-nowrap">
                       <button onClick={() => setEdit({ ...u, roles: u.enterprise_roles || [], reason: "" })}
                         data-testid={`edit-roles-${u.id}`} className="text-[#0A2540] underline font-semibold">الأدوار</button>
+                      <button onClick={() => setPerms({ id: u.id, email: u.email, list: u.extra_permissions || [], reason: "" })}
+                        data-testid={`edit-perms-${u.id}`} className="mr-2 text-[#0A2540] underline font-semibold">الصلاحيات</button>
+                      <button onClick={() => setEditUser({ id: u.id, email: u.email, owner_name: u.owner_name || "", staff_name: u.staff_name || "", phone: u.phone || "", office_name: u.office_name || "", governorate: u.governorate || "", reason: "" })}
+                        data-testid={`edit-user-${u.id}`} className="mr-2 text-[#0A2540] underline">البيانات</button>
+                      <button onClick={() => setPwd({ id: u.id, email: u.email, new_password: "", reason: "" })}
+                        data-testid={`reset-pwd-${u.id}`} className="mr-2 text-[#B45309] underline">كلمة المرور</button>
                       <button data-testid={`force-logout-${u.id}`} className="mr-2 text-[#1D4ED8] underline"
                         onClick={() => { const r = window.prompt("سبب إنهاء الجلسات؟"); if (r && r.length >= 3) act(() => api.post(`/admin/users/${u.id}/force-logout`, { reason: r }), "تم إنهاء الجلسات"); }}>
                         إنهاء الجلسات
@@ -266,6 +283,148 @@ export default function AdminRoles() {
           </div>
         </div>
       )}
+
+      <Dialog open={!!newUser} onOpenChange={(o) => !o && setNewUser(null)}>
+        <DialogContent dir="rtl" className="max-w-lg max-h-[85vh] overflow-y-auto" data-testid="new-user-dialog">
+          <DialogHeader><DialogTitle>إنشاء مستخدم أو موظف</DialogTitle></DialogHeader>
+          {newUser && (
+            <div className="grid sm:grid-cols-2 gap-2">
+              <div><Label className="text-[11px]">النوع</Label>
+                <select className="w-full h-8 rounded-md border border-input px-2 text-xs bg-white" data-testid="newuser-role"
+                  value={newUser.role} onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}>
+                  <option value="office">مكتب</option>
+                  <option value="staff">موظف مكتب (يشترك في محفظة المكتب)</option>
+                  <option value="individual">فرد</option>
+                  <option value="marketer">مسوّق</option>
+                </select></div>
+              {newUser.role === "staff" && (
+                <div><Label className="text-[11px]">المكتب التابع له</Label>
+                  <select className="w-full h-8 rounded-md border border-input px-2 text-xs bg-white" data-testid="newuser-office"
+                    value={newUser.office_id} onChange={(e) => setNewUser({ ...newUser, office_id: e.target.value })}>
+                    <option value="">اختر المكتب</option>
+                    {offices.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                  </select></div>
+              )}
+              {[["name", "الاسم"], ["email", "بريد الدخول"], ["password", "كلمة المرور (8+)"], ["phone", "الهاتف"]].map(([k, lab]) => (
+                <div key={k}><Label className="text-[11px]">{lab}</Label>
+                  <Input className="h-8 text-xs" type={k === "password" ? "password" : "text"}
+                    value={newUser[k]} data-testid={`newuser-${k}`}
+                    onChange={(e) => setNewUser({ ...newUser, [k]: e.target.value })} /></div>
+              ))}
+              <div className="sm:col-span-2">
+                <Label className="text-[11px]">الأدوار المؤسسية (اختياري)</Label>
+                <div className="grid grid-cols-2 gap-1 mt-1">
+                  {Object.entries(cat.roles).filter(([k]) => k !== "super_admin").map(([k, r]) => (
+                    <label key={k} className="text-[10px] bg-[#F4F6F8] rounded px-2 py-1 flex items-center gap-1.5" data-testid={`newuser-role-${k}`}>
+                      <input type="checkbox" checked={newUser.roles.includes(k)}
+                        onChange={(e) => setNewUser({ ...newUser, roles: e.target.checked ? [...newUser.roles, k] : newUser.roles.filter((x) => x !== k) })} />
+                      {r.ar}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="sm:col-span-2"><Label className="text-[11px]">سبب الإنشاء (إلزامي)</Label>
+                <Textarea rows={2} className="text-xs" value={newUser.reason} data-testid="newuser-reason"
+                  onChange={(e) => setNewUser({ ...newUser, reason: e.target.value })} /></div>
+              <Button className="sm:col-span-2 bg-[#0A2540] hover:bg-[#061A2E]" data-testid="create-user-btn"
+                disabled={busy || newUser.reason.trim().length < 3 || newUser.name.length < 2
+                  || newUser.email.length < 5 || newUser.password.length < 8
+                  || (newUser.role === "staff" && !newUser.office_id)}
+                onClick={() => act(async () => {
+                  await api.post("/admin/rbac/users", { ...newUser, office_id: newUser.office_id || null });
+                  setNewUser(null);
+                }, "تم إنشاء الحساب")}>إنشاء</Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!editUser} onOpenChange={(o) => !o && setEditUser(null)}>
+        <DialogContent dir="rtl" className="max-w-md" data-testid="edit-user-dialog">
+          <DialogHeader><DialogTitle>تعديل بيانات {editUser?.email}</DialogTitle></DialogHeader>
+          {editUser && (
+            <div className="space-y-2">
+              {[["owner_name", "اسم المالك/المستخدم"], ["staff_name", "اسم الموظف"], ["phone", "الهاتف"],
+                ["office_name", "اسم المكتب"], ["governorate", "المحافظة"]].map(([k, lab]) => (
+                <div key={k}><Label className="text-[11px]">{lab}</Label>
+                  <Input className="h-8 text-xs" value={editUser[k]} data-testid={`edituser-${k}`}
+                    onChange={(e) => setEditUser({ ...editUser, [k]: e.target.value })} /></div>
+              ))}
+              <div className="text-[10px] text-muted-foreground">
+                البريد والدور والمحفظة ومراجع SSO حقول محميّة ولا تُعدَّل من هنا.
+              </div>
+              <div><Label className="text-[11px]">السبب (إلزامي)</Label>
+                <Textarea rows={2} className="text-xs" value={editUser.reason} data-testid="edituser-reason"
+                  onChange={(e) => setEditUser({ ...editUser, reason: e.target.value })} /></div>
+              <Button className="w-full bg-[#0A2540] hover:bg-[#061A2E]" data-testid="save-user-btn"
+                disabled={busy || editUser.reason.trim().length < 3}
+                onClick={() => act(async () => {
+                  const { id, email, ...body } = editUser;
+                  await api.patch(`/admin/rbac/users/${id}`, body); setEditUser(null);
+                }, "تم تعديل البيانات")}>حفظ</Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!perms} onOpenChange={(o) => !o && setPerms(null)}>
+        <DialogContent dir="rtl" className="max-w-md max-h-[85vh] overflow-y-auto" data-testid="perms-dialog">
+          <DialogHeader><DialogTitle>صلاحيات إضافية — {perms?.email}</DialogTitle></DialogHeader>
+          {perms && (
+            <div className="space-y-3">
+              <div className="text-[11px] text-muted-foreground">
+                هذه صلاحيات فردية <b>فوق</b> صلاحيات الأدوار. لا يمكن منح صلاحية مطلقة (*) من هنا.
+              </div>
+              <div className="grid grid-cols-2 gap-1">
+                {Object.entries(cat.permissions).map(([k, lab]) => (
+                  <label key={k} className="text-[10px] bg-[#F4F6F8] rounded px-2 py-1 flex items-center gap-1.5" data-testid={`perm-opt-${k}`}>
+                    <input type="checkbox" checked={perms.list.includes(k)}
+                      onChange={(e) => setPerms({ ...perms, list: e.target.checked ? [...perms.list, k] : perms.list.filter((x) => x !== k) })} />
+                    {lab}
+                  </label>
+                ))}
+              </div>
+              <div><Label className="text-[11px]">السبب (إلزامي)</Label>
+                <Textarea rows={2} className="text-xs" value={perms.reason} data-testid="perms-reason"
+                  onChange={(e) => setPerms({ ...perms, reason: e.target.value })} /></div>
+              <Button className="w-full bg-[#0A2540] hover:bg-[#061A2E]" data-testid="save-perms-btn"
+                disabled={busy || perms.reason.trim().length < 3}
+                onClick={() => act(async () => {
+                  await api.post(`/admin/rbac/users/${perms.id}/permissions`,
+                    { permissions: perms.list, reason: perms.reason });
+                  setPerms(null);
+                }, "تم حفظ الصلاحيات")}>حفظ</Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!pwd} onOpenChange={(o) => !o && setPwd(null)}>
+        <DialogContent dir="rtl" className="max-w-md" data-testid="pwd-dialog">
+          <DialogHeader><DialogTitle>تصفير كلمة المرور — {pwd?.email}</DialogTitle></DialogHeader>
+          {pwd && (
+            <div className="space-y-3">
+              <div className="text-xs bg-[#FEFCE8] border border-[#FEF08A] text-[#A16207] rounded-lg px-3 py-2">
+                سيتم تعيين كلمة مرور مؤقتة بنفس سياسة كلمات المرور الحالية، و<b>إبطال جميع جلسات المستخدم</b> فورًا.
+                كلمة المرور نفسها لا تُسجَّل في أي سجل.
+              </div>
+              <div><Label className="text-[11px]">كلمة المرور المؤقتة (8 أحرف على الأقل)</Label>
+                <Input className="h-8 text-xs" type="text" value={pwd.new_password} data-testid="pwd-input"
+                  onChange={(e) => setPwd({ ...pwd, new_password: e.target.value })} /></div>
+              <div><Label className="text-[11px]">السبب (إلزامي)</Label>
+                <Textarea rows={2} className="text-xs" value={pwd.reason} data-testid="pwd-reason"
+                  onChange={(e) => setPwd({ ...pwd, reason: e.target.value })} /></div>
+              <Button className="w-full bg-[#B45309] hover:bg-[#92400E]" data-testid="confirm-pwd-btn"
+                disabled={busy || pwd.new_password.length < 8 || pwd.reason.trim().length < 3}
+                onClick={() => act(async () => {
+                  await api.post(`/admin/rbac/users/${pwd.id}/password-reset`,
+                    { new_password: pwd.new_password, reason: pwd.reason });
+                  setPwd(null);
+                }, "تم تصفير كلمة المرور وإبطال الجلسات")}>تأكيد</Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!edit} onOpenChange={(o) => !o && setEdit(null)}>
         <DialogContent dir="rtl" className="max-w-md max-h-[85vh] overflow-y-auto" data-testid="roles-dialog">

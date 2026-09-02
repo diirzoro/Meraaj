@@ -29,6 +29,8 @@ export default function AdminPrograms() {
   const [reason, setReason] = useState("");
   const [imgUrl, setImgUrl] = useState("");
   const [busy, setBusy] = useState(false);
+  const [newP, setNewP] = useState(null);
+  const [offices, setOffices] = useState([]);
 
   const load = useCallback(() => {
     const p = new URLSearchParams({ page: String(f.page), limit: "25" });
@@ -53,7 +55,17 @@ export default function AdminPrograms() {
 
   return (
     <>
-      <PageHeader title="إدارة البرامج والمقاعد" subtitle="برامج معراج وبرامج رحّال — الأسعار والعمولات والمقاعد والصور والحالة، مع سجل كامل لكل تعديل" />
+      <PageHeader title="إدارة البرامج والمقاعد"
+        subtitle="إضافة برنامج، تعديل الأسعار والعمولات والمقاعد والصور والتواريخ، العرض والإيقاف والأرشفة — مع سجل كامل لكل تعديل"
+        action={<Button className="bg-[#15803D] hover:bg-[#166534]" data-testid="new-program-btn"
+          onClick={() => {
+            api.get("/admin/orgs?status=active&limit=200").then((r) => setOffices(r.data.items || []));
+            setNewP({
+              seller_id: "", type: "umrah", title: "", departure_date: "", return_date: "",
+              departure_city: "", net_cost_per_seat: "", final_sale_price: "",
+              buyer_office_commission: "", currency: "USD", total_seats: "", status: "listed", reason: "",
+            });
+          }}>برنامج جديد</Button>} />
 
       <div className="bg-white rounded-2xl border card-shadow p-4 mb-5 flex flex-wrap gap-3 items-center" data-testid="programs-filters">
         <div className="relative flex-1 min-w-[220px]">
@@ -121,6 +133,55 @@ export default function AdminPrograms() {
             className="h-8 px-3 rounded-md border text-xs disabled:opacity-40">التالي</button>
         </div>
       )}
+
+      <Dialog open={!!newP} onOpenChange={(o) => !o && setNewP(null)}>
+        <DialogContent dir="rtl" className="max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="new-program-dialog">
+          <DialogHeader><DialogTitle>إنشاء برنامج جديد</DialogTitle></DialogHeader>
+          {newP && (
+            <div className="grid sm:grid-cols-2 gap-2">
+              <div className="sm:col-span-2"><Label className="text-[11px]">المكتب البائع</Label>
+                <select className="w-full h-8 rounded-md border border-input px-2 text-xs bg-white" data-testid="newp-seller"
+                  value={newP.seller_id} onChange={(e) => setNewP({ ...newP, seller_id: e.target.value })}>
+                  <option value="">اختر المكتب</option>
+                  {offices.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </select></div>
+              <div><Label className="text-[11px]">النوع</Label>
+                <select className="w-full h-8 rounded-md border border-input px-2 text-xs bg-white" data-testid="newp-type"
+                  value={newP.type} onChange={(e) => setNewP({ ...newP, type: e.target.value })}>
+                  <option value="umrah">عمرة</option><option value="tourism">سياحة</option>
+                </select></div>
+              <div><Label className="text-[11px]">العملة</Label>
+                <select className="w-full h-8 rounded-md border border-input px-2 text-xs bg-white" data-testid="newp-currency"
+                  value={newP.currency} onChange={(e) => setNewP({ ...newP, currency: e.target.value })}>
+                  <option value="USD">دولار أمريكي</option><option value="SAR">ريال سعودي</option>
+                </select></div>
+              {[["title", "اسم البرنامج", "text"], ["departure_city", "مدينة الانطلاق", "text"],
+                ["departure_date", "تاريخ الانطلاق", "date"], ["return_date", "تاريخ العودة", "date"],
+                ["net_cost_per_seat", "تكلفة المقعد (صافي البائع)", "number"],
+                ["final_sale_price", "سعر البيع النهائي", "number"],
+                ["buyer_office_commission", "عمولة المكتب المشتري", "number"],
+                ["total_seats", "عدد المقاعد", "number"]].map(([k, lab, t]) => (
+                <div key={k}><Label className="text-[11px]">{lab}</Label>
+                  <Input className="h-8 text-xs" type={t} value={newP[k]} data-testid={`newp-${k}`}
+                    onChange={(e) => setNewP({ ...newP, [k]: t === "number" ? Number(e.target.value) : e.target.value })} /></div>
+              ))}
+              <div><Label className="text-[11px]">الحالة عند الإنشاء</Label>
+                <select className="w-full h-8 rounded-md border border-input px-2 text-xs bg-white" data-testid="newp-status"
+                  value={newP.status} onChange={(e) => setNewP({ ...newP, status: e.target.value })}>
+                  <option value="listed">معروض</option><option value="unlisted">موقوف (مسودة)</option>
+                </select></div>
+              <div className="sm:col-span-2"><Label className="text-[11px]">سبب الإنشاء (إلزامي)</Label>
+                <Textarea rows={2} className="text-xs" value={newP.reason} data-testid="newp-reason"
+                  onChange={(e) => setNewP({ ...newP, reason: e.target.value })} /></div>
+              <Button className="sm:col-span-2 bg-[#0A2540] hover:bg-[#061A2E]" data-testid="create-program-btn"
+                disabled={busy || !newP.seller_id || newP.title.length < 3 || !newP.departure_date
+                  || !newP.return_date || !newP.total_seats || newP.reason.trim().length < 3}
+                onClick={() => act(async () => { await api.post("/admin/programs", newP); setNewP(null); },
+                  "تم إنشاء البرنامج")}>إنشاء</Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!detail} onOpenChange={(o) => !o && setDetail(null)}>
         <DialogContent dir="rtl" className="max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="program-dialog">

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import api, { apiError } from "@/lib/api";
 import { PageHeader } from "@/components/Layout";
 import { money, fmtDate } from "@/lib/format";
@@ -27,6 +28,13 @@ export default function AdminOrgs() {
   const [staff, setStaff] = useState({ name: "", job_title: "", phone: "", email: "", branch_id: "" });
   const [busy, setBusy] = useState(false);
   const [resyncing, setResyncing] = useState(false);
+  const [newOrg, setNewOrg] = useState(null);
+  const [editOrg, setEditOrg] = useState(null);
+  const [editBranch, setEditBranch] = useState(null);
+  const [editStaff, setEditStaff] = useState(null);
+  const [cat, setCat] = useState({ roles: {} });
+
+  useEffect(() => { api.get("/admin/rbac/catalog").then((r) => setCat(r.data)); }, []);
 
   // Normalize a stored phone into a wa.me-ready international number (moved from /admin/offices)
   const waNumber = (raw) => {
@@ -79,11 +87,17 @@ export default function AdminOrgs() {
     <>
       <PageHeader title="المؤسسات والمكاتب"
         subtitle="القسم الموحّد: الحالة القانونية والتشغيلية والمالية، الأرصدة بالريال والدولار، التفعيل والإيقاف، الفروع والموظفون، الائتمان والتعرّض، والطلبات والنزاعات"
-        action={<Button onClick={resync} disabled={resyncing} data-testid="batch-resync-btn"
-          className="bg-[#0A2540] hover:bg-[#061A2E]">
-          <RefreshCw className={`w-4 h-4 ${resyncing ? "animate-spin" : ""}`} />
-          {resyncing ? "جارٍ المزامنة..." : "إعادة مزامنة الأسعار"}
-        </Button>} />
+        action={<div className="flex flex-wrap gap-2">
+          <Button onClick={() => { setNewOrg({ office_name: "", owner_name: "", email: "", password: "", phone: "", governorate: "", commercial_license: "", reason: "" }); }}
+            data-testid="new-org-btn" className="bg-[#15803D] hover:bg-[#166534]">
+            <Plus className="w-4 h-4" /> مؤسسة/مكتب جديد
+          </Button>
+          <Button onClick={resync} disabled={resyncing} data-testid="batch-resync-btn"
+            className="bg-[#0A2540] hover:bg-[#061A2E]">
+            <RefreshCw className={`w-4 h-4 ${resyncing ? "animate-spin" : ""}`} />
+            {resyncing ? "جارٍ المزامنة..." : "إعادة مزامنة الأسعار"}
+          </Button>
+        </div>} />
 
       <div className="bg-white rounded-2xl border card-shadow p-4 mb-5 flex flex-wrap gap-3 items-center" data-testid="orgs-filters">
         <div className="relative flex-1 min-w-[220px]">
@@ -146,9 +160,9 @@ export default function AdminOrgs() {
                   <button onClick={() => open(x.id)} data-testid={`org-open-${x.id}`} className="text-[#0A2540] underline font-semibold ml-2">الملف</button>
                   {x.status === "active"
                     ? <button className="text-[#B91C1C] underline font-semibold" disabled={busy}
-                      onClick={() => setStatus(x.id, "suspended")} data-testid={`suspend-${x.id}`}>إيقاف</button>
+                      onClick={() => { if (window.confirm(`تأكيد إيقاف «${x.name}»؟`)) setStatus(x.id, "suspended"); }} data-testid={`suspend-${x.id}`}>إيقاف</button>
                     : <button className="text-[#15803D] underline font-semibold" disabled={busy}
-                      onClick={() => setStatus(x.id, "active")} data-testid={`activate-${x.id}`}>تفعيل</button>}
+                      onClick={() => { if (window.confirm(`تأكيد إعادة تفعيل «${x.name}»؟`)) setStatus(x.id, "active"); }} data-testid={`activate-${x.id}`}>تفعيل</button>}
                 </td>
               </tr>
             ))}
@@ -165,6 +179,129 @@ export default function AdminOrgs() {
             className="h-8 px-3 rounded-md border text-xs disabled:opacity-40">التالي</button>
         </div>
       )}
+
+      {/* Create organization */}
+      <Dialog open={!!newOrg} onOpenChange={(o) => !o && setNewOrg(null)}>
+        <DialogContent dir="rtl" className="max-w-lg" data-testid="new-org-dialog">
+          <DialogHeader><DialogTitle>إنشاء مؤسسة/مكتب جديد</DialogTitle></DialogHeader>
+          {newOrg && (
+            <div className="grid sm:grid-cols-2 gap-2">
+              {[["office_name", "اسم المكتب"], ["owner_name", "اسم المالك"], ["email", "بريد الدخول"],
+                ["password", "كلمة المرور (8 أحرف على الأقل)"], ["phone", "الهاتف"],
+                ["governorate", "المحافظة"], ["commercial_license", "السجل التجاري"]].map(([k, lab]) => (
+                <div key={k}><Label className="text-[11px]">{lab}</Label>
+                  <Input className="h-8 text-xs" type={k === "password" ? "password" : "text"}
+                    value={newOrg[k]} data-testid={`neworg-${k}`}
+                    onChange={(e) => setNewOrg({ ...newOrg, [k]: e.target.value })} /></div>
+              ))}
+              <div className="sm:col-span-2"><Label className="text-[11px]">سبب الإنشاء (إلزامي)</Label>
+                <Textarea rows={2} className="text-xs" value={newOrg.reason} data-testid="neworg-reason"
+                  onChange={(e) => setNewOrg({ ...newOrg, reason: e.target.value })} /></div>
+              <Button className="sm:col-span-2 bg-[#0A2540] hover:bg-[#061A2E]" data-testid="create-org-btn"
+                disabled={busy || newOrg.reason.trim().length < 3 || newOrg.office_name.length < 2
+                  || newOrg.owner_name.length < 2 || newOrg.email.length < 5 || newOrg.password.length < 8}
+                onClick={() => act(async () => { await api.post("/admin/orgs", newOrg); setNewOrg(null); },
+                  "تم إنشاء المؤسسة وتسجيلها في سجل التدقيق")}>إنشاء</Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit organization info */}
+      <Dialog open={!!editOrg} onOpenChange={(o) => !o && setEditOrg(null)}>
+        <DialogContent dir="rtl" className="max-w-lg" data-testid="edit-org-dialog">
+          <DialogHeader><DialogTitle>تعديل بيانات المؤسسة</DialogTitle></DialogHeader>
+          {editOrg && (
+            <div className="grid sm:grid-cols-2 gap-2">
+              {[["office_name", "اسم المكتب"], ["owner_name", "اسم المالك"], ["phone", "الهاتف"],
+                ["governorate", "المحافظة"], ["commercial_license", "السجل التجاري"]].map(([k, lab]) => (
+                <div key={k}><Label className="text-[11px]">{lab}</Label>
+                  <Input className="h-8 text-xs" value={editOrg[k] || ""} data-testid={`editorg-${k}`}
+                    onChange={(e) => setEditOrg({ ...editOrg, [k]: e.target.value })} /></div>
+              ))}
+              <div className="sm:col-span-2 text-[10px] text-muted-foreground">
+                البريد وكلمة المرور والدور والمحفظة حقول محميّة ولا تُعدَّل من هنا.
+              </div>
+              <div className="sm:col-span-2"><Label className="text-[11px]">سبب التعديل (إلزامي)</Label>
+                <Textarea rows={2} className="text-xs" value={editOrg.reason} data-testid="editorg-reason"
+                  onChange={(e) => setEditOrg({ ...editOrg, reason: e.target.value })} /></div>
+              <Button className="sm:col-span-2 bg-[#0A2540] hover:bg-[#061A2E]" data-testid="save-org-info-btn"
+                disabled={busy || (editOrg.reason || "").trim().length < 3}
+                onClick={() => act(async () => {
+                  const { id, ...body } = editOrg;
+                  await api.patch(`/admin/orgs/${id}`, body); setEditOrg(null);
+                }, "تم تعديل بيانات المؤسسة")}>حفظ</Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit branch */}
+      <Dialog open={!!editBranch} onOpenChange={(o) => !o && setEditBranch(null)}>
+        <DialogContent dir="rtl" className="max-w-md" data-testid="edit-branch-dialog">
+          <DialogHeader><DialogTitle>تعديل الفرع</DialogTitle></DialogHeader>
+          {editBranch && (
+            <div className="space-y-2">
+              {[["name", "اسم الفرع"], ["city", "المدينة"], ["phone", "الهاتف"], ["manager", "المدير"]].map(([k, lab]) => (
+                <div key={k}><Label className="text-[11px]">{lab}</Label>
+                  <Input className="h-8 text-xs" value={editBranch[k] || ""} data-testid={`editbranch-${k}`}
+                    onChange={(e) => setEditBranch({ ...editBranch, [k]: e.target.value })} /></div>
+              ))}
+              <div><Label className="text-[11px]">سبب التعديل (إلزامي)</Label>
+                <Textarea rows={2} className="text-xs" value={editBranch.reason || ""} data-testid="editbranch-reason"
+                  onChange={(e) => setEditBranch({ ...editBranch, reason: e.target.value })} /></div>
+              <Button className="w-full bg-[#0A2540] hover:bg-[#061A2E]" data-testid="save-branch-btn"
+                disabled={busy || (editBranch.reason || "").trim().length < 3}
+                onClick={() => act(async () => {
+                  const { id, ...body } = editBranch;
+                  await api.patch(`/admin/branches/${id}`, body); setEditBranch(null);
+                }, "تم تعديل الفرع")}>حفظ</Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit staff + roles */}
+      <Dialog open={!!editStaff} onOpenChange={(o) => !o && setEditStaff(null)}>
+        <DialogContent dir="rtl" className="max-w-md max-h-[85vh] overflow-y-auto" data-testid="edit-staff-dialog">
+          <DialogHeader><DialogTitle>تعديل الموظف وصلاحياته</DialogTitle></DialogHeader>
+          {editStaff && (
+            <div className="space-y-2">
+              {[["name", "الاسم"], ["job_title", "المسمى الوظيفي"], ["phone", "الهاتف"]].map(([k, lab]) => (
+                <div key={k}><Label className="text-[11px]">{lab}</Label>
+                  <Input className="h-8 text-xs" value={editStaff[k] || ""} data-testid={`editstaff-${k}`}
+                    onChange={(e) => setEditStaff({ ...editStaff, [k]: e.target.value })} /></div>
+              ))}
+              <div>
+                <Label className="text-[11px]">الأدوار المؤسسية</Label>
+                <div className="grid grid-cols-2 gap-1 mt-1">
+                  {Object.entries(cat.roles || {}).map(([k, v]) => (
+                    <label key={k} className="text-[10px] bg-[#F4F6F8] rounded px-2 py-1 flex items-center gap-1.5"
+                      data-testid={`staffrole-${k}`}>
+                      <input type="checkbox" checked={(editStaff.roles || []).includes(k)}
+                        onChange={(e) => setEditStaff({
+                          ...editStaff,
+                          roles: e.target.checked ? [...(editStaff.roles || []), k]
+                            : (editStaff.roles || []).filter((r) => r !== k),
+                        })} />
+                      {v.ar || k}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div><Label className="text-[11px]">سبب التعديل (إلزامي)</Label>
+                <Textarea rows={2} className="text-xs" value={editStaff.reason || ""} data-testid="editstaff-reason"
+                  onChange={(e) => setEditStaff({ ...editStaff, reason: e.target.value })} /></div>
+              <Button className="w-full bg-[#0A2540] hover:bg-[#061A2E]" data-testid="save-staff-btn"
+                disabled={busy || (editStaff.reason || "").trim().length < 3}
+                onClick={() => act(async () => {
+                  const { id, ...body } = editStaff;
+                  await api.patch(`/admin/staff/${id}`, body); setEditStaff(null);
+                }, "تم تعديل الموظف")}>حفظ</Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!detail} onOpenChange={(v) => !v && setDetail(null)}>
         <DialogContent dir="rtl" className="max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="org-dialog">
@@ -185,10 +322,12 @@ export default function AdminOrgs() {
               <div className="flex flex-wrap gap-2 items-center">
                 {o.status === "active" ? (
                   <Button size="sm" variant="outline" className="text-[#B91C1C] border-[#FECACA]" disabled={busy}
-                    data-testid="org-suspend-btn" onClick={() => setStatus(o.id, "suspended")}>إيقاف المؤسسة</Button>
+                    data-testid="org-suspend-btn"
+                    onClick={() => { if (window.confirm(`تأكيد إيقاف «${o.office_name}»؟ سيُمنع من الدخول وإتمام أي عملية.`)) setStatus(o.id, "suspended"); }}>إيقاف المؤسسة</Button>
                 ) : (
                   <Button size="sm" className="bg-[#15803D] hover:bg-[#166534]" disabled={busy}
-                    data-testid="org-activate-btn" onClick={() => setStatus(o.id, "active")}>تفعيل المؤسسة</Button>
+                    data-testid="org-activate-btn"
+                    onClick={() => { if (window.confirm(`تأكيد إعادة تفعيل «${o.office_name}»؟`)) setStatus(o.id, "active"); }}>إعادة التفعيل</Button>
                 )}
                 {waNumber(o.phone) && (
                   <a href={`https://wa.me/${waNumber(o.phone)}?text=${encodeURIComponent(`مرحباً ${o.office_name || ""}، معك إدارة معراج نتورك`)}`}
@@ -197,6 +336,15 @@ export default function AdminOrgs() {
                     <MessageCircle className="w-3.5 h-3.5" /> مراسلة واتساب
                   </a>
                 )}
+                <Button size="sm" variant="outline" data-testid="edit-org-btn"
+                  onClick={() => setEditOrg({
+                    id: o.id, office_name: o.office_name, owner_name: o.owner_name,
+                    phone: o.phone, governorate: o.governorate,
+                    commercial_license: o.commercial_license, reason: "",
+                  })}>تعديل بيانات المؤسسة</Button>
+                <Link to="/admin/credit" className="text-xs underline text-[#0A2540] self-center" data-testid="org-credit-link">
+                  إدارة السقف الائتماني
+                </Link>
               </div>
 
               <div className="border-t pt-3" data-testid="org-credit">
@@ -284,8 +432,12 @@ export default function AdminOrgs() {
                 {detail.branches.map((b) => (
                   <div key={b.id} className="text-[11px] bg-[#F4F6F8] rounded-lg px-3 py-1.5 mb-1 flex justify-between" data-testid={`branch-${b.id}`}>
                     <span>{b.name} — {b.city} • مدير: {b.manager || "—"}</span>
-                    <button className="text-[#B91C1C]" data-testid={`del-branch-${b.id}`}
-                      onClick={() => act(() => api.delete(`/admin/branches/${b.id}`), "تم حذف الفرع")}>حذف</button>
+                    <span className="flex gap-2">
+                      <button className="text-[#0A2540] underline" data-testid={`edit-branch-${b.id}`}
+                        onClick={() => setEditBranch({ id: b.id, name: b.name, city: b.city, phone: b.phone, manager: b.manager, reason: "" })}>تعديل</button>
+                      <button className="text-[#B91C1C]" data-testid={`del-branch-${b.id}`}
+                        onClick={() => { if (window.confirm(`تأكيد حذف الفرع «${b.name}»؟`)) act(() => api.delete(`/admin/branches/${b.id}`), "تم حذف الفرع"); }}>حذف</button>
+                    </span>
                   </div>
                 ))}
                 <div className="flex flex-wrap gap-2 mt-2">
@@ -310,6 +462,8 @@ export default function AdminOrgs() {
                       {s.linked_user_id && <span className="mr-1 text-[9px] px-1.5 py-0.5 rounded bg-[#F0FDF4] text-[#15803D]">حساب دخول (محفظة المكتب)</span>}
                     </span>
                     <span className="flex gap-2">
+                      <button className="text-[#0A2540] underline" data-testid={`edit-staff-${s.id}`}
+                        onClick={() => setEditStaff({ id: s.id, name: s.name, job_title: s.job_title, phone: s.phone, roles: s.roles || [], reason: "" })}>تعديل/صلاحيات</button>
                       {!s.linked_user_id && (
                         <button className="text-[#0A2540] underline" data-testid={`staff-account-${s.id}`}
                           onClick={() => {
@@ -325,7 +479,7 @@ export default function AdminOrgs() {
                           onClick={() => act(() => api.post(`/admin/staff/${s.id}/account/disable`), "تم تعطيل حساب الموظف")}>تعطيل الحساب</button>
                       )}
                       <button className="text-[#B91C1C]" data-testid={`del-staff-${s.id}`}
-                        onClick={() => act(() => api.delete(`/admin/staff/${s.id}`), "تم حذف الموظف")}>حذف</button>
+                        onClick={() => { if (window.confirm(`تأكيد حذف الموظف «${s.name}»؟`)) act(() => api.delete(`/admin/staff/${s.id}`), "تم حذف الموظف"); }}>حذف</button>
                     </span>
                   </div>
                 ))}

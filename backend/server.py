@@ -29,6 +29,7 @@ from finance import router as finance_router
 from integration import router as integration_router, sim_router as rahal_sim_router
 from individual import router as individual_router
 from documents import router as documents_router
+from maintenance import router as maintenance_router
 
 app = FastAPI(title="Meraaj Network API")
 
@@ -61,6 +62,7 @@ app.include_router(integration_router)
 app.include_router(rahal_sim_router)
 app.include_router(individual_router)
 app.include_router(documents_router)
+app.include_router(maintenance_router)
 
 frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 app.add_middleware(

@@ -4,6 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import {
   LayoutDashboard, Store, Package, ShoppingBag, TicketCheck, Wallet,
   Banknote, ShieldAlert, LogOut, Building2, Network, Menu, X, TrendingUp, Ban,
+  Database, Eraser,
   BookOpen, ArrowDownCircle, Percent, Gauge, Bell, FileSpreadsheet, Settings2,
 } from "lucide-react";
 
@@ -40,6 +41,8 @@ const adminNav = [
   { to: "/admin/notifications", label: "الإشعارات والمهام", icon: Bell },
   { to: "/admin/reports", label: "التقارير", icon: FileSpreadsheet },
   { to: "/admin/system", label: "إعدادات النظام", icon: Settings2 },
+  { to: "/admin/backups", label: "النسخ الاحتياطي", icon: Database },
+  { to: "/admin/maintenance", label: "الصيانة والاحتفاظ", icon: Eraser },
   { to: "/admin/cancellations", label: "طلبات الإلغاء", icon: Ban },
   { to: "/admin/disputes", label: "النزاعات", icon: ShieldAlert },
 ];

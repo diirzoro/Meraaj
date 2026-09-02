@@ -31,6 +31,8 @@ import AdminPrograms from "@/pages/admin/AdminPrograms";
 import AdminTravelers from "@/pages/admin/AdminTravelers";
 import AdminIntegrations from "@/pages/admin/AdminIntegrations";
 import AdminOrgs from "@/pages/admin/AdminOrgs";
+import AdminBackups from "@/pages/admin/AdminBackups";
+import AdminMaintenance from "@/pages/admin/AdminMaintenance";
 import AdminRoles from "@/pages/admin/AdminRoles";
 import AdminNotifications from "@/pages/admin/AdminNotifications";
 import AdminReports from "@/pages/admin/AdminReports";
@@ -107,6 +109,8 @@ function AppRoutes() {
       <Route path="/admin/notifications" element={<Protected role="admin"><AdminNotifications /></Protected>} />
       <Route path="/admin/reports" element={<Protected role="admin"><AdminReports /></Protected>} />
       <Route path="/admin/system" element={<Protected role="admin"><AdminSystem /></Protected>} />
+      <Route path="/admin/backups" element={<Protected role="admin"><AdminBackups /></Protected>} />
+      <Route path="/admin/maintenance" element={<Protected role="admin"><AdminMaintenance /></Protected>} />
       <Route path="/admin/finance" element={<Protected role="admin"><AdminFinance /></Protected>} />
       {/* Unified into /admin/orgs — old route kept as a backward-compatible redirect
           until every function is manually confirmed as transferred. */}

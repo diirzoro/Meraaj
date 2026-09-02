@@ -65,6 +65,33 @@ async def cron_backup(request: Request, bg: BackgroundTasks, authorization: str 
     return {"ok": True, "queued": "backup"}
 
 
+async def _do_cleanup():
+    from maintenance import run_scheduled_cleanup
+    try:
+        await run_scheduled_cleanup()
+    except Exception:
+        pass
+
+
+@router.post("/cleanup")
+async def cron_cleanup(request: Request, bg: BackgroundTasks,
+                       authorization: str = Header(default=""),
+                       x_webhook_id: str = Header(default="")):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    # No-op unless an admin explicitly enabled scheduled cleanup in the maintenance section.
+    _auth(authorization)
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    run_id = x_webhook_id or (body or {}).get("run_id") or ""
+    if await _seen(run_id, "cleanup"):
+        return {"ok": True, "duplicate": True}
+    bg.add_task(_do_cleanup)
+    return {"ok": True, "queued": "cleanup"}
+
+
 @router.post("/alerts")
 async def cron_alerts(request: Request, bg: BackgroundTasks, authorization: str = Header(default=""),
                       x_webhook_id: str = Header(default="")):

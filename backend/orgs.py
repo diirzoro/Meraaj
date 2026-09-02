@@ -294,6 +294,148 @@ async def notify(user_id: Optional[str], kind: str, title: str, body: str = "",
         return None
 
 
+class OrgCreateIn(BaseModel):
+    office_name: str = Field(min_length=2)
+    owner_name: str = Field(min_length=2)
+    email: str = Field(min_length=5)
+    password: str = Field(min_length=8)
+    phone: str = ""
+    governorate: str = ""
+    commercial_license: str = ""
+    reason: str = Field(min_length=3)
+
+
+@router.post("/admin/orgs")
+async def create_org(payload: OrgCreateIn, admin: dict = Depends(require_admin)):
+    """Creates a new office/organization account. Uses the same password policy and wallet
+    shape as normal registration — no change to the authentication flow itself."""
+    from security import hash_password
+    email = payload.email.strip().lower()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(400, "البريد مستخدم مسبقاً")
+    doc = {
+        "email": email, "password_hash": hash_password(payload.password),
+        "role": "office", "office_name": payload.office_name.strip(),
+        "owner_name": payload.owner_name.strip(), "phone": payload.phone.strip(),
+        "governorate": payload.governorate.strip(),
+        "commercial_license": payload.commercial_license.strip(),
+        "status": "active", "source": "admin_created",
+        "wallet": {c: {"total": 0.0, "pending": 0.0, "available": 0.0} for c in ("SAR", "USD")},
+        "created_at": now_iso(), "created_by": admin.get("email"),
+    }
+    res = await db.users.insert_one(doc)
+    oid_new = str(res.inserted_id)
+    await db.audit_log.insert_one({
+        "entity": "org", "entity_id": oid_new, "action": "org_created",
+        "actor": admin.get("email"), "actor_id": str(admin["_id"]),
+        "reason": payload.reason.strip(),
+        "after": {"email": email, "office_name": doc["office_name"]}, "at": now_iso()})
+    return {"id": oid_new, "email": email, "office_name": doc["office_name"]}
+
+
+class OrgEditIn(BaseModel):
+    office_name: Optional[str] = None
+    owner_name: Optional[str] = None
+    phone: Optional[str] = None
+    governorate: Optional[str] = None
+    commercial_license: Optional[str] = None
+    reason: str = Field(min_length=3)
+
+
+@router.patch("/admin/orgs/{office_id}")
+async def edit_org(office_id: str, payload: OrgEditIn, admin: dict = Depends(require_admin)):
+    """Edits organization information. Email, password, role and wallet are intentionally
+    NOT editable here — those are protected identity/financial fields."""
+    u = await db.users.find_one({"_id": oid(office_id)})
+    if not u or u.get("role") != "office":
+        raise HTTPException(404, "المؤسسة غير موجودة")
+    changes = {k: v.strip() if isinstance(v, str) else v
+               for k, v in payload.model_dump(exclude={"reason"}).items() if v is not None}
+    if not changes:
+        raise HTTPException(400, "لا يوجد تغيير")
+    before = {k: u.get(k) for k in changes}
+    await db.users.update_one({"_id": oid(office_id)}, {"$set": {
+        **changes, "updated_by": admin.get("email"), "updated_at": now_iso()}})
+    if "office_name" in changes:
+        await db.offices.update_one({"user_id": office_id},
+                                    {"$set": {"office_name": changes["office_name"]}})
+    await db.audit_log.insert_one({
+        "entity": "org", "entity_id": office_id, "action": "org_updated",
+        "actor": admin.get("email"), "actor_id": str(admin["_id"]),
+        "reason": payload.reason.strip(), "before": before, "after": changes, "at": now_iso()})
+    return {"ok": True, "changes": changes}
+
+
+class BranchEditIn(BaseModel):
+    name: Optional[str] = None
+    city: Optional[str] = None
+    phone: Optional[str] = None
+    manager: Optional[str] = None
+    reason: str = Field(min_length=3)
+
+
+@router.patch("/admin/branches/{branch_id}")
+async def edit_branch(branch_id: str, payload: BranchEditIn,
+                      admin: dict = Depends(require_admin)):
+    b = await db.office_branches.find_one({"_id": oid(branch_id)})
+    if not b:
+        raise HTTPException(404, "الفرع غير موجود")
+    changes = {k: v for k, v in payload.model_dump(exclude={"reason"}).items() if v is not None}
+    if not changes:
+        raise HTTPException(400, "لا يوجد تغيير")
+    await db.office_branches.update_one({"_id": oid(branch_id)}, {"$set": {
+        **changes, "updated_by": admin.get("email"), "updated_at": now_iso()}})
+    await db.audit_log.insert_one({
+        "entity": "branch", "entity_id": branch_id, "action": "branch_updated",
+        "actor": admin.get("email"), "reason": payload.reason.strip(),
+        "before": {k: b.get(k) for k in changes}, "after": changes, "at": now_iso()})
+    return {"ok": True, "changes": changes}
+
+
+class StaffEditIn(BaseModel):
+    name: Optional[str] = None
+    job_title: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    branch_id: Optional[str] = None
+    roles: Optional[list] = None
+    reason: str = Field(min_length=3)
+
+
+@router.patch("/admin/staff/{staff_id}")
+async def edit_staff(staff_id: str, payload: StaffEditIn, admin: dict = Depends(require_admin)):
+    """Edits a staff member and, when `roles` is provided, re-assigns the enterprise roles
+    of their linked login account through the same RBAC assignment record."""
+    s = await db.office_staff.find_one({"_id": oid(staff_id)})
+    if not s:
+        raise HTTPException(404, "الموظف غير موجود")
+    data = payload.model_dump(exclude={"reason"})
+    roles = data.pop("roles", None)
+    changes = {k: v for k, v in data.items() if v is not None}
+    if changes:
+        await db.office_staff.update_one({"_id": oid(staff_id)}, {"$set": {
+            **changes, "updated_by": admin.get("email"), "updated_at": now_iso()}})
+    if roles is not None:
+        from rbac import ROLES
+        bad = [r for r in roles if r not in ROLES]
+        if bad:
+            raise HTTPException(400, f"أدوار غير معروفة: {bad}")
+        await db.office_staff.update_one({"_id": oid(staff_id)}, {"$set": {"roles": roles}})
+        if s.get("linked_user_id"):
+            await db.user_roles.update_one({"user_id": s["linked_user_id"]}, {"$set": {
+                "roles": roles, "office_id": s.get("office_id"),
+                "branch_id": changes.get("branch_id", s.get("branch_id")),
+                "updated_by": admin.get("email"), "updated_at": now_iso()}}, upsert=True)
+        changes["roles"] = roles
+    if not changes:
+        raise HTTPException(400, "لا يوجد تغيير")
+    await db.audit_log.insert_one({
+        "entity": "staff", "entity_id": staff_id, "action": "staff_updated",
+        "actor": admin.get("email"), "reason": payload.reason.strip(),
+        "before": {k: s.get(k) for k in changes}, "after": changes, "at": now_iso()})
+    return {"ok": True, "changes": changes}
+
+
 @router.get("/notifications")
 async def my_notifications(unread_only: bool = False, limit: int = 50,
                            user: dict = Depends(get_current_user)):
