@@ -384,3 +384,30 @@ opening-entry run (dry-run verified).
   refactor; staff are management records today).
 - PDF export is produced from the print view (Arabic RTL correct) instead of server-side PDF.
 - Scanner: PoC contract + UI + docs ready; the Windows service itself needs a machine with a scanner.
+
+---
+
+## يونيو 2026 — حارس نشر GitHub + إعادة تشغيل الاختبار الكامل
+
+### تم تنفيذه
+- `.github/workflows/meraaj-test-deploy.yml`: حُذف `push: branches-ignore: [main]` و حُذف `workflow_dispatch` نهائيًا.
+  المُشغّل الوحيد: `push` على `main`. حرس مزدوج: `if: github.event_name == 'push' && github.ref == 'refs/heads/main'`
+  + خطوة "Guard" أولى تفشل فورًا قبل أي بناء/SCP/SSH. النتيجة: لا نشر من `feature/*` ولا من PR ولا يدويًا — فقط بعد Merge فعلي إلى main.
+- ملف جديد `.github/workflows/pr-checks.yml`: على `pull_request` نحو `main` فقط — بناء صور Backend/Frontend + `compileall` للباك اند. لا SSH/SCP/نشر.
+- `promote-meraaj-live.yml` كما هو: يدوي فقط بتأكيد `PROMOTE` + حرس main. لا نشر تلقائي إلى Live. عزل Test/Live لم يُمس.
+
+### نتيجة الاختبار النهائية بعد آخر إصلاح
+- مجموعات Enterprise الأربع (`test_admin_enterprise_b1/b2/b345/final`) تسلسليًا: **293 passed / 0 failed** (exit 0، 154s).
+- معروف ومقصود التوثيق (لم يُصلح بطلب المستخدم "keep implementation unchanged"):
+  1. `pytest.ini` يفرض `-n 2 --dist loadscope` → 7 فشل زائف في `b345` لأن fixture module-scope تُنشأ على عاملين (sold_seats=0 / KeyError booking_id). تسلسليًا `-n 0` = 157/157.
+  2. مجموعات قديمة سابقة للعملة المزدوجة (`test_b2c_individual`, `test_b2c_money_safety`, `test_edge_cases`, `test_escrow_conservation`, `test_fix_verification`) = 29 فشل + 1 خطأ، سببها توقّع شكل محفظة قديم `{"available":..}` بدل `{"SAR":{...},"USD":{...}}`. توقعات متقادمة لا انحدار وظيفي. `test_rahal_v2_adapter`: خطأ `no current event loop` في fixture قديم.
+
+### الحالة
+- الخيار (أ) معتمد من المستخدم: لا دفع إلى GitHub، لا Merge، لا نشر، لا Promote، لا Release B. انتظار المراجعة اليدوية في Emergent View.
+
+### Backlog محدَّث
+- P1: تحديث الاختبارات القديمة لشكل المحفظة المزدوجة + إصلاح اعتماد الـ fixture ليعمل المتوازي (بانتظار إذن المستخدم).
+- P1: تطبيق نفس حارس النشر على مستودع «رحّال» (مستودع مستقل — مؤجَّل بطلب المستخدم).
+- P1: Release B (تخزين S3 والمرفقات) — مؤجَّل.
+- P2: تنفيذ إنتاجي لجسر الماسح على Windows، Capacitor Android Phase 2+.
+
