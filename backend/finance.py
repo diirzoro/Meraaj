@@ -58,6 +58,80 @@ def _ledger_filter(office_id, currency, txn_type, date_from, date_to, q):
     return f
 
 
+def booking_financials(b: dict, txns: list) -> dict:
+    """READ-ONLY breakdown for display/audit. It only READS the booking fields and the
+    already-posted transactions — it never recalculates, settles or changes any amount."""
+    cur = b.get("currency") or "USD"
+    gross = round(float(b.get("amount_charged") or 0), 2)
+    seller_net = round(float(b.get("net_cost_total") or 0), 2)
+    platform_fee = round(float(b.get("platform_fee") or 0), 2)
+    marketer = round(float(b.get("marketer_commission") or 0), 2)
+
+    def total(*types):
+        return round(sum(abs(float(t.get("amount") or 0)) for t in txns
+                         if t.get("type") in types), 2)
+
+    paid = total("booking_debit")
+    escrow_in = total("booking_escrow")
+    released = total("hold_release", "dispute_release")
+    refunded = total("cancel_refund", "dispute_refund")
+    seller_deduction = total("cancel_deduction", "seller_compensation")
+    pending = round(max(escrow_in - released - refunded, 0), 2)
+    due_from_buyer = round(max(gross - paid, 0), 2)
+    due_to_seller = round(max(seller_net - released - seller_deduction, 0), 2)
+    platform_net = round(float(b.get("platform_profit") if b.get("platform_profit") is not None
+                               else platform_fee - marketer), 2)
+    return {
+        "currency": cur,
+        "status": b.get("status"),
+        "settled": bool(b.get("settled")),
+        "gross": gross,
+        "paid": paid,                       # المدفوع فعلياً من المشتري
+        "pending": pending,                 # المعلّق في الضمان
+        "released": released,               # المحرر للبائع
+        "refunded": refunded,               # المسترد للمشتري
+        "due_from_buyer": due_from_buyer,   # المستحق على المشتري
+        "due_to_seller": due_to_seller,     # المستحق للبائع
+        "platform_commission": platform_fee,
+        "platform_net": platform_net,
+        "transferred": released,            # المبلغ المحوّل للبائع فعلياً
+        "remaining": pending,               # المتبقي في الضمان
+        "seller_net": seller_net,
+        "buyer_commission": round(float(b.get("buyer_commission_total") or 0), 2),
+        "marketer_commission": marketer,
+        "seller_deduction": seller_deduction,
+        "debit_split": b.get("debit_split") or {},
+        "movements": len(txns),
+        "note": "أرقام للعرض والتدقيق فقط — مشتقّة من الحركات المسجّلة دون أي إعادة حساب.",
+    }
+
+
+@router.get("/bookings/{booking_id}/financials")
+async def booking_financials_endpoint(booking_id: str, admin: dict = Depends(require_admin)):
+    """Read-only financial statement of one order: the ten headline figures plus the full
+    movement history that produced them."""
+    b = await db.bookings.find_one({"_id": oid(booking_id)})
+    if not b:
+        raise HTTPException(404, "الحجز غير موجود")
+    txns = await db.transactions.find({"ref": booking_id}).sort("created_at", 1).to_list(300)
+    parties = {}
+    for pid, label in (("buyer_id", "buyer"), ("seller_id", "seller")):
+        if b.get(pid):
+            u = await db.users.find_one({"_id": oid(b[pid])}, {"office_name": 1, "email": 1})
+            parties[label] = {"id": b[pid], "name": (u or {}).get("office_name"),
+                              "email": (u or {}).get("email")}
+    rows = []
+    for t in txns:
+        d = serialize(t)
+        d["direction"] = "in" if float(t.get("amount") or 0) >= 0 else "out"
+        d["party"] = ("buyer" if t.get("office_id") == b.get("buyer_id")
+                      else "seller" if t.get("office_id") == b.get("seller_id") else "other")
+        rows.append(d)
+    return {"booking_id": booking_id, "package_title": b.get("package_title"),
+            "parties": parties, "financials": booking_financials(b, txns),
+            "movements": rows}
+
+
 @router.get("/ledger")
 async def ledger(office_id: Optional[str] = None, currency: Optional[str] = None,
                  txn_type: Optional[str] = None, date_from: Optional[str] = None,

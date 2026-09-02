@@ -11,6 +11,7 @@ from bson.errors import InvalidId
 
 from db import db, serialize, oid, now_iso, audit
 from security import require_admin
+from finance import booking_financials
 
 router = APIRouter(prefix="/api/admin", tags=["admin-orders"])
 
@@ -210,15 +211,9 @@ async def admin_booking_full(booking_id: str, admin: dict = Depends(require_admi
         "timeline": serialize(events), "notes": serialize(notes),
         "tasks": serialize(tasks), "transactions": serialize(txns),
         "financials": {
-            "currency": b.get("currency"),
-            "gross": round(float(b.get("amount_charged") or 0), 2),
-            "seller_net": round(float(b.get("net_cost_total") or 0), 2),
-            "buyer_commission": round(float(b.get("buyer_commission_total") or 0), 2),
+            **booking_financials(b, txns),
             "platform_fee": round(float(b.get("platform_fee") or 0), 2),
             "platform_profit": round(float(b.get("platform_profit") or 0), 2),
-            "marketer_commission": round(float(b.get("marketer_commission") or 0), 2),
-            "debit_split": b.get("debit_split") or {},
-            "settled": bool(b.get("settled")),
         },
     }
 

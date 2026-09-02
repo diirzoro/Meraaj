@@ -89,24 +89,42 @@ export default function AdminOrderDetail() {
         <div className="lg:col-span-2 space-y-5">
           {/* Financials */}
           <Card title="التفصيل المالي والعمولات" icon={FileText} tid="order-financials">
+            <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-2 mb-3" data-testid="order-money-grid">
+              <M label="المدفوع" v={money(f.paid, c)} tone="in" tid="fin-paid" />
+              <M label="المعلّق (ضمان)" v={money(f.pending, c)} tone="hold" tid="fin-pending" />
+              <M label="المحرر للبائع" v={money(f.released, c)} tone="in" tid="fin-released" />
+              <M label="المسترد للمشتري" v={money(f.refunded, c)} tone="out" tid="fin-refunded" />
+              <M label="المستحق على المشتري" v={money(f.due_from_buyer, c)} tone={f.due_from_buyer > 0 ? "out" : "flat"} tid="fin-due-buyer" />
+              <M label="المستحق للبائع" v={money(f.due_to_seller, c)} tone={f.due_to_seller > 0 ? "hold" : "flat"} tid="fin-due-seller" />
+              <M label="عمولة المنصة" v={money(f.platform_commission, c)} tone="flat" tid="fin-commission" />
+              <M label="صافي المنصة" v={money(f.platform_net, c)} tone="in" tid="fin-net" />
+              <M label="المبلغ المحوّل" v={money(f.transferred, c)} tone="in" tid="fin-transferred" />
+              <M label="المتبقي" v={money(f.remaining, c)} tone="hold" tid="fin-remaining" />
+            </div>
+            <div className="text-[10px] text-muted-foreground mb-3" data-testid="fin-note">
+              {f.note} • العملة: <b>{c}</b> • حالة الطلب: <b>{f.status}</b> • التسوية: <b>{f.settled ? "تمّت" : "لم تتم"}</b>
+              {f.seller_deduction > 0 ? ` • خصم على البائع: ${money(f.seller_deduction, c)}` : ""}
+            </div>
             <div className="grid sm:grid-cols-3 gap-3">
-              <F label="المبلغ المدفوع (إجمالي)" v={money(f.gross, c)} big />
+              <F label="إجمالي المحمَّل على المشتري" v={money(f.gross, c)} big />
               <F label="صافي البائع" v={money(f.seller_net, c)} />
               <F label="عمولة المشتري" v={money(f.buyer_commission, c)} />
-              <F label="عمولة المنصة" v={money(f.platform_fee, c)} />
-              <F label="أرباح المنصة" v={money(f.platform_profit, c)} />
               <F label="عمولة المسوّق" v={money(f.marketer_commission, c)} />
               <F label="نوع الغرفة" v={b.room_type || "—"} />
-              <F label="تمت التسوية" v={f.settled ? "نعم" : "لا"} />
               <F label="تسليم رحّال" v={b.delivery_status || "—"} />
             </div>
             {d.transactions.length > 0 && (
               <div className="mt-4 border-t pt-3">
-                <div className="text-xs font-semibold text-[#0A2540] mb-2">الحركات المالية المرتبطة</div>
-                <div className="space-y-1.5">
+                <div className="text-xs font-semibold text-[#0A2540] mb-2">
+                  سجل الحركات المالية الكامل للطلب ({d.transactions.length})
+                </div>
+                <div className="space-y-1.5" data-testid="order-movements">
                   {d.transactions.map((t) => (
-                    <div key={t.id} className="flex items-center justify-between text-[11px] bg-[#F4F6F8] rounded-lg px-3 py-1.5">
-                      <span>{t.description}</span>
+                    <div key={t.id} className="flex flex-wrap items-center justify-between gap-2 text-[11px] bg-[#F4F6F8] rounded-lg px-3 py-1.5"
+                      data-testid={`movement-${t.id}`}>
+                      <span className="font-semibold text-[#0A2540]">{TXN_AR[t.type] || t.type}</span>
+                      <span className="text-muted-foreground flex-1 min-w-[120px]">{t.description}</span>
+                      <span className="text-[10px] text-muted-foreground">{fmtDate(t.created_at)}</span>
                       <span className={`tabular font-bold ${Number(t.amount) < 0 ? "text-[#B91C1C]" : "text-[#15803D]"}`}>
                         {money(t.amount, t.currency)}
                       </span>
@@ -308,6 +326,29 @@ export default function AdminOrderDetail() {
     </div>
   );
 }
+
+const TXN_AR = {
+  topup: "إيداع", booking_debit: "خصم حجز", booking_escrow: "حجز في الضمان",
+  hold_release: "تحرير من الضمان", dispute_release: "تحرير بعد نزاع",
+  cancel_refund: "استرداد إلغاء", dispute_refund: "استرداد نزاع",
+  cancel_deduction: "خصم إلغاء", seller_compensation: "تعويض البائع",
+  marketer_commission: "عمولة مسوّق", marketer_commission_reversal: "عكس عمولة مسوّق",
+  commission_adjustment: "تعديل عمولة", withdrawal: "سحب",
+  p2p_out: "تحويل صادر", p2p_in: "تحويل وارد", opening_balance: "قيد افتتاحي",
+};
+
+const M = ({ label, v, tone, tid }) => {
+  const cls = tone === "in" ? "bg-[#F0FDF4] border-[#BBF7D0] text-[#15803D]"
+    : tone === "out" ? "bg-[#FEF2F2] border-[#FECACA] text-[#B91C1C]"
+      : tone === "hold" ? "bg-[#FEFCE8] border-[#FEF08A] text-[#A16207]"
+        : "bg-[#F4F6F8] border-[#E5E7EB] text-[#0A2540]";
+  return (
+    <div className={`rounded-xl border px-3 py-2 ${cls}`} data-testid={tid}>
+      <div className="text-[10px] opacity-80">{label}</div>
+      <div className="tabular text-sm font-bold">{v}</div>
+    </div>
+  );
+};
 
 const Card = ({ title, icon: Icon, children, tid }) => (
   <div className="bg-white rounded-2xl border card-shadow p-5" data-testid={tid}>

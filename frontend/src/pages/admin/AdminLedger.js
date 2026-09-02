@@ -12,6 +12,7 @@ export default function AdminLedger() {
   const [d, setD] = useState({ items: [], total: 0, inflow: {}, outflow: {}, net: {}, types: {} });
   const [recon, setRecon] = useState(null);
   const [prev, setPrev] = useState(null);
+  const [stmt, setStmt] = useState(null);
   const [voucher, setVoucher] = useState(null);
   const [voucherId, setVoucherId] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -121,11 +122,20 @@ export default function AdminLedger() {
                     <td className={`px-3 py-2.5 tabular font-bold ${Number(t.amount) < 0 ? "text-[#B91C1C]" : "text-[#15803D]"}`}>
                       {money(t.amount, t.currency)}
                     </td>
-                    <td className="px-3 py-2.5">
+                    <td className="px-3 py-2.5 whitespace-nowrap">
                       <button data-testid={`voucher-${t.id}`} className="text-[#0A2540] underline inline-flex items-center gap-1"
                         onClick={async () => { const r = await api.get(`/admin/vouchers/${t.id}`); setVoucher(r.data); setVoucherId(t.id); }}>
                         <FileText className="w-3 h-3" /> سند
                       </button>
+                      {t.ref && (
+                        <button data-testid={`statement-${t.id}`} className="mr-2 text-[#0A2540] underline"
+                          onClick={async () => {
+                            try {
+                              const r = await api.get(`/admin/bookings/${t.ref}/financials`);
+                              setStmt(r.data);
+                            } catch (e) { toast.error(apiError(e)); }
+                          }}>البيان المالي</button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -222,6 +232,54 @@ export default function AdminLedger() {
         </DialogContent>
       </Dialog>
 
+      {/* Per-order financial statement (read-only) */}
+      <Dialog open={!!stmt} onOpenChange={(o) => !o && setStmt(null)}>
+        <DialogContent dir="rtl" className="max-w-3xl max-h-[85vh] overflow-y-auto" data-testid="statement-dialog">
+          <DialogHeader><DialogTitle>البيان المالي للطلب — {stmt?.package_title}</DialogTitle></DialogHeader>
+          {stmt && (
+            <div className="space-y-3">
+              <div className="text-[11px] bg-[#F4F6F8] rounded-lg px-3 py-2" data-testid="stmt-parties">
+                المشتري: <b>{stmt.parties?.buyer?.name || "—"}</b> • البائع: <b>{stmt.parties?.seller?.name || "—"}</b> •
+                العملة: <b>{stmt.financials.currency}</b> • الحالة: <b>{stmt.financials.status}</b> •
+                التسوية: <b>{stmt.financials.settled ? "تمّت" : "لم تتم"}</b>
+              </div>
+              <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-2" data-testid="stmt-grid">
+                <SM label="المدفوع" v={money(stmt.financials.paid, stmt.financials.currency)} tone="in" tid="stmt-paid" />
+                <SM label="المعلّق (ضمان)" v={money(stmt.financials.pending, stmt.financials.currency)} tone="hold" tid="stmt-pending" />
+                <SM label="المحرر" v={money(stmt.financials.released, stmt.financials.currency)} tone="in" tid="stmt-released" />
+                <SM label="المسترد" v={money(stmt.financials.refunded, stmt.financials.currency)} tone="out" tid="stmt-refunded" />
+                <SM label="المستحق على المشتري" v={money(stmt.financials.due_from_buyer, stmt.financials.currency)} tone="out" tid="stmt-due-buyer" />
+                <SM label="المستحق للبائع" v={money(stmt.financials.due_to_seller, stmt.financials.currency)} tone="hold" tid="stmt-due-seller" />
+                <SM label="عمولة المنصة" v={money(stmt.financials.platform_commission, stmt.financials.currency)} tid="stmt-commission" />
+                <SM label="صافي المنصة" v={money(stmt.financials.platform_net, stmt.financials.currency)} tone="in" tid="stmt-net" />
+                <SM label="المبلغ المحوّل" v={money(stmt.financials.transferred, stmt.financials.currency)} tone="in" tid="stmt-transferred" />
+                <SM label="المتبقي" v={money(stmt.financials.remaining, stmt.financials.currency)} tone="hold" tid="stmt-remaining" />
+              </div>
+              <div className="text-[10px] text-muted-foreground">{stmt.financials.note}</div>
+              <div className="border-t pt-3">
+                <div className="text-xs font-semibold text-[#0A2540] mb-2">سجل الحركات المالية الكامل ({stmt.movements.length})</div>
+                <div className="space-y-1.5" data-testid="stmt-movements">
+                  {stmt.movements.map((m) => (
+                    <div key={m.id} className="flex flex-wrap items-center gap-2 text-[11px] bg-[#F4F6F8] rounded-lg px-3 py-1.5"
+                      data-testid={`stmt-movement-${m.id}`}>
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-white border">
+                        {m.party === "buyer" ? "المشتري" : m.party === "seller" ? "البائع" : "أخرى"}
+                      </span>
+                      <span className="font-semibold text-[#0A2540]">{m.type}</span>
+                      <span className="text-muted-foreground flex-1 min-w-[120px]">{m.description}</span>
+                      <span className="text-[10px] text-muted-foreground">{fmtDate(m.created_at)}</span>
+                      <span className={`tabular font-bold ${Number(m.amount) < 0 ? "text-[#B91C1C]" : "text-[#15803D]"}`}>
+                        {money(m.amount, m.currency)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Voucher */}
       <Dialog open={!!voucher} onOpenChange={(o) => !o && setVoucher(null)}>
         <DialogContent dir="rtl" className="max-w-md" data-testid="voucher-dialog">
@@ -252,6 +310,19 @@ export default function AdminLedger() {
     </>
   );
 }
+
+const SM = ({ label, v, tone, tid }) => {
+  const cls = tone === "in" ? "bg-[#F0FDF4] border-[#BBF7D0] text-[#15803D]"
+    : tone === "out" ? "bg-[#FEF2F2] border-[#FECACA] text-[#B91C1C]"
+      : tone === "hold" ? "bg-[#FEFCE8] border-[#FEF08A] text-[#A16207]"
+        : "bg-[#F4F6F8] border-[#E5E7EB] text-[#0A2540]";
+  return (
+    <div className={`rounded-xl border px-3 py-2 ${cls}`} data-testid={tid}>
+      <div className="text-[10px] opacity-80">{label}</div>
+      <div className="tabular text-sm font-bold">{v}</div>
+    </div>
+  );
+};
 
 const Box = ({ label, v, accent, danger }) => (
   <div className="bg-[#F4F6F8] rounded-lg px-3 py-2">
