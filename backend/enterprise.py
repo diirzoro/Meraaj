@@ -2,12 +2,15 @@
 and encrypted database backup/restore. All additive.
 """
 import csv
+import hashlib
 import io
+import tempfile
+import uuid
 import os
 import subprocess
 from datetime import datetime, timezone
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -17,7 +20,7 @@ from security import require_admin
 router = APIRouter(prefix="/api/admin", tags=["admin-enterprise"])
 
 CCY = ("SAR", "USD")
-BACKUP_DIR = "/app/backups"
+BACKUP_DIR = os.environ.get("BACKUP_DIR", "/app/backups")
 RETENTION = 7
 
 REPORTS = {
@@ -495,6 +498,7 @@ async def list_backups(admin: dict = Depends(require_admin)):
                 "source": ".emergent/crons.yml"}
     return {"items": docs, "retention": RETENTION,
             "encrypted": bool(_passphrase()),
+            "cloud": _cloud_config(),
             "encryption": {"enabled": bool(_passphrase()),
                            "algorithm": "AES-256-CBC + PBKDF2 (openssl)",
                            "passphrase_source": "BACKUP_PASSPHRASE"},
@@ -507,18 +511,29 @@ async def list_backups(admin: dict = Depends(require_admin)):
             "restore_guards": ["ALLOW_RESTORE=true", "عبارة تأكيد حرفية: أؤكد الاستعادة",
                                "سبب إلزامي", "رفض قاطع على بيئة Live"],
             "environment": os.environ.get("ENVIRONMENT", "unknown"),
-            "files_on_disk": files, "drills": drills,
+            "files_on_disk": files,
+            "files_imported": [{"file": r["file"], "size": r.get("size", 0)}
+                               for r in docs if r.get("storage") == "gridfs"],
+            "drills": drills,
             "dir": BACKUP_DIR}
 
 
 class BackupIn(BaseModel):
     reason: str = Field(min_length=3)
+    destination: str = "server"   # server | download | cloud | server_and_download
 
 
 @router.post("/backups/run")
 async def run_backup(payload: BackupIn, admin: dict = Depends(require_admin)):
     """Database-only backup (mongodump archive + gzip), encrypted with BACKUP_PASSPHRASE
-    when configured. Keeps the newest RETENTION files."""
+    when configured. Keeps the newest RETENTION files.
+    The chosen destination is recorded; `download`/`server_and_download` return a
+    `download_url` the authorized user fetches through the browser (any computer/folder)."""
+    dest = payload.destination
+    if dest not in ("server", "download", "cloud", "server_and_download"):
+        raise HTTPException(400, "وجهة غير مدعومة")
+    if dest == "cloud" and not _cloud_config()["configured"]:
+        raise HTTPException(400, _cloud_config()["note"])
     os.makedirs(BACKUP_DIR, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     dbname = os.environ["DB_NAME"]
@@ -540,19 +555,27 @@ async def run_backup(payload: BackupIn, admin: dict = Depends(require_admin)):
                 os.remove(raw_path)
                 final_path, encrypted = enc_path, True
         size = os.path.getsize(final_path)
+        check = _inspect(final_path)
         rec = {"file": os.path.basename(final_path), "path": final_path, "size": size,
                "encrypted": encrypted, "result": "success", "error": None,
+               "source": "manual", "destination": dest,
+               "integrity": "valid" if check["ok"] else "invalid",
+               "sha256": check.get("sha256"),
                "by": admin.get("email"), "reason": payload.reason.strip(), "at": now_iso()}
     except Exception as e:
         rec = {"file": None, "path": None, "size": 0, "encrypted": False, "result": "failed",
-               "error": str(e)[:300], "by": admin.get("email"),
+               "error": str(e)[:300], "source": "manual", "destination": dest,
+               "integrity": None, "by": admin.get("email"),
                "reason": payload.reason.strip(), "at": now_iso()}
     res = await db.backups.insert_one(rec)
     rec["_id"] = res.inserted_id
     await db.audit_log.insert_one({"entity": "backup", "entity_id": str(res.inserted_id),
                                    "action": "backup_run", "actor": admin.get("email"),
                                    "reason": payload.reason.strip(),
-                                   "after": {"result": rec["result"], "file": rec["file"]},
+                                   "after": {"result": rec["result"], "file": rec["file"],
+                                             "destination": dest,
+                                             "integrity": rec.get("integrity"),
+                                             "encrypted": rec.get("encrypted")},
                                    "at": now_iso()})
     # retention
     files = sorted([f for f in os.listdir(BACKUP_DIR) if f.startswith("meraaj-")], reverse=True)
@@ -564,7 +587,247 @@ async def run_backup(payload: BackupIn, admin: dict = Depends(require_admin)):
             pass
     if rec["result"] == "failed":
         raise HTTPException(500, f"فشل النسخ الاحتياطي: {rec['error']}")
-    return serialize(rec)
+    out = serialize(rec)
+    out["destination_label"] = {
+        "server": "حُفظت على سيرفر التطبيق",
+        "download": "جاهزة للتنزيل إلى جهاز المستخدم",
+        "cloud": "أُرسلت إلى التخزين السحابي المُهيَّأ",
+        "server_and_download": "حُفظت على السيرفر وجاهزة للتنزيل",
+    }[dest]
+    if dest in ("download", "server_and_download"):
+        out["download_url"] = f"/admin/backups/{rec['file']}/download"
+    return out
+
+
+def _cloud_config() -> dict:
+    """Object-storage destination configuration. Nothing is implemented against a provider
+    here — the destination is only offered once credentials are configured (Release B)."""
+    provider = os.environ.get("BACKUP_CLOUD_PROVIDER", "").strip()
+    bucket = os.environ.get("BACKUP_CLOUD_BUCKET", "").strip()
+    key = os.environ.get("BACKUP_CLOUD_ACCESS_KEY", "").strip()
+    configured = bool(provider and bucket and key)
+    return {"configured": configured, "provider": provider or None, "bucket": bucket or None,
+            "required_env": ["BACKUP_CLOUD_PROVIDER", "BACKUP_CLOUD_BUCKET",
+                             "BACKUP_CLOUD_ACCESS_KEY", "BACKUP_CLOUD_SECRET_KEY",
+                             "BACKUP_CLOUD_REGION"],
+            "note": ("التخزين السحابي غير مُهيَّأ — أضيفوا مفاتيح التخزين في متغيّرات البيئة "
+                     "ليصبح هذا الخيار متاحًا. لم يُفعَّل أي مزوّد تلقائيًا.")}
+
+
+def _sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _inspect(path: str) -> dict:
+    """Encryption + integrity check WITHOUT restoring anything: decrypts to a temp file when
+    encrypted, then confirms the payload is a real gzip mongodump archive."""
+    encrypted = path.endswith(".enc")
+    tmp = f"{BACKUP_DIR}/.inspect.tmp"
+    try:
+        if encrypted:
+            pw = _passphrase()
+            if not pw:
+                return {"ok": False, "encrypted": True, "reason": "لا يوجد BACKUP_PASSPHRASE"}
+            d = subprocess.run(["openssl", "enc", "-d", "-aes-256-cbc", "-pbkdf2",
+                                "-in", path, "-out", tmp, "-pass", f"pass:{pw}"],
+                               capture_output=True, timeout=600)
+            if d.returncode != 0:
+                return {"ok": False, "encrypted": True,
+                        "reason": "فشل فك التشفير — الملف تالف أو مفتاح مختلف"}
+            probe = tmp
+        else:
+            probe = path
+        with open(probe, "rb") as fh:
+            magic = fh.read(2)
+        gz = magic == b"\x1f\x8b"
+        return {"ok": gz, "encrypted": encrypted, "gzip_archive": gz,
+                "size": os.path.getsize(path), "sha256": _sha256(path),
+                "reason": None if gz else "المحتوى ليس أرشيف mongodump مضغوطاً"}
+    except Exception as e:
+        return {"ok": False, "encrypted": encrypted, "reason": str(e)[:200]}
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+@router.get("/backups/storage")
+async def storage_options(admin: dict = Depends(require_admin)):
+    """Destinations offered when creating a backup. Shown BEFORE confirmation."""
+    cloud = _cloud_config()
+    return {"destinations": [
+        {"key": "download", "ar": "تنزيل إلى جهاز المستخدم المصرَّح له",
+         "available": True,
+         "note": ("يُنشأ الملف المشفّر ثم يُنزَّل عبر المتصفح، ويختار المستخدم المجلد أو "
+                  "القرص أو الوسائط الخارجية من نافذة التنزيل. لا يُكتب أي ملف على جهاز "
+                  "المستخدم بدون إجراء تنزيل صريح، ولا يقتصر التنزيل على جهاز الإدارة.")},
+        {"key": "server", "ar": "حفظ على سيرفر التطبيق", "available": True,
+         "note": f"يُحفظ في {BACKUP_DIR} على السيرفر نفسه ويخضع لسياسة الاحتفاظ."},
+        {"key": "cloud", "ar": "حفظ في التخزين السحابي المُهيَّأ",
+         "available": cloud["configured"], "note": cloud["note"]},
+        {"key": "server_and_download", "ar": "حفظ على السيرفر + تنزيل نسخة",
+         "available": True, "note": "الوجهتان معًا في عملية واحدة."},
+    ], "cloud": cloud, "encrypted": bool(_passphrase()), "retention": RETENTION,
+        "environment": os.environ.get("ENVIRONMENT", "unknown")}
+
+
+async def _materialize(filename: str) -> Optional[str]:
+    """Returns a readable local path for a backup file: the server copy when it exists,
+    otherwise a temporary copy pulled out of GridFS (caller deletes it)."""
+    safe = os.path.basename(filename)
+    disk = f"{BACKUP_DIR}/{safe}"
+    if os.path.exists(disk):
+        return disk
+    rec = await db.backups.find_one({"file": safe, "storage": "gridfs"})
+    if not rec:
+        return None
+    tmp = f"{tempfile.gettempdir()}/{uuid.uuid4().hex}-{safe}"
+    with open(tmp, "wb") as out:
+        await _gridfs().download_to_stream(oid(rec["gridfs_id"]), out)
+    return tmp
+
+
+@router.get("/backups/{filename}/download")
+async def download_backup(filename: str, admin: dict = Depends(require_admin)):
+    """Streams the ENCRYPTED archive to the authorized user's browser so they can store it
+    on any computer, folder or external drive through the normal download dialog."""
+    safe = os.path.basename(filename)
+    if not safe.startswith("meraaj-"):
+        raise HTTPException(404, "ملف النسخة غير موجود")
+    disk = f"{BACKUP_DIR}/{safe}"
+    on_disk = os.path.exists(disk)
+    rec = await db.backups.find_one({"file": safe})
+    if not on_disk and not (rec and rec.get("storage") == "gridfs"):
+        raise HTTPException(404, "ملف النسخة غير موجود")
+    size = os.path.getsize(disk) if on_disk else int(rec.get("size") or 0)
+    await db.backups.update_many({"file": safe}, {"$set": {
+        "last_downloaded_by": admin.get("email"), "last_downloaded_at": now_iso()}})
+    await db.audit_log.insert_one({
+        "entity": "backup", "entity_id": safe, "action": "backup_downloaded",
+        "actor": admin.get("email"), "actor_id": str(admin["_id"]),
+        "after": {"file": safe, "size": size, "destination": "download",
+                  "source_storage": "server" if on_disk else "gridfs",
+                  "encrypted": safe.endswith(".enc")}, "at": now_iso()})
+
+    async def stream_gridfs():
+        gout = await _gridfs().open_download_stream(oid(rec["gridfs_id"]))
+        while True:
+            chunk = await gout.readchunk()
+            if not chunk:
+                break
+            yield chunk
+
+    def stream_disk():
+        with open(disk, "rb") as fh:
+            while True:
+                chunk = fh.read(1024 * 512)
+                if not chunk:
+                    break
+                yield chunk
+
+    return StreamingResponse(stream_disk() if on_disk else stream_gridfs(),
+                             media_type="application/octet-stream", headers={
+                                 "Content-Disposition": f'attachment; filename="{safe}"',
+                                 "Content-Length": str(size)})
+
+
+def _gridfs():
+    """Durable storage for IMPORTED backup archives: kept in MongoDB GridFS instead of the
+    app pod's disk, so an uploaded file survives redeploys and stays retrievable."""
+    from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+    return AsyncIOMotorGridFSBucket(db, bucket_name="backup_files")
+
+
+@router.post("/backups/upload")
+async def upload_backup(file: UploadFile = File(...), reason: str = Form(...),
+                        admin: dict = Depends(require_admin)):
+    """Imports an encrypted backup file. The file is validated (encryption + integrity)
+    BEFORE it is accepted; a file that fails validation is discarded and never stored.
+    Accepted files are stored in GridFS (not on the pod disk)."""
+    if len(reason.strip()) < 3:
+        raise HTTPException(422, "السبب إلزامي")
+    name = os.path.basename(file.filename or "")
+    if not (name.endswith(".archive.gz") or name.endswith(".archive.gz.enc")):
+        raise HTTPException(400, "امتداد غير مدعوم — المسموح .archive.gz أو .archive.gz.enc")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    stored = name if name.startswith("meraaj-") else f"meraaj-uploaded-{stamp}-{name}"
+    scratch = f"{tempfile.gettempdir()}/{uuid.uuid4().hex}"
+    size = 0
+    try:
+        with open(scratch, "wb") as out:
+            while True:
+                chunk = await file.read(1024 * 512)
+                if not chunk:
+                    break
+                size += len(chunk)
+                out.write(chunk)
+        check = _inspect(scratch)
+        if not check["ok"]:
+            await db.audit_log.insert_one({
+                "entity": "backup", "entity_id": stored, "action": "backup_upload_rejected",
+                "actor": admin.get("email"), "reason": reason.strip(),
+                "after": {"error": check["reason"]}, "at": now_iso()})
+            raise HTTPException(400, f"الملف مرفوض — {check['reason']}")
+        with open(scratch, "rb") as fh:
+            gid = await _gridfs().upload_from_stream(stored, fh, metadata={
+                "by": admin.get("email"), "at": now_iso(), "sha256": check["sha256"]})
+    finally:
+        try:
+            os.remove(scratch)
+        except OSError:
+            pass
+    rec = {"file": stored, "path": None, "gridfs_id": str(gid), "storage": "gridfs",
+           "size": size, "encrypted": check["encrypted"],
+           "result": "success", "error": None, "source": "uploaded", "destination": "gridfs",
+           "integrity": "valid", "sha256": check["sha256"],
+           "by": admin.get("email"), "reason": reason.strip(), "at": now_iso()}
+    res = await db.backups.insert_one(dict(rec))
+    await db.audit_log.insert_one({
+        "entity": "backup", "entity_id": str(res.inserted_id), "action": "backup_uploaded",
+        "actor": admin.get("email"), "actor_id": str(admin["_id"]), "reason": reason.strip(),
+        "after": {"file": stored, "size": size, "integrity": "valid", "storage": "gridfs",
+                  "encrypted": check["encrypted"]}, "at": now_iso()})
+    return {**serialize(rec), "id": str(res.inserted_id), "validation": check}
+
+
+class ValidateIn(BaseModel):
+    file: str
+
+
+@router.post("/backups/validate")
+async def validate_backup(payload: ValidateIn, admin: dict = Depends(require_admin)):
+    """Encryption + integrity verification of a stored file (server copy or imported copy).
+    Read-only: nothing is restored, written over, or deleted."""
+    safe = os.path.basename(payload.file)
+    path = await _materialize(safe)
+    if not path:
+        raise HTTPException(404, "ملف النسخة غير موجود")
+    try:
+        check = _inspect(path)
+    finally:
+        if path.startswith(tempfile.gettempdir()):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    await db.backups.update_many({"file": safe}, {"$set": {
+        "integrity": "valid" if check["ok"] else "invalid",
+        "sha256": check.get("sha256"),
+        "validated_by": admin.get("email"), "validated_at": now_iso()}})
+    await db.audit_log.insert_one({
+        "entity": "backup", "entity_id": safe, "action": "backup_validated",
+        "actor": admin.get("email"), "actor_id": str(admin["_id"]),
+        "after": {"file": safe, "result": "valid" if check["ok"] else "invalid",
+                  "reason": check.get("reason")}, "at": now_iso()})
+    return {"file": safe, "valid": check["ok"], "encrypted": check.get("encrypted"),
+            "gzip_archive": check.get("gzip_archive"), "size": check.get("size"),
+            "sha256": check.get("sha256"), "reason": check.get("reason"),
+            "checked_at": now_iso()}
 
 
 class VerifyIn(BaseModel):
@@ -579,8 +842,8 @@ async def verify_backup(payload: VerifyIn, admin: dict = Depends(require_admin))
     The live/preview database is never touched. Refuses to run on a live environment."""
     if os.environ.get("ENVIRONMENT", "").lower() in ("live", "production", "prod"):
         raise HTTPException(403, "ممنوع تشغيل اختبار الاستعادة على بيئة Live")
-    path = f"{BACKUP_DIR}/{os.path.basename(payload.file)}"
-    if not os.path.exists(path):
+    path = await _materialize(os.path.basename(payload.file))
+    if not path:
         raise HTTPException(404, "ملف النسخة غير موجود")
     dbname = os.environ["DB_NAME"]
     drill_db = f"{dbname}_restore_drill"
@@ -654,8 +917,8 @@ async def restore_backup(payload: RestoreIn, admin: dict = Depends(require_admin
         raise HTTPException(403, "ممنوع الاستعادة على بيئة Live")
     if payload.confirm_phrase.strip() != "أؤكد الاستعادة":
         raise HTTPException(400, "عبارة التأكيد غير صحيحة")
-    path = f"{BACKUP_DIR}/{os.path.basename(payload.file)}"
-    if not os.path.exists(path):
+    path = await _materialize(os.path.basename(payload.file))
+    if not path:
         raise HTTPException(404, "ملف النسخة غير موجود")
     await db.audit_log.insert_one({"entity": "backup", "entity_id": payload.file,
                                    "action": "restore_requested", "actor": admin.get("email"),
