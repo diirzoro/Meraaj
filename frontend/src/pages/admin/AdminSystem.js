@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import api, { apiError } from "@/lib/api";
 import { PageHeader } from "@/components/Layout";
-import { fmtDate } from "@/lib/format";
+import { fmtDate, ar } from "@/lib/format";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Settings2, ShieldAlert, Activity, Search } from "lucide-react";
@@ -20,10 +20,13 @@ export default function AdminSystem() {
   const [q, setQ] = useState("");
   const [tdr, setTdr] = useState(null);
   const [draft, setDraft] = useState({});
+  const [schema, setSchema] = useState(null);
+  const [tech, setTech] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
     api.get("/admin/settings").then((r) => { setSt(r.data.settings); setDraft(r.data.settings); });
+    api.get("/admin/settings/schema").then((r) => setSchema(r.data)).catch(() => setSchema(null));
     api.get("/admin/system/health").then((r) => setHealth(r.data));
     api.get(`/admin/audit?limit=100${q ? `&q=${encodeURIComponent(q)}` : ""}`).then((r) => setAudit(r.data));
     api.get("/admin/anomalies").then((r) => setAnom(r.data));
@@ -57,29 +60,51 @@ export default function AdminSystem() {
         <div className="space-y-5">
           <div className="bg-white rounded-2xl border card-shadow p-5" data-testid="flags-panel">
             <div className="flex items-center gap-2 font-head font-bold text-[#0A2540] text-sm mb-3">
-              <Settings2 className="w-4 h-4 text-[#D4AF37]" /> Feature Flags
+              <Settings2 className="w-4 h-4 text-[#D4AF37]" /> وحدات النظام (تشغيل/إيقاف)
             </div>
-            <div className="grid sm:grid-cols-3 gap-2">
-              {Object.entries(draft.feature_flags || {}).map(([k, v]) => (
-                <label key={k} className="text-xs bg-[#F4F6F8] rounded-lg px-3 py-2 flex items-center gap-2" data-testid={`flag-${k}`}>
-                  <input type="checkbox" checked={!!v} onChange={(e) => setDraft({
-                    ...draft, feature_flags: { ...draft.feature_flags, [k]: e.target.checked } })} />
-                  {k}
-                </label>
-              ))}
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {Object.entries(draft.feature_flags || {}).map(([k, v]) => {
+                const meta = (schema?.flags || {})[k] || [k, ""];
+                return (
+                  <label key={k} className="text-xs bg-[#F4F6F8] rounded-lg px-3 py-2 flex items-start gap-2 cursor-pointer"
+                    data-testid={`flag-${k}`}>
+                    <input type="checkbox" className="mt-0.5" checked={!!v} onChange={(e) => setDraft({
+                      ...draft, feature_flags: { ...draft.feature_flags, [k]: e.target.checked } })} />
+                    <span>
+                      <span className="font-semibold text-[#0A2540]">{meta[0]}</span>
+                      {meta[1] && <span className="block text-[10px] text-muted-foreground">{meta[1]}</span>}
+                    </span>
+                  </label>
+                );
+              })}
             </div>
             <Button size="sm" className="mt-3 bg-[#0A2540] hover:bg-[#061A2E]" data-testid="save-flags-btn"
-              disabled={busy} onClick={() => saveSection("feature_flags")}>حفظ</Button>
+              disabled={busy} onClick={() => saveSection("feature_flags")}>
+              {busy ? "جارٍ الحفظ..." : "حفظ الوحدات"}
+            </Button>
+            <div className="text-[10px] text-muted-foreground mt-2">
+              إيقاف الوحدة يخفيها من الواجهة، والحماية الفعلية للعمليات الحساسة تبقى على مستوى الصلاحيات في الخادم.
+            </div>
           </div>
 
-          {["currencies", "documents", "credit", "reasons", "locale", "numbering", "integrations", "order_flow", "funds_release"].map((sec) => (
+          {Object.entries(schema?.sections || {}).map(([sec, meta]) => (
             <div key={sec} className="bg-white rounded-2xl border card-shadow p-5" data-testid={`section-${sec}`}>
-              <div className="font-head font-bold text-[#0A2540] text-sm mb-2">{sec}</div>
-              <Textarea rows={4} className="text-[11px] font-mono" data-testid={`json-${sec}`}
-                defaultValue={JSON.stringify(draft[sec], null, 2)}
-                onChange={(e) => { try { setDraft({ ...draft, [sec]: JSON.parse(e.target.value) }); } catch { /* invalid json while typing */ } }} />
-              <Button size="sm" className="mt-2 bg-[#0A2540] hover:bg-[#061A2E]" data-testid={`save-${sec}`}
-                disabled={busy} onClick={() => saveSection(sec)}>حفظ</Button>
+              <div className="font-head font-bold text-[#0A2540] text-sm">{meta.label}</div>
+              <div className="text-[11px] text-muted-foreground mb-3">{meta.desc}</div>
+              <div className="grid sm:grid-cols-2 gap-3">
+                {meta.fields.map((f) => (
+                  <SettingField key={f.key} f={f} sec={sec} draft={draft} setDraft={setDraft} />
+                ))}
+              </div>
+              {meta.note && (
+                <div className="text-[10px] text-[#A16207] bg-[#FEFCE8] border border-[#FEF08A] rounded-lg px-3 py-2 mt-3">
+                  {meta.note}
+                </div>
+              )}
+              <Button size="sm" className="mt-3 bg-[#0A2540] hover:bg-[#061A2E]" data-testid={`save-${sec}`}
+                disabled={busy} onClick={() => saveSection(sec)}>
+                {busy ? "جارٍ الحفظ..." : "حفظ"}
+              </Button>
             </div>
           ))}
         </div>
@@ -136,13 +161,16 @@ export default function AdminSystem() {
                 ) : audit.items.map((a, i) => (
                   <tr key={i} className="border-t" data-testid={`audit-row-${i}`}>
                     <td className="px-3 py-2 whitespace-nowrap">{fmtDate(a.at)}</td>
-                    <td className="px-3 py-2 text-[10px]">{a.source}</td>
-                    <td className="px-3 py-2">{a.entity}</td>
-                    <td className="px-3 py-2 font-semibold text-[#0A2540]">{a.action}</td>
+                    <td className="px-3 py-2 text-[10px]">{ar(a.source)}</td>
+                    <td className="px-3 py-2">{a.entity_label || ar(a.entity)}</td>
+                    <td className="px-3 py-2 font-semibold text-[#0A2540]">{a.action_label || ar(a.action)}</td>
                     <td className="px-3 py-2">{a.actor || "—"}</td>
                     <td className="px-3 py-2 max-w-[160px] truncate">{a.reason || "—"}</td>
-                    <td className="px-3 py-2 max-w-[220px] truncate text-[10px] text-muted-foreground">
-                      {a.before ? JSON.stringify(a.before) : "—"} ← {a.after ? JSON.stringify(a.after) : "—"}
+                    <td className="px-3 py-2 max-w-[260px] text-[10px] text-muted-foreground">
+                      <span className="block truncate">{a.before_text || "—"}</span>
+                      <span className="block truncate">← {a.after_text || "—"}</span>
+                      <button className="underline text-[#0A2540]" data-testid={`audit-tech-${i}`}
+                        onClick={() => setTech(a)}>عرض التفاصيل التقنية</button>
                     </td>
                   </tr>
                 ))}
@@ -205,6 +233,98 @@ export default function AdminSystem() {
         </div>
       )}
 
+      {tech && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => setTech(null)} data-testid="audit-tech-dialog">
+          <div className="bg-white rounded-2xl p-5 max-w-lg w-full max-h-[80vh] overflow-y-auto" dir="rtl"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="font-head font-bold text-[#0A2540] text-sm mb-3">
+              التفاصيل التقنية — {tech.action_label}
+            </div>
+            <div className="space-y-2 text-[11px]">
+              {["before", "after"].map((k) => (
+                <div key={k}>
+                  <div className="font-semibold text-[#0A2540]">{k === "before" ? "قبل" : "بعد"}</div>
+                  {Object.entries((tech.technical || {})[k] || {}).length === 0 ? (
+                    <div className="text-muted-foreground">—</div>
+                  ) : Object.entries((tech.technical || {})[k] || {}).map(([f, v]) => (
+                    <div key={f} className="flex justify-between gap-3 border-b py-1">
+                      <span className="text-muted-foreground">{f}</span>
+                      <span className="font-semibold text-left" dir="auto">
+                        {typeof v === "object" ? Object.entries(v || {}).map(([a2, b2]) => `${a2}: ${b2}`).join(" • ") : ar(v)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+            <Button size="sm" variant="outline" className="mt-4 w-full" onClick={() => setTech(null)}
+              data-testid="audit-tech-close">إغلاق</Button>
+          </div>
+        </div>
+      )}
+
     </>
   );
 }
+
+const SettingField = ({ f, sec, draft, setDraft }) => {
+  const val = ((draft || {})[sec] || {})[f.key];
+  const set = (v) => setDraft({ ...draft, [sec]: { ...(draft[sec] || {}), [f.key]: v } });
+  const tid = `set-${sec}-${f.key}`;
+  if (f.type === "switch") {
+    return (
+      <label className="text-xs bg-[#F4F6F8] rounded-lg px-3 py-2 flex items-center gap-2 cursor-pointer" data-testid={tid}>
+        <input type="checkbox" checked={!!val} onChange={(e) => set(e.target.checked)} />
+        {f.label}
+      </label>
+    );
+  }
+  if (f.type === "select") {
+    return (
+      <div>
+        <Label className="text-[11px]">{f.label}</Label>
+        <select className="h-9 w-full rounded-md border border-input px-2 text-xs bg-white" data-testid={tid}
+          value={val ?? ""} disabled={f.readonly} onChange={(e) => set(e.target.value)}>
+          {(f.options || []).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+      </div>
+    );
+  }
+  if (f.type === "multiselect") {
+    const arr = Array.isArray(val) ? val : [];
+    return (
+      <div>
+        <Label className="text-[11px]">{f.label}</Label>
+        <div className="flex flex-wrap gap-2 mt-1" data-testid={tid}>
+          {(f.options || []).map(([k, l]) => (
+            <label key={k} className={`text-[11px] px-3 py-1.5 rounded-lg border cursor-pointer ${arr.includes(k) ? "bg-[#0A2540] text-white border-[#0A2540]" : "bg-white"}`}>
+              <input type="checkbox" className="hidden" checked={arr.includes(k)}
+                onChange={() => set(arr.includes(k) ? arr.filter((x) => x !== k) : [...arr, k])} />{l}
+            </label>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  if (f.type === "tags") {
+    const arr = Array.isArray(val) ? val : [];
+    return (
+      <div>
+        <Label className="text-[11px]">{f.label}</Label>
+        <Input className="h-9 text-xs" data-testid={tid} disabled={f.readonly}
+          value={arr.join("، ")}
+          onChange={(e) => set(e.target.value.split(/[،,]/).map((x) => x.trim()).filter(Boolean))} />
+        <div className="text-[10px] text-muted-foreground">افصل بين القيم بفاصلة</div>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <Label className="text-[11px]">{f.label}</Label>
+      <Input type={f.type === "number" ? "number" : "text"} step={f.step} className="h-9 text-xs"
+        data-testid={tid} disabled={f.readonly} value={val ?? ""}
+        onChange={(e) => set(f.type === "number" ? (e.target.value === "" ? null : Number(e.target.value)) : e.target.value)} />
+    </div>
+  );
+};

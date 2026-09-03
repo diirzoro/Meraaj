@@ -193,6 +193,92 @@ def classify_outbox_error(status, last_error: str) -> dict:
             "next_action": "مراجعة نص الاستجابة مع فريق رحّال.", "retry_useful": True}
 
 
+@router.get("/integrations/settlement-trace/{booking_id}")
+async def settlement_trace(booking_id: str, admin: dict = Depends(require_admin)):
+    """READ-ONLY trace of every money figure for one order next to the amounts that were
+    actually sent to Rahaal, so any settlement mismatch is located exactly. No writes,
+    no re-send, no recalculation of balances."""
+    from finance import booking_financials, booking_reconciliation
+    b = await db.bookings.find_one({"_id": oid(booking_id)})
+    if not b:
+        raise HTTPException(404, "الحجز غير موجود")
+    txns = await db.transactions.find({"ref": booking_id}).to_list(300)
+    fin = booking_financials(b, txns)
+    rec = booking_reconciliation(b, txns)
+    authoritative = {
+        "order_amount": fin["gross"], "platform_commission": fin["platform_commission"],
+        "buyer_commission": fin["buyer_commission"], "seller_net": fin["seller_net"],
+        "refund": fin["refunded"], "released": fin["released"],
+        "settlement_amount": fin["released"],
+        "currency": fin["currency"],
+        "source": "حقول الطلب المسجّلة وقت التسعير + الحركات المسجّلة (المصدر المعتمد)",
+    }
+    events = []
+    async for e in db.rahal_outbox.find({"$or": [{"payload.data.booking_ref": booking_id},
+                                                 {"payload.data.booking_id": booking_id},
+                                                 {"ref": booking_id}]}).sort("created_at", 1):
+        data = ((e.get("payload") or {}).get("data") or {})
+        sent = {k: data.get(k) for k in
+                ("amount", "total", "settlement_amount", "refund_amount", "seller_net",
+                 "platform_commission", "currency") if k in data}
+        events.append({"id": str(e["_id"]), "event": e.get("event"),
+                       "status": e.get("status"), "http_status": e.get("http_status"),
+                       "at": e.get("created_at"), "sent_amounts": sent})
+    diffs = []
+    for ev in events:
+        for key, ours in (("settlement_amount", authoritative["settlement_amount"]),
+                          ("refund_amount", authoritative["refund"]),
+                          ("platform_commission", authoritative["platform_commission"])):
+            theirs = ev["sent_amounts"].get(key)
+            if theirs is not None and abs(float(theirs) - float(ours)) > 0.01:
+                diffs.append({"event_id": ev["id"], "event": ev["event"], "field": key,
+                              "meraaj": ours, "sent_to_rahal": float(theirs),
+                              "difference": round(float(theirs) - float(ours), 2)})
+    return {"booking_id": booking_id, "status": b.get("status"),
+            "authoritative": authoritative,
+            "statement": fin, "reconciliation": rec,
+            "outbox_events": events, "mismatches": diffs,
+            "verdict": ("لا يوجد اختلاف بين أرقام معراج وما أُرسل لرحّال"
+                        if not diffs else
+                        f"{len(diffs)} اختلافاً بين رقم معراج المعتمد وما أُرسل لرحّال"),
+            "generated_at": now_iso()}
+
+
+@router.get("/integrations/outbox/classify")
+async def outbox_classify(admin: dict = Depends(require_admin)):
+    """Root-cause buckets for undelivered events, separating historic/unsendable events
+    from live problems. Read-only: nothing is retried here."""
+    items = await db.rahal_outbox.find({"status": {"$in": ["pending", "failed"]}}).to_list(1000)
+    buckets = {}
+    for it in items:
+        diag = classify_outbox_error(it.get("http_status"), it.get("last_error"))
+        key = diag["code"]
+        g = buckets.setdefault(key, {
+            "code": key, "title": diag["title"], "owner": diag["owner"],
+            "retry_useful": diag["retry_useful"], "next_action": diag["next_action"],
+            "count": 0, "events": {}, "oldest": None, "newest": None,
+            "sample_ids": []})
+        g["count"] += 1
+        g["events"][it.get("event")] = g["events"].get(it.get("event"), 0) + 1
+        at = it.get("created_at") or ""
+        g["oldest"] = min(g["oldest"] or at, at)
+        g["newest"] = max(g["newest"] or at, at)
+        if len(g["sample_ids"]) < 5:
+            g["sample_ids"].append(str(it["_id"]))
+    groups = sorted(buckets.values(), key=lambda x: -x["count"])
+    historic = [g for g in groups if not g["retry_useful"]]
+    live = [g for g in groups if g["retry_useful"]]
+    return {"undelivered": len(items),
+            "historic_unsendable": {"count": sum(g["count"] for g in historic),
+                                    "groups": historic,
+                                    "note": ("أحداث قديمة/بيانات معاينة لا فائدة من إعادة "
+                                             "إرسالها — تُترك موثّقة بلا إجراء.")},
+            "actionable": {"count": sum(g["count"] for g in live), "groups": live,
+                           "note": "قابلة لإعادة الإرسال بعد إصلاح السبب لدى الطرف المسؤول."},
+            "retry_policy": "لا إعادة إرسال جماعية تلقائية — كل إعادة إرسال بقرار وسبب موثّق",
+            "generated_at": now_iso()}
+
+
 @router.get("/integrations/target")
 async def get_target(admin: dict = Depends(require_admin)):
     """Exact effective outbound configuration, so the Rahaal endpoint can be verified
@@ -279,34 +365,69 @@ async def probe_target(admin: dict = Depends(require_admin)):
     return {"url": url, "target_source": t["source"], "method": "POST",
             "signature_header": "X-Meraaj-Signature",
             "secret_fingerprint": secret_fingerprint(),
-            "http_status": status, "latency_ms": ms, "response_body": text,
-            "transport_error": err, "verdict": verdict, "owner": owner,
-            "sent_body": body, "checked_at": now_iso()}
+            "http_status": status, "latency_ms": ms, "response_body": _sanitize_error(text),
+            "transport_error": _sanitize_error(err) or None, "verdict": verdict, "owner": owner,
+            "sent_body_note": "جسم الفحص لا يحتوي بيانات حساسة ولا يُعرض التوقيع",
+            "checked_at": now_iso()}
 
 
 @router.get("/integrations/outbox/{item_id}")
-async def outbox_detail(item_id: str, admin: dict = Depends(require_admin)):
-    """Exact failure reason for ONE event: payload actually sent, signature, every attempt
-    with its HTTP status, the classified cause and a reproducible curl command."""
+async def outbox_detail(item_id: str, technical: bool = False,
+                        admin: dict = Depends(require_admin)):
+    """Failure reason for ONE event. Signature material, the signed body and the reproduction
+    command are SENSITIVE: they are never returned unless a super admin explicitly asks for
+    the technical view (technical=true)."""
     item = await db.rahal_outbox.find_one({"_id": oid(item_id)})
     if not item:
         raise HTTPException(404, "الحدث غير موجود")
-    from integration import rahal_target_url, _meraaj_secret
-    url = item.get("url") or await rahal_target_url()
-    raw = json.dumps(item["payload"], ensure_ascii=False, separators=(",", ":"))
-    sig = hmac.new(_meraaj_secret().encode(), raw.encode("utf-8"), hashlib.sha256).hexdigest()
     d = serialize(item)
-    d["url"] = url
-    d["signed_body"] = raw
-    d["current_signature"] = sig
-    d["attempt_history"] = item.get("attempt_history") or []
+    d.pop("signature", None)
+    d.pop("payload", None)
+    from integration import rahal_target_url
+    url = item.get("url") or await rahal_target_url()
+    import re as _re
+    d["endpoint"] = _re.sub(r"^(https?://[^/]+).*$", r"\1/…", url or "") or "—"
+    d["attempt_history"] = [{k: v for k, v in (a or {}).items()
+                             if k in ("at", "http_status", "error", "attempt")}
+                            for a in (item.get("attempt_history") or [])]
     d["diagnosis"] = classify_outbox_error(item.get("http_status"), item.get("last_error"))
-    d["curl"] = (f"curl -i -X POST '{url}' -H 'Content-Type: application/json' "
-                 f"-H 'X-Meraaj-Signature: {sig}' -d '{raw[:1200]}'")
+    d["last_error"] = _sanitize_error(item.get("last_error"))
+    d["sensitive_hidden"] = True
+    d["sensitive_note"] = ("بيانات التوقيع والجسم الموقّع وأمر إعادة الإنتاج محجوبة — "
+                           "تُتاح للإدارة العليا فقط عند الحاجة التقنية.")
     audit_rows = await db.audit_log.find({"entity": "integration", "entity_id": item_id}
                                         ).sort("at", -1).to_list(20)
     d["audit"] = serialize(audit_rows)
+    if technical:
+        if admin.get("role") != "super_admin":
+            raise HTTPException(403, "العرض التقني للتوقيع متاح للإدارة العليا فقط")
+        import hashlib as _h
+        import hmac as _hm
+        from integration import _meraaj_secret
+        raw = json.dumps(item["payload"], ensure_ascii=False, separators=(",", ":"))
+        sig = _hm.new(_meraaj_secret().encode(), raw.encode("utf-8"), _h.sha256).hexdigest()
+        d["technical"] = {"url": url, "payload": item.get("payload"),
+                          "signature_prefix": sig[:8] + "…",
+                          "signature_length": len(sig),
+                          "body_bytes": len(raw.encode("utf-8")),
+                          "note": ("التوقيع الكامل والجسم الخام لا يُرسلان للواجهة — "
+                                   "استخدم سجلات الخادم عند التحقيق.")}
+        d["sensitive_hidden"] = False
+        await db.audit_log.insert_one({
+            "entity": "integration", "entity_id": item_id, "action": "technical_view",
+            "actor": admin.get("email"), "actor_id": str(admin["_id"]),
+            "reason": "عرض تفاصيل تقنية للحدث", "at": now_iso()})
     return d
+
+
+def _sanitize_error(raw) -> str:
+    """Strips any signature/authorization material out of a stored error string."""
+    s = str(raw or "")
+    if not s:
+        return ""
+    s = re.sub(r"(?i)(signature|authorization|x-meraaj-signature|secret|token)"
+               r"\s*[:=]\s*[^\s,;}\"']+", r"\1: ***", s)
+    return s[:400]
 
 
 @router.post("/integrations/outbox/{item_id}/retry")

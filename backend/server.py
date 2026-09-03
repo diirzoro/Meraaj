@@ -30,6 +30,7 @@ from integration import router as integration_router, sim_router as rahal_sim_ro
 from individual import router as individual_router
 from documents import router as documents_router
 from maintenance import router as maintenance_router
+from ads import router as ads_router
 
 app = FastAPI(title="Meraaj Network API")
 
@@ -63,6 +64,7 @@ app.include_router(rahal_sim_router)
 app.include_router(individual_router)
 app.include_router(documents_router)
 app.include_router(maintenance_router)
+app.include_router(ads_router)
 
 frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 app.add_middleware(
@@ -85,6 +87,8 @@ async def startup():
     await db.trip_passports.create_index([("package_id", 1), ("passport_norm", 1)], unique=True)
     await db.traveler_documents.create_index([("booking_id", 1), ("registrant_index", 1)])
     await db.cancellation_evidence.create_index("booking_id")
+    await db.advertisements.create_index([("status", 1), ("placements", 1),
+                                          ("start_date", 1), ("end_date", 1)])
     await seed_admin()
     await ensure_indexes()
     from orgs import seed_notification_templates

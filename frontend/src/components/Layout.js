@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Store, Package, ShoppingBag, TicketCheck, Wallet,
   Banknote, ShieldAlert, LogOut, Building2, Network, Menu, X, TrendingUp, Ban,
   Database, Eraser,
-  BookOpen, ArrowDownCircle, Percent, Gauge, Bell, FileSpreadsheet, Settings2,
+  BookOpen, ArrowDownCircle, Percent, Gauge, Bell, FileSpreadsheet, Settings2, Megaphone,
 } from "lucide-react";
 
 const officeNav = [
@@ -40,6 +40,7 @@ const adminNav = [
   { to: "/admin/roles", label: "الصلاحيات والأمان", icon: ShieldAlert },
   { to: "/admin/notifications", label: "الإشعارات والمهام", icon: Bell },
   { to: "/admin/reports", label: "التقارير", icon: FileSpreadsheet },
+  { to: "/admin/ads", label: "الإعلانات والعروض", icon: Megaphone },
   { to: "/admin/system", label: "إعدادات النظام", icon: Settings2 },
   { to: "/admin/backups", label: "النسخ الاحتياطي", icon: Database },
   { to: "/admin/maintenance", label: "الصيانة والاحتفاظ", icon: Eraser },

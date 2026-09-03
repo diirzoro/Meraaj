@@ -121,10 +121,9 @@ export default function AdminOrderDetail() {
                 <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2 mb-2">
                   <F label="صافي المشتري (خرج − رجع)" v={money(d.reconciliation.buyer_net, c)} tid="rec-buyer-net" />
                   <F label="المُحرَّر للبائع فعلياً" v={money(d.reconciliation.seller_released, c)} tid="rec-released" />
-                  <F label={d.reconciliation.commission_source === "movement"
-                    ? "عمولة المنصة (حركة مسجَّلة)" : "عمولة المنصة (مشتقّة من الفرق)"}
+                  <F label={`عمولة المنصة — ${d.reconciliation.commission_source === "snapshot" ? "المصدر المعتمد (مسجّلة على الطلب)" : d.reconciliation.commission_source === "movement" ? "حركة مسجّلة" : "مشتقّة من الفرق"}`}
                     v={money(d.reconciliation.platform_retained, c)} tid="rec-commission" />
-                  <F label="إيراد معلّق ما زال قائماً" v={money(d.reconciliation.seller_escrow_open, c)} tid="rec-escrow-open" />
+                  <F label="فرق غير مفسَّر" v={money(d.reconciliation.unexplained_difference || 0, c)} tid="rec-unexplained" />
                 </div>
                 <div className={`text-[11px] rounded-lg px-3 py-2 mb-2 ${d.reconciliation.balanced
                   ? "bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0]"

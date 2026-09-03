@@ -4,6 +4,7 @@ and encrypted database backup/restore. All additive.
 import csv
 import hashlib
 import io
+import shutil
 import tempfile
 import uuid
 import os
@@ -22,6 +23,29 @@ router = APIRouter(prefix="/api/admin", tags=["admin-enterprise"])
 CCY = ("SAR", "USD")
 BACKUP_DIR = os.environ.get("BACKUP_DIR", "/app/backups")
 RETENTION = 7
+
+ENV_LABEL = {"preview": "بيئة المعاينة (Emergent)", "test": "بيئة الاختبار (Test)",
+             "live": "البيئة الحقيقية (Live)", "unknown": "غير معروفة"}
+
+
+def _environment() -> str:
+    """Explicit environment — read from ENVIRONMENT only, never inferred from data."""
+    v = (os.environ.get("ENVIRONMENT") or "").strip().lower()
+    return v if v in ("preview", "test", "live") else "unknown"
+
+
+def _environment_rules() -> dict:
+    env = _environment()
+    return {
+        "preview": {"working_db_restore": "يحتاج تأكيداً صريحاً + ALLOW_RESTORE=true",
+                    "isolated_restore": "متاح"},
+        "test": {"working_db_restore": "لا يتم تلقائياً — يحتاج تأكيداً صريحاً",
+                 "isolated_restore": "متاح"},
+        "live": {"working_db_restore": "محجوب نهائياً (HARD BLOCKED)",
+                 "isolated_restore": "متاح للقراءة فقط"},
+        "unknown": {"working_db_restore": "محجوب — البيئة غير محددة (اضبط ENVIRONMENT)",
+                    "isolated_restore": "متاح"},
+    }[env]
 
 REPORTS = {
     "sales": "المبيعات والطلبات", "profit": "الأرباح والعمولات",
@@ -92,8 +116,11 @@ async def _run(report: str, date_from: Optional[str], date_to: Optional[str],
         cols = ["التاريخ", "الطلب", "البرنامج", "المشتري", "البائع", "مدين (خصم)",
                 "دائن (استرداد)", "المدفوع", "المعلّق", "المحرَّر", "المسترد",
                 "المستحق على المشتري", "المستحق للبائع", "عمولة المنصة", "صافي المنصة",
-                "المحوَّل", "المتبقي", "الحالة", "العملة"]
+                "المحوَّل", "المتبقي", "مرجع معراج", "مرجع رحّال", "الفرق مع رحّال",
+                "حالة المطابقة", "سعر الصرف", "الحالة", "العملة"]
         rows = []
+        fx = float((await db.settings.find_one({"_id": "system"}) or {})
+                   .get("currencies", {}).get("fx_rate_sar_per_usd") or 3.75)
         for d in docs:
             ref = str(d["_id"])
             txns = await db.transactions.find({"ref": ref}).to_list(300)
@@ -102,22 +129,33 @@ async def _run(report: str, date_from: Optional[str], date_to: Optional[str],
                               if float(t.get("amount") or 0) < 0), 2)
             credit = round(sum(float(t.get("amount") or 0) for t in txns
                                if float(t.get("amount") or 0) > 0), 2)
+            rahal_ref = d.get("rahal_ref") or d.get("rahal_booking_ref") or "—"
+            sent = None
+            ev = await db.rahal_outbox.find_one({"ref": ref, "event": {"$regex": "settle|cancel"}})
+            if ev:
+                sent = ((ev.get("payload") or {}).get("data") or {}).get("settlement_amount")
+            gap = (round(float(sent) - fin["released"], 2) if sent is not None else 0.0)
+            state = ("لا يوجد حدث تسوية مُرسَل" if sent is None
+                     else "مطابق" if abs(gap) < 0.01 else "فرق يحتاج مراجعة")
             rows.append([d.get("created_at", "")[:10], ref[-6:], d.get("package_title"),
                          d.get("buyer_office_name"), d.get("seller_office_name"),
                          debit, credit, fin["paid"], fin["pending"], fin["released"],
                          fin["refunded"], fin["due_from_buyer"], fin["due_to_seller"],
                          fin["platform_commission"], fin["platform_net"],
-                         fin["transferred"], fin["remaining"], fin["status"], fin["currency"]])
+                         fin["transferred"], fin["remaining"], ref[-6:], rahal_ref, gap,
+                         state, fx, fin["status"], fin["currency"]])
         # Totals section at the bottom, kept STRICTLY separate per currency and summed from
         # the same read-only booking_financials figures above (no recalculation).
         for c in CCY:
-            cur_rows = [r for r in rows if r[18] == c]
+            cur_rows = [r for r in rows if r[23] == c]
             if not cur_rows:
                 continue
+
             def col(i):
                 return round(sum(float(r[i] or 0) for r in cur_rows), 2)
             rows.append(["—", f"الإجمالي {c}", f"عدد الطلبات: {len(cur_rows)}", "", ""]
-                        + [col(i) for i in range(5, 17)] + ["إجمالي", c])
+                        + [col(i) for i in range(5, 17)]
+                        + ["—", "—", col(19), "—", fx, "إجمالي", c])
         return {"columns": cols, "rows": rows}
 
     if report == "wallets":
@@ -262,60 +300,52 @@ class RunIn(BaseModel):
 
 @router.post("/reports/run")
 async def run_report(payload: RunIn, admin: dict = Depends(require_admin)):
-    if payload.report not in REPORTS:
-        raise HTTPException(400, "تقرير غير معروف")
-    res = await _run(payload.report, payload.date_from, payload.date_to,
-                     payload.currency, payload.office_id)
-    snapshot = payload.report in SNAPSHOT_REPORTS
-    return {"report": payload.report, "title": REPORTS[payload.report],
-            "columns": res["columns"], "rows": res["rows"][:500],
-            "row_count": len(res["rows"]), "generated_at": now_iso(),
-            "filters": {"date_from": payload.date_from, "date_to": payload.date_to,
-                        "currency": payload.currency, "office_id": payload.office_id,
-                        "date_inclusive": True},
-            "snapshot": snapshot,
-            "period_note": ("تقرير لحظي يعرض الحالة الحالية (الأرصدة/السقوف/الانكشاف) — "
-                            "فلتر التاريخ لا ينطبق عليه"
-                            if snapshot else
-                            "الفترة شاملة لليومين المحددين (من بداية يوم البداية حتى نهاية "
-                            "يوم النهاية)")}
+    """Screen dataset — the SAME builder every exporter uses, so figures can never differ."""
+    from reporting import build_dataset, summary_rows
+    ds = await build_dataset(payload.report, payload.model_dump(exclude={"report"}))
+    return {**ds, "rows": ds["rows"][:500], "summary": summary_rows(ds),
+            "truncated": ds["row_count"] > 500}
 
 
 @router.post("/reports/export")
 async def export_report(payload: RunIn, admin: dict = Depends(require_admin)):
-    """CSV (Excel-ready, UTF-8 BOM). PDF is produced from the print view in the browser
-    so Arabic RTL renders correctly."""
-    if payload.report not in REPORTS:
-        raise HTTPException(400, "تقرير غير معروف")
-    res = await _run(payload.report, payload.date_from, payload.date_to,
-                     payload.currency, payload.office_id)
-    buf = io.StringIO()
-    buf.write("\ufeff")
-    w = csv.writer(buf)
-    w.writerow([REPORTS[payload.report]])
-    w.writerow(res["columns"])
-    for r in res["rows"]:
-        w.writerow(r)
-    buf.seek(0)
-    await db.report_exports.insert_one({"report": payload.report, "rows": len(res["rows"]),
-                                        "by": admin.get("email"), "at": now_iso()})
-    return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv; charset=utf-8",
+    """CSV data export — same dataset/filters/labels as the screen (reporting.build_dataset)."""
+    from reporting import build_dataset, to_csv
+    ds = await build_dataset(payload.report, payload.model_dump(exclude={"report"}))
+    await db.report_exports.insert_one({"report": payload.report, "rows": ds["row_count"],
+                                        "format": "csv", "by": admin.get("email"),
+                                        "at": now_iso()})
+    return StreamingResponse(iter([to_csv(ds)]), media_type="text/csv; charset=utf-8",
                              headers={"Content-Disposition":
                                       f'attachment; filename="meraaj-{payload.report}.csv"'})
 
 
+@router.post("/reports/export-xlsx")
+async def export_report_xlsx(payload: RunIn, admin: dict = Depends(require_admin)):
+    """Real Excel workbook (summary + details + data dictionary) from the same dataset."""
+    from reporting import build_dataset, to_xlsx
+    ds = await build_dataset(payload.report, payload.model_dump(exclude={"report"}))
+    data = to_xlsx(ds)
+    await db.report_exports.insert_one({"report": payload.report, "rows": ds["row_count"],
+                                        "format": "xlsx", "by": admin.get("email"),
+                                        "at": now_iso()})
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition":
+                 f'attachment; filename="meraaj-{payload.report}.xlsx"'})
+
+
 @router.post("/reports/export-pdf")
 async def export_report_pdf(payload: RunIn, admin: dict = Depends(require_admin)):
-    """Real server-side Arabic RTL PDF (shaped + bidi ordered)."""
-    if payload.report not in REPORTS:
-        raise HTTPException(400, "تقرير غير معروف")
-    res = await _run(payload.report, payload.date_from, payload.date_to,
-                     payload.currency, payload.office_id)
-    from pdfgen import build_table_pdf
-    meta = (f"عدد السجلات: {len(res['rows'])} • الفترة: {payload.date_from or 'الكل'} ← "
-            f"{payload.date_to or 'الآن'} • أصدره: {admin.get('email')} • {now_iso()[:19]}")
-    pdf = build_table_pdf(REPORTS[payload.report], res["columns"], res["rows"], meta)
-    await db.report_exports.insert_one({"report": payload.report, "rows": len(res["rows"]),
+    """Official Arabic RTL PDF from the same dataset (shaped + bidi ordered)."""
+    from reporting import build_dataset, summary_rows
+    from pdfgen import build_report_pdf
+    ds = await build_dataset(payload.report, payload.model_dump(exclude={"report"}))
+    ds["summary"] = summary_rows(ds)
+    ds["issued_by"] = admin.get("email")
+    pdf = build_report_pdf(ds)
+    await db.report_exports.insert_one({"report": payload.report, "rows": ds["row_count"],
                                         "format": "pdf", "by": admin.get("email"),
                                         "at": now_iso()})
     return StreamingResponse(iter([pdf]), media_type="application/pdf",
@@ -378,7 +408,47 @@ async def audit_trail(entity: Optional[str] = None, actor: Optional[str] = None,
         al = actor.lower()
         out = [x for x in out if al in str(x.get("actor") or "").lower()]
     out.sort(key=lambda x: str(x.get("at") or ""), reverse=True)
-    return {"items": out[:limit], "total": len(out)}
+    from reporting import label as _lbl, FIELD_LABELS as _FL
+    ENTITY_AR = {"settings": "الإعدادات", "booking": "طلب", "credit": "الائتمان",
+                 "commission": "العمولات", "package": "برنامج", "backup": "نسخة احتياطية",
+                 "integration": "التكامل", "user": "مستخدم", "org": "مؤسسة",
+                 "advertisement": "إعلان", "reconciliation": "تسوية", "maintenance": "صيانة",
+                 "withdrawal": "سحب", "role": "دور"}
+    ACTION_AR = {"settings_updated": "تحديث إعدادات", "backup_run": "تنفيذ نسخة احتياطية",
+                 "backup_uploaded": "استيراد نسخة احتياطية", "webhook_probe": "فحص وجهة رحّال",
+                 "webhook_target_updated": "تحديث وجهة رحّال",
+                 "outbox_manual_retry": "إعادة إرسال حدث", "user_created": "إنشاء مستخدم",
+                 "user_updated": "تعديل مستخدم", "password_reset": "إعادة كلمة المرور",
+                 "force_logout": "إخراج قسري", "org_created": "إنشاء مؤسسة",
+                 "org_updated": "تعديل مؤسسة", "credit_granted": "منح سقف ائتماني",
+                 "credit_frozen": "تجميد سقف", "ad_created": "إنشاء إعلان",
+                 "ad_updated": "تعديل إعلان", "ad_active": "اعتماد ونشر إعلان",
+                 "ad_pending_approval": "إرسال إعلان للاعتماد",
+                 "ad_paused": "إيقاف إعلان مؤقتاً", "ad_archived": "أرشفة إعلان",
+                 "ad_draft": "إرجاع إعلان لمسودة", "technical_view": "عرض تفاصيل تقنية",
+                 "ad_rejected": "رفض إعلان", "opening_balance_entry": "قيد افتتاحي موثّق"}
+
+    def human(v):
+        """Readable one-line summary instead of a raw JSON dump."""
+        if v is None or v == {}:
+            return "—"
+        if isinstance(v, dict):
+            return " • ".join(f"{_FL.get(k, k)}: {_lbl(x) if not isinstance(x, (dict, list)) else '…'}"
+                              for k, x in list(v.items())[:6])
+        if isinstance(v, list):
+            return "، ".join(str(_lbl(x)) for x in v[:6])
+        return str(_lbl(v))
+
+    items = []
+    for x in out[:limit]:
+        items.append({**x,
+                      "entity_label": ENTITY_AR.get(x.get("entity"), x.get("entity")),
+                      "action_label": ACTION_AR.get(x.get("action"),
+                                                    _lbl(x.get("action"))),
+                      "before_text": human(x.get("before")),
+                      "after_text": human(x.get("after")),
+                      "technical": {"before": x.get("before"), "after": x.get("after")}})
+    return {"items": items, "total": len(out)}
 
 
 @router.get("/anomalies")
@@ -431,6 +501,86 @@ DEFAULT_SETTINGS = {
                       "rbac": True, "notifications": True, "reports": True, "backup": True,
                       "scanner_bridge": False},
 }
+
+
+SETTINGS_SCHEMA = {
+    "currencies": {"label": "العملات", "desc": "العملة الأساسية والعملات المدعومة وسعر الصرف",
+                   "fields": [
+                       {"key": "base", "label": "العملة الأساسية", "type": "select",
+                        "options": [["USD", "دولار أمريكي"], ["SAR", "ريال سعودي"]]},
+                       {"key": "supported", "label": "العملات المدعومة", "type": "multiselect",
+                        "options": [["SAR", "ريال سعودي"], ["USD", "دولار أمريكي"]]},
+                       {"key": "fx_rate_sar_per_usd", "label": "سعر الصرف (ريال لكل دولار)",
+                        "type": "number", "step": 0.01}]},
+    "documents": {"label": "المستندات والمرفقات", "desc": "الحد الأقصى للحجم والأنواع المسموحة",
+                  "fields": [
+                      {"key": "per_file_mb", "label": "أقصى حجم للملف (ميجابايت)", "type": "number"},
+                      {"key": "per_batch_mb", "label": "أقصى حجم للدفعة (ميجابايت)", "type": "number"},
+                      {"key": "types", "label": "أنواع المستندات المسموحة", "type": "tags"}]},
+    "credit": {"label": "الائتمان والسقوف", "desc": "أقصى سقف مسموح وحدود التنبيه",
+               "fields": [
+                   {"key": "max_limit_sar", "label": "أقصى سقف بالريال", "type": "number"},
+                   {"key": "max_limit_usd", "label": "أقصى سقف بالدولار", "type": "number"},
+                   {"key": "alert_thresholds", "label": "نِسَب التنبيه (%)", "type": "tags"}]},
+    "locale": {"label": "اللغة والتوقيت", "desc": "اللغة والاتجاه والمنطقة الزمنية",
+               "fields": [
+                   {"key": "language", "label": "اللغة", "type": "select",
+                    "options": [["ar", "العربية"], ["en", "الإنجليزية"]]},
+                   {"key": "direction", "label": "اتجاه الواجهة", "type": "select",
+                    "options": [["rtl", "من اليمين إلى اليسار"], ["ltr", "من اليسار إلى اليمين"]]},
+                   {"key": "timezone", "label": "المنطقة الزمنية", "type": "select",
+                    "options": [["Asia/Riyadh", "الرياض (+3)"], ["UTC", "التوقيت العالمي"]]}]},
+    "numbering": {"label": "ترقيم المستندات", "desc": "بادئات أرقام الطلبات والسندات",
+                  "fields": [
+                      {"key": "booking_prefix", "label": "بادئة رقم الطلب", "type": "text"},
+                      {"key": "voucher_prefix", "label": "بادئة رقم السند", "type": "text"},
+                      {"key": "next_seq", "label": "الرقم التالي", "type": "number"}]},
+    "order_flow": {"label": "دورة الطلب", "desc": "مراحل الطلب ومهلة موافقة البائع",
+                   "fields": [
+                       {"key": "approval_timeout_hours", "label": "مهلة موافقة البائع (ساعات)",
+                        "type": "number"},
+                       {"key": "statuses", "label": "مراحل الطلب (قراءة فقط)", "type": "tags",
+                        "readonly": True}]},
+    "funds_release": {"label": "تحرير الأموال", "desc": "شروط تحرير أموال البائع",
+                      "fields": [{"key": "stages", "label": "مراحل التحرير", "type": "tags"}]},
+    "reasons": {"label": "قوائم الأسباب", "desc": "أسباب الرفض والإلغاء المتاحة للمستخدمين",
+                "fields": [
+                    {"key": "rejection", "label": "أسباب الرفض", "type": "tags"},
+                    {"key": "cancellation", "label": "أسباب الإلغاء", "type": "tags"}]},
+    "integrations": {"label": "التكامل", "desc": "تشغيل/تعطيل قنوات التكامل — لا تُعرض أي أسرار",
+                     "fields": [
+                         {"key": "rahal_enabled", "label": "تكامل رحّال", "type": "switch"},
+                         {"key": "email_enabled", "label": "البريد الإلكتروني الخارجي",
+                          "type": "switch"},
+                         {"key": "whatsapp_enabled", "label": "واتساب", "type": "switch"}],
+                     "note": "المفاتيح والأسرار تُدار في متغيّرات البيئة ولا تظهر هنا إطلاقاً"},
+    "commission": {"label": "العمولة الافتراضية", "desc": "نسبة المنصة الافتراضية (للعلم فقط)",
+                   "fields": [{"key": "platform_pct_default", "label": "النسبة الافتراضية",
+                               "type": "number", "readonly": True}]},
+}
+
+FLAG_LABELS = {
+    "orders_center": ("مركز الطلبات", "سجل الطلبات وملف الطلب المالي والتشغيلي"),
+    "finance_center": ("المركز المالي", "الدفتر والسحوبات والسندات والمطابقة"),
+    "commission_engine": ("محرك العمولات", "قواعد العمولة والمعاينة والتجاوز"),
+    "credit_control": ("الائتمان والسقوف", "منح السقوف ومراقبة الانكشاف"),
+    "programs_admin": ("إدارة البرامج", "إنشاء وتعديل البرامج والمقاعد"),
+    "travelers_admin": ("إدارة المسافرين", "المسافرون والمستندات والتأشيرات"),
+    "rbac": ("الصلاحيات والأدوار", "المستخدمون والأدوار والفصل بين المهام"),
+    "notifications": ("الإشعارات والمهام", "القوالب والفحص والمهام الإدارية"),
+    "reports": ("التقارير", "مركز التقارير والتصدير"),
+    "backup": ("النسخ الاحتياطي", "إنشاء واستيراد وفحص النسخ"),
+    "scanner_bridge": ("الماسح الضوئي", "جسر الماسح على أجهزة المكاتب (غير مُفعَّل)"),
+    "ads": ("الإعلانات والعروض", "إدارة الحملات الإعلانية والعروض الترويجية"),
+}
+
+
+@router.get("/settings/schema")
+async def settings_schema(admin: dict = Depends(require_admin)):
+    """Field-level schema so the admin UI renders real forms instead of raw JSON."""
+    return {"sections": SETTINGS_SCHEMA, "flags": FLAG_LABELS,
+            "note": ("JSON الخام مُستخدَم داخلياً فقط — كل إعداد يُحرَّر عبر حقل مخصّص، "
+                     "والأسرار لا تُعرض في الواجهة.")}
 
 
 @router.get("/settings")
@@ -564,7 +714,15 @@ async def list_backups(admin: dict = Depends(require_admin)):
             "restore_enabled": os.environ.get("ALLOW_RESTORE") == "true",
             "restore_guards": ["ALLOW_RESTORE=true", "عبارة تأكيد حرفية: أؤكد الاستعادة",
                                "سبب إلزامي", "رفض قاطع على بيئة Live"],
-            "environment": os.environ.get("ENVIRONMENT", "unknown"),
+            "environment": _environment(),
+            "environment_label": ENV_LABEL.get(_environment(), "غير معروفة"),
+            "environment_source": "متغيّر البيئة ENVIRONMENT",
+            "environment_rules": _environment_rules(),
+            "tools": {"mongodump": bool(shutil.which("mongodump")),
+                      "mongorestore": bool(shutil.which("mongorestore")),
+                      "openssl": bool(shutil.which("openssl")),
+                      "note": ("mongodump/mongorestore يجب أن تكون مثبّتة داخل صورة الخادم "
+                               "(حزمة mongodb-database-tools) وإلا تتعطّل النسخ والاستعادة.")},
             "files_on_disk": files,
             "files_imported": [{"file": r["file"], "size": r.get("size", 0)}
                                for r in docs if r.get("storage") == "gridfs"],
@@ -594,6 +752,12 @@ async def run_backup(payload: BackupIn, admin: dict = Depends(require_admin)):
     raw_path = f"{BACKUP_DIR}/meraaj-{dbname}-{stamp}.archive.gz"
     cmd = ["mongodump", f"--uri={os.environ['MONGO_URL']}", f"--db={dbname}",
            f"--archive={raw_path}", "--gzip"]
+    tool = shutil.which("mongodump")
+    if not tool:
+        raise HTTPException(503,
+                            "أداة mongodump غير مثبّتة في بيئة تشغيل الخادم — النسخ الاحتياطي "
+                            "معطّل حتى تثبيت حزمة mongodb-database-tools في صورة الخادم "
+                            "(Dockerfile.backend). لم يتم إنشاء أي ملف ولم تُلمس أي بيانات.")
     try:
         p = subprocess.run(cmd, capture_output=True, timeout=600)
         if p.returncode != 0:

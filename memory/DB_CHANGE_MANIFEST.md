@@ -49,3 +49,22 @@ trip_passports, traveler_documents, cancellation_evidence.
   (فهارس + `$setOnInsert` + إنشاء حساب المدير إن لم يوجد).
 - **استعادة القاعدة العاملة محميّة**: معطّلة افتراضياً (`ALLOW_RESTORE`) ومرفوضة على Live،
   والاستعادة المعزولة تعمل على قاعدة مؤقتة فقط.
+
+## تحديث (جلسة الإصلاح النهائية 2026-06)
+### مجموعة جديدة واحدة
+- `advertisements` — الإعلانات والعروض (الحقول: kind, title, description_ar, advertiser_name,
+  advertiser_type, paid, contract_value, currency, start_date, end_date, image_url, target_url,
+  audience, placements[], priority, cta_label, linked_package_id, linked_office_id, status,
+  views, clicks, created_by, created_by_id, approved_by, approved_at, rejection_reason,
+  created_at, updated_at).
+### فهرس جديد واحد
+- `advertisements(status, placements, start_date, end_date)` — يُنشأ عند بدء التشغيل، Idempotent.
+### حقول جديدة على مجموعات قائمة
+- لا شيء. (كل ما أُضيف في هذه الجلسة إما مجموعة جديدة أو حسابات عرض مشتقّة وقت القراءة.)
+### ترحيلات/تلقين عند بدء التشغيل
+- لا ترحيل جديد. الثلاثة القائمة كما هي (seed_admin, ensure_indexes, seed_notification_templates)
+  + إنشاء فهرس `advertisements` فقط.
+### تأكيدات
+- لا drop/dropDatabase/dropCollection ولا deleteMany تلقائي ولا استبدال قاعدة ولا إعادة تعيين
+  أرصدة/طلبات/مستخدمين في أي كود أُضيف.
+- التقارير والمطابقة وتتبّع التسوية: قراءة فقط 100%.

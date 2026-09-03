@@ -20,6 +20,9 @@ export default function AdminIntegrations() {
   const [retry, setRetry] = useState(null);   // {id} | {all:true}
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const [cls, setCls] = useState(null);
+  const [traceId, setTraceId] = useState("");
+  const [trace, setTrace] = useState(null);
 
   const load = useCallback(() => {
     Promise.all([
@@ -58,6 +61,25 @@ export default function AdminIntegrations() {
     } catch (e) { toast.error(apiError(e)); }
   };
 
+  const loadClassify = async () => {
+    setBusy(true);
+    try {
+      const r = await api.get("/admin/integrations/outbox/classify");
+      setCls(r.data);
+      toast.success(`تم تصنيف ${r.data.undelivered} حدثاً غير مُسلَّم حسب السبب الجذري`);
+    } catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
+  };
+
+  const loadTrace = async () => {
+    if (!traceId.trim()) return;
+    setBusy(true);
+    try {
+      const r = await api.get(`/admin/integrations/settlement-trace/${traceId.trim()}`);
+      setTrace(r.data);
+      r.data.mismatches.length ? toast.error(r.data.verdict) : toast.success(r.data.verdict);
+    } catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
+  };
+
   const doRetry = async () => {
     setBusy(true);
     try {
@@ -84,6 +106,89 @@ export default function AdminIntegrations() {
         <Stat label="أحداث واردة" v={h.inbound.total} tid="stat-inbound" />
       </div>
 
+      <div className="bg-white rounded-2xl border card-shadow p-5 mb-5" data-testid="classify-panel">
+        <div className="flex items-center gap-2 font-head font-bold text-[#0A2540] text-sm mb-3">
+          <Radar className="w-4 h-4 text-[#D4AF37]" /> تصنيف الأحداث غير المُسلَّمة حسب السبب الجذري
+        </div>
+        <div className="flex flex-wrap gap-2 items-center mb-3">
+          <Button size="sm" variant="outline" onClick={loadClassify} disabled={busy} data-testid="classify-btn">
+            {busy ? "جارٍ التصنيف..." : "تصنيف الأسباب (بدون إعادة إرسال)"}
+          </Button>
+          <span className="text-[10px] text-muted-foreground">لا تُنفَّذ أي إعادة إرسال من هذه الشاشة — تصنيف وقراءة فقط.</span>
+        </div>
+        {cls && (
+          <div className="space-y-3 text-[11px]" data-testid="classify-result">
+            {[["historic_unsendable", "أحداث قديمة لا فائدة من إعادة إرسالها", "#FEFCE8", "#FEF08A", "#A16207"],
+              ["actionable", "أسباب قابلة للمعالجة حالياً", "#F0FDF4", "#BBF7D0", "#15803D"]].map(([key, title, bg, br, fg]) => (
+              <div key={key} className="rounded-lg border px-3 py-2"
+                style={{ background: bg, borderColor: br, color: fg }} data-testid={`classify-${key}`}>
+                <div className="font-bold">{title} — {cls[key].count} حدثاً</div>
+                <div className="text-[10px] mb-1">{cls[key].note}</div>
+                {cls[key].groups.map((g) => (
+                  <div key={g.code} className="bg-white/70 rounded px-2 py-1 mt-1">
+                    <div className="font-semibold">{g.title} ({g.count})</div>
+                    <div className="text-[10px]">
+                      المسؤول: {g.owner === "rahal" ? "فريق رحّال" : g.owner === "meraaj" ? "معراج" : "مشترك"} •
+                      من {String(g.oldest).slice(0, 10)} إلى {String(g.newest).slice(0, 10)} • {g.next_action}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
+            <div className="text-[10px] text-muted-foreground">{cls.retry_policy}</div>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-2xl border card-shadow p-5 mb-5" data-testid="trace-panel">
+        <div className="flex items-center gap-2 font-head font-bold text-[#0A2540] text-sm mb-3">
+          <Radar className="w-4 h-4 text-[#D4AF37]" /> تتبّع مبلغ التسوية (معراج ↔ رحّال)
+        </div>
+        <div className="flex flex-wrap gap-2 items-end mb-3">
+          <div className="flex-1 min-w-[220px]">
+            <Label className="text-xs">معرّف الطلب الكامل</Label>
+            <Input className="h-9 text-xs" dir="ltr" value={traceId} data-testid="trace-input"
+              onChange={(e) => setTraceId(e.target.value)} />
+          </div>
+          <Button size="sm" variant="outline" onClick={loadTrace} disabled={busy || !traceId.trim()}
+            data-testid="trace-btn">تتبّع الأرقام</Button>
+        </div>
+        {trace && (
+          <div className="space-y-2 text-[11px]" data-testid="trace-result">
+            <div className={`rounded-lg px-3 py-2 border ${trace.mismatches.length ? "bg-[#FEF2F2] border-[#FECACA] text-[#B91C1C]" : "bg-[#F0FDF4] border-[#BBF7D0] text-[#15803D]"}`}>
+              <b>{trace.verdict}</b>
+            </div>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2">
+              {[["قيمة الطلب", trace.authoritative.order_amount],
+                ["عمولة المنصة", trace.authoritative.platform_commission],
+                ["عمولة المشتري", trace.authoritative.buyer_commission],
+                ["صافي البائع", trace.authoritative.seller_net],
+                ["المسترد", trace.authoritative.refund],
+                ["المحرَّر", trace.authoritative.released],
+                ["مبلغ التسوية المعتمد", trace.authoritative.settlement_amount],
+                ["العملة", trace.authoritative.currency]].map(([k, v]) => (
+                <div key={k} className="bg-[#F4F6F8] rounded-lg px-3 py-2">
+                  <div className="text-[10px] text-muted-foreground">{k}</div>
+                  <div className="tabular font-bold text-[#0A2540]">{v}</div>
+                </div>
+              ))}
+            </div>
+            <div className="text-[10px] text-muted-foreground">{trace.authoritative.source}</div>
+            {(trace.outbox_events || []).map((e) => (
+              <div key={e.id} className="bg-[#F4F6F8] rounded px-2 py-1">
+                <span className="font-semibold">{e.event}</span> • {String(e.at).slice(0, 19)} •
+                HTTP {e.http_status ?? "—"} • المُرسل: {Object.entries(e.sent_amounts || {}).map(([k, v]) => `${k}=${v}`).join(" • ") || "لا مبالغ في الحدث"}
+              </div>
+            ))}
+            {trace.mismatches.map((m, i) => (
+              <div key={i} className="bg-[#FEF2F2] border border-[#FECACA] text-[#B91C1C] rounded px-2 py-1">
+                {m.field}: معراج {m.meraaj} ← أُرسل {m.sent_to_rahal} (فرق {m.difference})
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="bg-white rounded-2xl border card-shadow p-5 mb-5" data-testid="target-panel">
         <div className="flex items-center gap-2 font-head font-bold text-[#0A2540] text-sm mb-3">
           <Settings2 className="w-4 h-4 text-[#D4AF37]" /> وجهة التكامل والتحقق منها
@@ -94,7 +199,7 @@ export default function AdminIntegrations() {
           <Row k="Base URL" v={target?.base_url || "—"} tid="target-base" />
           <Row k="المسار / الطريقة" v={`${target?.path || "—"} • ${target?.method}`} tid="target-path" />
           <Row k="هيدر التوقيع" v={target?.signature_header} tid="target-sighdr" />
-          <Row k="بصمة السر المشترك" v={target?.secret_fingerprint} tid="target-fingerprint" />
+          <Row k="بصمة السر المشترك (مُقنّعة)" v={target?.secret_fingerprint ? `••••${String(target.secret_fingerprint).slice(-4)}` : "—"} tid="target-fingerprint" />
         </div>
         <div className="text-[10px] text-muted-foreground mb-3">
           صيغة التوقيع: {target?.signature_algo} — على رحّال أن تكون بصمة سرّه مطابقة للبصمة أعلاه.
@@ -273,8 +378,11 @@ export default function AdminIntegrations() {
                 </div>
               </div>
               <div className="bg-[#FEF2F2] border border-[#FECACA] text-[#B91C1C] rounded-lg px-3 py-2" data-testid="detail-error">
-                <b>نص الخطأ الحرفي من الخادم:</b>
+                <b>سبب الفشل (مُنقّى من أي بيانات حساسة):</b>
                 <pre className="mt-1 whitespace-pre-wrap" dir="ltr">{detail.last_error || "—"}</pre>
+                <div className="mt-1 text-[10px]">
+                  المسار: {detail.endpoint || "—"} • رمز الحالة: {detail.http_status ?? "بدون استجابة"}
+                </div>
               </div>
               <div>
                 <b>سجل المحاولات:</b>
@@ -283,18 +391,14 @@ export default function AdminIntegrations() {
                     <div className="text-muted-foreground">لم يُسجَّل تفصيل للمحاولات السابقة (أحداث قديمة) — أعد المعالجة لتسجيلها.</div>
                   ) : detail.attempt_history.map((a, i) => (
                     <div key={i} className="bg-[#F4F6F8] rounded px-2 py-1" dir="ltr">
-                      {a.at?.slice(0, 19)} • HTTP {a.http_status ?? "ERR"} • {a.ms}ms • {a.error || "OK"}
+                      {a.at?.slice(0, 19)} • HTTP {a.http_status ?? "ERR"} • {a.error || "OK"}
                     </div>
                   ))}
                 </div>
               </div>
-              <div>
-                <b>الجسم الموقّع المُرسل:</b>
-                <pre className="mt-1 bg-[#F4F6F8] rounded p-2 overflow-x-auto text-[10px]" dir="ltr" data-testid="detail-body">{detail.signed_body}</pre>
-              </div>
-              <div>
-                <b>أمر إعادة الإنتاج (curl):</b>
-                <pre className="mt-1 bg-[#0A2540] text-white rounded p-2 overflow-x-auto text-[10px]" dir="ltr" data-testid="detail-curl">{detail.curl}</pre>
+              <div className="bg-[#F4F6F8] rounded-lg px-3 py-2 text-[10px] text-muted-foreground"
+                data-testid="detail-sensitive-note">
+                {detail.sensitive_note || "بيانات التوقيع والجسم الموقّع محجوبة لأسباب أمنية."}
               </div>
               <Button className="w-full bg-[#0A2540] hover:bg-[#061A2E]" data-testid="detail-retry-btn"
                 disabled={detail.diagnosis?.retry_useful === false}

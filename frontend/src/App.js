@@ -39,6 +39,7 @@ import AdminReports from "@/pages/admin/AdminReports";
 import AdminSystem from "@/pages/admin/AdminSystem";
 import AdminFinance from "@/pages/admin/AdminFinance";
 import AdminCancellations from "@/pages/admin/AdminCancellations";
+import AdminAds from "@/pages/admin/AdminAds";
 import AdminDisputes from "@/pages/admin/AdminDisputes";
 
 function Loader() {
@@ -116,6 +117,7 @@ function AppRoutes() {
           until every function is manually confirmed as transferred. */}
       <Route path="/admin/offices" element={<Navigate to="/admin/orgs" replace />} />
       <Route path="/admin/cancellations" element={<Protected role="admin"><AdminCancellations /></Protected>} />
+      <Route path="/admin/ads" element={<Protected role="admin"><AdminAds /></Protected>} />
       <Route path="/admin/disputes" element={<Protected role="admin"><AdminDisputes /></Protected>} />
 
       <Route path="*" element={<Navigate to="/" replace />} />

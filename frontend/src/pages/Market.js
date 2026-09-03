@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/Layout";
 import { money, equiv, fmtDate, PKG_TYPE, roomCustomer } from "@/lib/format";
 import { MapPin, Users, CalendarDays, Search, Landmark, Bus, Wifi, Coffee, RotateCcw, Clock, TrendingUp } from "lucide-react";
 import { PkgImage } from "@/components/PkgImage";
+import { AdSlot } from "@/components/AdSlot";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
@@ -76,6 +77,8 @@ export default function Market() {
   return (
     <>
       <PageHeader title="سوق البرامج" subtitle="ابحث وصفِّ برامج العمرة والسياحة المتاحة من المكاتب" />
+
+      <AdSlot placement="programs" limit={3} className="mb-6" />
 
       {/* Filter bar */}
       <div className="bg-white rounded-2xl border card-shadow p-4 sm:p-5 mb-6 space-y-4" data-testid="market-filters">
