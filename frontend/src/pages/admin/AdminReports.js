@@ -109,6 +109,11 @@ export default function AdminReports() {
             </div>
             <span className="text-[11px] text-muted-foreground" data-testid="report-count">
               {res.row_count} سجل {res.row_count > 500 ? "(معروض 500 — التصدير يشمل الكل)" : ""} • {fmtDate(res.generated_at)}
+              <span className={`block text-[10px] mt-1 ${res.snapshot ? "text-[#A16207]" : "text-muted-foreground"}`} data-testid="report-period-note">
+                {res.period_note}
+                {!res.snapshot && res.filters?.date_from ? ` • من ${res.filters.date_from} إلى ${res.filters.date_to || "اليوم"}` : ""}
+                {res.filters?.currency ? ` • العملة: ${res.filters.currency}` : ""}
+              </span>
             </span>
           </div>
           <table className="w-full text-xs">

@@ -34,13 +34,21 @@ REPORTS = {
 }
 
 
-def _rng(date_from, date_to):
+def _rng(date_from, date_to, field: str = "created_at"):
+    """Inclusive date range on the collection's own timestamp field.
+    `date_to` covers the whole selected day."""
     f = {}
     if date_from:
         f["$gte"] = date_from
     if date_to:
-        f["$lte"] = date_to + "T23:59:59.999999+00:00"
-    return {"created_at": f} if f else {}
+        f["$lte"] = date_to + "T23:59:59.999999z"
+    return {field: f} if f else {}
+
+
+# Reports that show CURRENT state (balances, limits, exposure) rather than dated rows.
+# A date range cannot apply to them, so they are flagged instead of silently returning
+# rows that fall outside the selected period.
+SNAPSHOT_REPORTS = {"wallets", "credit", "offices", "fx"}
 
 
 async def _run(report: str, date_from: Optional[str], date_to: Optional[str],
@@ -162,7 +170,7 @@ async def _run(report: str, date_from: Optional[str], date_to: Optional[str],
     if report == "users":
         cols = ["البريد", "الاسم/المكتب", "النوع", "الحالة", "تاريخ الإنشاء", "آخر جلسة"]
         rows = []
-        for u in await db.users.find({}, {"email": 1, "office_name": 1, "role": 1, "status": 1, "created_at": 1}).sort("created_at", -1).to_list(3000):
+        for u in await db.users.find(dict(rng), {"email": 1, "office_name": 1, "role": 1, "status": 1, "created_at": 1}).sort("created_at", -1).to_list(3000):
             s = await db.sessions.find_one({"user_id": str(u["_id"])}, sort=[("created_at", -1)])
             rows.append([u.get("email"), u.get("office_name"), u.get("role"), u.get("status"),
                          str(u.get("created_at") or "")[:10],
@@ -172,10 +180,7 @@ async def _run(report: str, date_from: Optional[str], date_to: Optional[str],
     if report == "audit":
         cols = ["التاريخ", "الكيان", "الإجراء", "المنفّذ", "السبب", "قبل", "بعد"]
         rows = []
-        f = {}
-        if date_from or date_to:
-            f = {"at": {k.replace("created_at", "at"): v
-                        for k, v in _rng(date_from, date_to)["created_at"].items()}}
+        f = _rng(date_from, date_to, "at")
         for a in await db.audit_log.find(f).sort("at", -1).to_list(3000):
             rows.append([str(a.get("at"))[:19], a.get("entity"), a.get("action"), a.get("actor"),
                          a.get("reason") or "", str(a.get("before") or ""), str(a.get("after") or "")])
@@ -222,9 +227,19 @@ async def run_report(payload: RunIn, admin: dict = Depends(require_admin)):
         raise HTTPException(400, "تقرير غير معروف")
     res = await _run(payload.report, payload.date_from, payload.date_to,
                      payload.currency, payload.office_id)
+    snapshot = payload.report in SNAPSHOT_REPORTS
     return {"report": payload.report, "title": REPORTS[payload.report],
             "columns": res["columns"], "rows": res["rows"][:500],
-            "row_count": len(res["rows"]), "generated_at": now_iso()}
+            "row_count": len(res["rows"]), "generated_at": now_iso(),
+            "filters": {"date_from": payload.date_from, "date_to": payload.date_to,
+                        "currency": payload.currency, "office_id": payload.office_id,
+                        "date_inclusive": True},
+            "snapshot": snapshot,
+            "period_note": ("تقرير لحظي يعرض الحالة الحالية (الأرصدة/السقوف/الانكشاف) — "
+                            "فلتر التاريخ لا ينطبق عليه"
+                            if snapshot else
+                            "الفترة شاملة لليومين المحددين (من بداية يوم البداية حتى نهاية "
+                            "يوم النهاية)")}
 
 
 @router.post("/reports/export")
@@ -756,7 +771,7 @@ async def upload_backup(file: UploadFile = File(...), reason: str = Form(...),
         raise HTTPException(400, "امتداد غير مدعوم — المسموح .archive.gz أو .archive.gz.enc")
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     stored = name if name.startswith("meraaj-") else f"meraaj-uploaded-{stamp}-{name}"
-    scratch = f"{tempfile.gettempdir()}/{uuid.uuid4().hex}"
+    scratch = f"{tempfile.gettempdir()}/{uuid.uuid4().hex}-{stored}"
     size = 0
     try:
         with open(scratch, "wb") as out:
@@ -771,8 +786,13 @@ async def upload_backup(file: UploadFile = File(...), reason: str = Form(...),
             await db.audit_log.insert_one({
                 "entity": "backup", "entity_id": stored, "action": "backup_upload_rejected",
                 "actor": admin.get("email"), "reason": reason.strip(),
-                "after": {"error": check["reason"]}, "at": now_iso()})
-            raise HTTPException(400, f"الملف مرفوض — {check['reason']}")
+                "after": {"error": check["reason"], "file": stored, "size": size},
+                "at": now_iso()})
+            raise HTTPException(400, f"الملف مرفوض ولم يُخزَّن — {check['reason']} "
+                                     f"(الاسم: {stored}، الحجم: {round(size / 1048576, 2)} "
+                                     f"ميجابايت). ارفع ملف نسخة صالحاً أنشأه النظام "
+                                     f"بامتداد .archive.gz أو .archive.gz.enc، وتأكد أنه "
+                                     f"مشفّر بنفس مفتاح BACKUP_PASSPHRASE.")
         with open(scratch, "rb") as fh:
             gid = await _gridfs().upload_from_stream(stored, fh, metadata={
                 "by": admin.get("email"), "at": now_iso(), "sha256": check["sha256"]})

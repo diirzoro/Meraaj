@@ -159,10 +159,10 @@ export default function AdminBackups() {
             value={drillFile} onChange={(e) => setDrillFile(e.target.value)}>
             <option value="">اختر ملف نسخة</option>
             {(d.files_on_disk || []).map((f) => (
-              <option key={f.file} value={f.file}>{f.file} — {(f.size / 1048576).toFixed(2)} MB</option>
+              <option key={f.file} value={f.file}>{`${f.file} — ${(f.size / 1048576).toFixed(2)} MB`}</option>
             ))}
             {(d.files_imported || []).map((f) => (
-              <option key={f.file} value={f.file}>{f.file} — مستوردة ({(f.size / 1048576).toFixed(2)} MB)</option>
+              <option key={f.file} value={f.file}>{`${f.file} — مستوردة (${(f.size / 1048576).toFixed(2)} MB)`}</option>
             ))}
           </select>
           <Button size="sm" variant="outline" data-testid="run-drill-btn" disabled={busy || !drillFile}
@@ -312,9 +312,9 @@ export default function AdminBackups() {
                     data-testid={`dest-opt-${x.key}`}>
                     <input type="radio" name="dest" value={x.key} checked={dest === x.key}
                       disabled={!x.available} onChange={() => setDest(x.key)} className="mt-0.5" />
-                    <span>
+                    <span className="block">
                       <b className="text-[#0A2540]">{x.ar}</b>
-                      <div className="text-muted-foreground">{x.note}</div>
+                      <span className="block text-muted-foreground">{x.note}</span>
                     </span>
                   </label>
                 ))}

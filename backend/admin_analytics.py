@@ -208,30 +208,37 @@ async def analytics(date_from: Optional[str] = None, date_to: Optional[str] = No
     except Exception:
         prev_gross, prev_count = _z(), 0
 
-    # ---- risk alerts ----
-    alerts = []
+    # ---- risk alerts (deduplicated: identical warnings must never repeat) ----
+    alerts, seen_alerts = [], set()
+
+    def add_alert(level, atype, message):
+        key = (atype, message)
+        if key in seen_alerts:
+            return
+        seen_alerts.add(key)
+        alerts.append({"level": level, "type": atype, "message": message})
+
     for nw in negative_wallets[:10]:
-        alerts.append({"level": "critical", "type": "negative_balance",
-                       "message": f"رصيد سالب لـ {nw['name']}: {nw['amount']} {nw['currency']}"})
+        add_alert("critical", "negative_balance",
+                  f"رصيد سالب لـ {nw['name']}: {nw['amount']} {nw['currency']}")
     if attention["overdue_approvals"]:
-        alerts.append({"level": "critical", "type": "overdue_approval",
-                       "message": f"{attention['overdue_approvals']} طلب تجاوز مهلة اعتماد البائع"})
+        add_alert("critical", "overdue_approval",
+                  f"{attention['overdue_approvals']} طلب تجاوز مهلة اعتماد البائع")
     if attention["failed_outbox"]:
-        alerts.append({"level": "warning", "type": "integration",
-                       "message": f"{attention['failed_outbox']} حدث لم يُسلَّم إلى رحّال"})
+        add_alert("warning", "integration",
+                  f"{attention['failed_outbox']} حدث لم يُسلَّم إلى رحّال")
     if attention["open_disputes"]:
-        alerts.append({"level": "warning", "type": "dispute",
-                       "message": f"{attention['open_disputes']} نزاع مفتوح"})
+        add_alert("warning", "dispute", f"{attention['open_disputes']} نزاع مفتوح")
     if attention["cancellation_requests"]:
-        alerts.append({"level": "warning", "type": "cancellation",
-                       "message": f"{attention['cancellation_requests']} طلب إلغاء بانتظار القرار"})
+        add_alert("warning", "cancellation",
+                  f"{attention['cancellation_requests']} طلب إلغاء بانتظار القرار")
     big = await db.bookings.find({**base, "amount_charged": {"$gte": 50000}},
                                  {"package_title": 1, "amount_charged": 1, "currency": 1}
                                  ).sort("amount_charged", -1).to_list(3)
     for b in big:
-        alerts.append({"level": "info", "type": "high_value",
-                       "message": f"عملية بقيمة مرتفعة: {b.get('package_title')} — "
-                                  f"{round(b.get('amount_charged', 0), 2)} {b.get('currency')}"})
+        add_alert("info", "high_value",
+                  f"عملية بقيمة مرتفعة: {b.get('package_title')} — "
+                  f"{round(b.get('amount_charged', 0), 2)} {b.get('currency')}")
 
     return {
         "range": {"from": df, "to": dt, "period": period},

@@ -117,3 +117,13 @@
 - مجموعات: `rahal_outbox`, `rahal_sim_inbox`, `settings`, `notification_templates`,
   `notification_log`, `notifications`, `sessions`, `user_roles`, `office_staff`,
   `office_branches`, `offices`, `backups`, `backup_drills`, `audit_log`, `admin_tasks`.
+
+## تحديث 2026-06 (إصلاحات ما بعد Iteration 14 — بدون أي نشر)
+- تأكيد إصلاح `POST /api/admin/backups/upload`: يُحفظ الملف المؤقت بامتداده الأصلي فأصبح `_inspect`
+  يفكّ تشفير `.archive.gz.enc` بنجاح — اختبار `test_valid_backup_accepted` ناجح.
+- `GET /api/admin/bookings/{id}/financials`: إضافة حارس للمراجع غير ObjectId (سجلات رحّال/قديمة)
+  بدل 404 مضلّل — `finance.py::_party`.
+- إزالة تحذيرات DOM/Hydration داخل `<option>` في `AdminBackups.js` و`AdminMaintenance.js`
+  (تسميات مُجمّعة كنص واحد) — سجل الكونسول نظيف.
+- تحسين عرض أعمدة `AdminCommissions` (whitespace-nowrap للحالة والنوع).
+- فلترة تواريخ التقارير: تم التحقق سابقاً أنها شاملة للحدّين (لا تغيير مطلوب).

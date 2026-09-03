@@ -115,9 +115,17 @@ async def booking_financials_endpoint(booking_id: str, admin: dict = Depends(req
         raise HTTPException(404, "الحجز غير موجود")
     txns = await db.transactions.find({"ref": booking_id}).sort("created_at", 1).to_list(300)
     parties = {}
+    async def _party(raw):
+        """Legacy/Rahaal rows can carry a non-ObjectId reference; that must not 404 the page."""
+        try:
+            return await db.users.find_one({"_id": oid(raw)}, {"office_name": 1, "email": 1})
+        except Exception:
+            return await db.users.find_one({"rahal_office_ref": raw},
+                                           {"office_name": 1, "email": 1})
+
     for pid, label in (("buyer_id", "buyer"), ("seller_id", "seller")):
         if b.get(pid):
-            u = await db.users.find_one({"_id": oid(b[pid])}, {"office_name": 1, "email": 1})
+            u = await _party(b[pid])
             parties[label] = {"id": b[pid], "name": (u or {}).get("office_name"),
                               "email": (u or {}).get("email")}
     rows = []

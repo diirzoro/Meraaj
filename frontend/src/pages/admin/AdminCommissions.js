@@ -89,15 +89,15 @@ export default function AdminCommissions() {
                 ) : d.rules.map((r) => (
                   <tr key={r.id} className="border-t" data-testid={`rule-${r.id}`}>
                     <td className="px-3 py-2 font-semibold text-[#0A2540]">{r.name}</td>
-                    <td className="px-3 py-2">{r.mode === "percent" ? "نسبة" : "قيمة ثابتة"}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{r.mode === "percent" ? "نسبة" : "قيمة ثابتة"}</td>
                     <td className="px-3 py-2 tabular">{r.mode === "percent" ? `${(r.value * 100).toFixed(2)}%` : r.value}</td>
                     <td className="px-3 py-2">{LABEL.charge_side[r.charge_side] || r.charge_side}</td>
                     <td className="px-3 py-2 text-[10px] text-muted-foreground">
                       {LABEL.buyer_type[r.scope?.buyer_type]} • {LABEL.currency[r.scope?.currency]} • {LABEL.package_type[r.scope?.package_type]} • {LABEL.source[r.scope?.source]}
                     </td>
                     <td className="px-3 py-2 tabular">{r.priority}</td>
-                    <td className="px-3 py-2">
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full border ${r.active ? "bg-[#F0FDF4] text-[#15803D] border-[#BBF7D0]" : "bg-[#F4F6F8] text-[#64748B]"}`}>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap ${r.active ? "bg-[#F0FDF4] text-[#15803D] border-[#BBF7D0]" : "bg-[#F4F6F8] text-[#64748B]"}`}>
                         {r.active ? "نشطة" : "معطلة"}
                       </span>
                     </td>

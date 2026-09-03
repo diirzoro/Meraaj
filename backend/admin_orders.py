@@ -179,9 +179,19 @@ async def admin_booking_full(booking_id: str, admin: dict = Depends(require_admi
     b = await db.bookings.find_one({"_id": oid(booking_id)})
     if not b:
         raise HTTPException(404, "الحجز غير موجود")
-    pkg = await db.packages.find_one({"_id": oid(b["package_id"])}) if b.get("package_id") else None
-    buyer = await db.users.find_one({"_id": oid(b["buyer_id"])}) if b.get("buyer_id") else None
-    seller = await db.users.find_one({"_id": oid(b["seller_id"])}) if b.get("seller_id") else None
+    async def by_id(coll, raw):
+        """Legacy/Rahaal rows can carry a non-ObjectId reference; a bad id must render the
+        page without that party instead of failing the whole request with a 500."""
+        if not raw:
+            return None
+        try:
+            return await coll.find_one({"_id": oid(raw)})
+        except Exception:
+            return await coll.find_one({"rahal_ref": raw}) or None
+
+    pkg = await by_id(db.packages, b.get("package_id"))
+    buyer = await by_id(db.users, b.get("buyer_id"))
+    seller = await by_id(db.users, b.get("seller_id"))
     docs = await db.traveler_documents.find({"booking_id": booking_id}).sort("created_at", 1).to_list(500)
     events = await db.booking_events.find({"booking_id": booking_id}).sort("at", 1).to_list(500)
     notes = await db.admin_notes.find({"booking_id": booking_id}).sort("created_at", -1).to_list(200)

@@ -91,7 +91,7 @@ export default function AdminMaintenance() {
                   <select className="h-8 rounded-md border border-input px-2 text-xs bg-white"
                     data-testid={`retention-${x.kind}`} value={x.retention_days} disabled={busy}
                     onChange={(e) => setRetention(x.kind, e.target.value)}>
-                    {d.retention_choices.map((c) => <option key={c} value={c}>{c} يوماً</option>)}
+                    {d.retention_choices.map((c) => <option key={c} value={c}>{`${c} يوماً`}</option>)}
                   </select>
                 </td>
                 <td className="px-3 py-2.5 text-[10px] text-muted-foreground max-w-[240px]">{x.note}</td>
