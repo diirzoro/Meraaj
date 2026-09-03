@@ -81,6 +81,31 @@ export const roomCustomer = (customer, cat = "adult") => {
   return cat === "adult" ? toNum(customer) : null;
 };
 
+// Internal code → Arabic label for display (DB values never change).
+export const VALUE_AR = {
+  active: "نشط", cancelled: "ملغي", completed: "مكتمل", pending: "قيد الانتظار",
+  requested: "مطلوب", approved: "معتمد", rejected: "مرفوض", expired: "منتهي",
+  legacy: "طلب قديم (تم قبل تفعيل الموافقات)", draft: "مسودة", listed: "معروض",
+  archived: "مؤرشف", suspended: "موقوف", paid: "مدفوع", closed: "مغلق",
+  blue: "قيد التسجيل", yellow: "صدرت التأشيرات", green: "تم التفويج",
+  office: "مكتب", individual: "فرد", marketer: "مسوّق", staff: "موظف",
+  super_admin: "الإدارة العليا", admin: "إدارة", rahal: "رحّال", meraaj: "معراج",
+  manual: "يدوي", uploaded: "مستوردة", success: "ناجحة", failed: "فاشلة",
+  valid: "سليمة", invalid: "غير سليمة", percent: "نسبة", fixed: "قيمة ثابتة",
+  delivered: "مُسلَّم", under_review: "قيد المراجعة", executed: "منفّذ",
+  preview: "بيئة المعاينة", test: "بيئة الاختبار", live: "البيئة الحقيقية",
+  unknown: "غير محددة", promotion: "عرض ترويجي", ad: "إعلان",
+  pending_approval: "بانتظار الاعتماد", paused: "موقوف مؤقتاً",
+};
+
+export const ar = (v) => {
+  if (v === null || v === undefined || v === "") return "—";
+  if (typeof v === "boolean") return v ? "نعم" : "لا";
+  return VALUE_AR[String(v).trim()] || String(v);
+};
+
+export const CCY_AR = { SAR: "ريال سعودي", USD: "دولار أمريكي", YER: "ريال يمني" };
+
 export const fmtDate = (s) => {
   if (!s) return "-";
   try { return new Date(s).toLocaleDateString("ar-EG", { year: "numeric", month: "short", day: "numeric" }); }

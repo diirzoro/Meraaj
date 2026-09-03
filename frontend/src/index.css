@@ -71,18 +71,24 @@ h1, h2, h3, h4, .font-head {
 
 ::selection { background: #0A2540; color: #fff; }
 
-/* Responsive safety: prevent accidental horizontal overflow on narrow devices */
-html, body, #root { max-width: 100%; overflow-x: hidden; }
+/* Responsive safety: prevent accidental horizontal overflow on narrow devices.
+   `overflow-x: hidden` on html breaks wheel scrolling in some browsers, so the page
+   keeps a normal vertical scroll container and only the X axis is clipped on body. */
+html { max-width: 100%; overflow-y: auto; }
+body, #root { max-width: 100%; overflow-x: clip; }
+/* Mouse wheel must scroll the page from anywhere inside it */
+html, body, #root { overscroll-behavior-y: auto; }
 img { max-width: 100%; }
 
-/* Independent horizontal scroll for wide tables (page itself stays fixed horizontally) */
+/* Independent horizontal scroll for wide tables — the wheel must still scroll the page */
 .table-scroll {
   width: 100%;
   max-width: 100%;
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: visible;
   -webkit-overflow-scrolling: touch;
   touch-action: pan-x pan-y;
+  overscroll-behavior-x: contain;
 }
 /* Prevent long unbreakable text/numbers from overflowing cards */
 body { overflow-wrap: anywhere; }
@@ -92,8 +98,8 @@ body { overflow-wrap: anywhere; }
 }
 
 /* --- Native (Capacitor) touch & feel; harmless on web --- */
-html { overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
-body { overscroll-behavior-y: none; -webkit-tap-highlight-color: transparent; }
+html { -webkit-text-size-adjust: 100%; }
+body { -webkit-tap-highlight-color: transparent; }
 button, a, [role="button"], label, .sidebar-link {
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;

@@ -4,6 +4,7 @@ import api, { apiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { PageHeader } from "@/components/Layout";
 import { PkgImage } from "@/components/PkgImage";
+import { AdSlot } from "@/components/AdSlot";
 import { money, equiv, fmtDate, PKG_TYPE, roomCustomer } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -264,6 +265,8 @@ export default function PackageDetail() {
   return (
     <>
       <PageHeader title={pkg.title} subtitle={`${PKG_TYPE[pkg.type] || pkg.type} • ${pkg.seller_office_name}`} />
+
+      <AdSlot placement="program_details" limit={2} variant="compact" className="mb-6" />
 
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">

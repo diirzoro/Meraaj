@@ -94,7 +94,20 @@ export default function AdminReports() {
             <Search className="w-4 h-4" /> تشغيل التقرير
           </Button>
           <Button size="sm" variant="outline" onClick={exportCsv} disabled={!res} data-testid="export-report-btn">
-            <Download className="w-4 h-4" /> تصدير Excel
+            <Download className="w-4 h-4" /> تصدير CSV
+          </Button>
+          <Button size="sm" variant="outline" disabled={!res} data-testid="export-xlsx-btn"
+            onClick={async () => {
+              try {
+                const r = await api.post("/admin/reports/export-xlsx", body(), { responseType: "blob" });
+                const url = URL.createObjectURL(new Blob([r.data], {
+                  type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+                const a = document.createElement("a");
+                a.href = url; a.download = `meraaj-${sel}.xlsx`; a.click(); URL.revokeObjectURL(url);
+                toast.success("تم تصدير ملف Excel (ملخص + تفاصيل + قاموس بيانات)");
+              } catch (e) { toast.error(apiError(e)); }
+            }}>
+            <FileSpreadsheet className="w-4 h-4" /> تصدير Excel
           </Button>
           <Button size="sm" variant="outline" disabled={!res} data-testid="export-pdf-btn"
             onClick={async () => {
@@ -129,6 +142,24 @@ export default function AdminReports() {
         )}
       </div>
 
+      {res && res.summary && res.summary.length > 0 && (
+        <div className="bg-white rounded-2xl border card-shadow p-4 mb-5" data-testid="report-summary">
+          <div className="text-xs font-semibold text-[#0A2540] mb-2">
+            الملخص المالي — نفس أرقام التصدير (PDF / Excel / CSV)
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+            {res.summary.map(([k, v]) => (
+              <div key={k} className="bg-[#F4F6F8] rounded-lg px-3 py-2" data-testid={`summary-${k}`}>
+                <div className="text-[10px] text-muted-foreground">{k}</div>
+                <div className="tabular font-bold text-[#0A2540] text-xs">
+                  {Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {res && (
         <div className="bg-white rounded-2xl border card-shadow overflow-x-auto" data-testid="report-result">
           <div className="p-4 border-b flex items-center justify-between">
@@ -148,8 +179,7 @@ export default function AdminReports() {
             <thead className="bg-[#F4F6F8] text-muted-foreground">
               <tr>{res.columns.map((c) => <th key={c} className="text-right font-semibold px-3 py-2 whitespace-nowrap">{c}</th>)}</tr>
             </thead>
-            <tbody>
-              {res.rows.length === 0 ? (
+            <tbody>              {res.rows.length === 0 ? (
                 <tr><td colSpan={res.columns.length} className="text-center py-10 text-muted-foreground" data-testid="report-empty">لا توجد بيانات</td></tr>
               ) : res.rows.map((r, i) => {
                 const isTotal = r[r.length - 2] === "إجمالي";

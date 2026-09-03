@@ -49,3 +49,51 @@ trip_passports, traveler_documents, cancellation_evidence.
   (فهارس + `$setOnInsert` + إنشاء حساب المدير إن لم يوجد).
 - **استعادة القاعدة العاملة محميّة**: معطّلة افتراضياً (`ALLOW_RESTORE`) ومرفوضة على Live،
   والاستعادة المعزولة تعمل على قاعدة مؤقتة فقط.
+
+## تحديث (جلسة الإصلاح النهائية 2026-06)
+### مجموعة جديدة واحدة
+- `advertisements` — الإعلانات والعروض (الحقول: kind, title, description_ar, advertiser_name,
+  advertiser_type, paid, contract_value, currency, start_date, end_date, image_url, target_url,
+  audience, placements[], priority, cta_label, linked_package_id, linked_office_id, status,
+  views, clicks, created_by, created_by_id, approved_by, approved_at, rejection_reason,
+  created_at, updated_at).
+### فهرس جديد واحد
+- `advertisements(status, placements, start_date, end_date)` — يُنشأ عند بدء التشغيل، Idempotent.
+### حقول جديدة على مجموعات قائمة
+- لا شيء. (كل ما أُضيف في هذه الجلسة إما مجموعة جديدة أو حسابات عرض مشتقّة وقت القراءة.)
+### Startup writes — القائمة الفعلية الكاملة (كما في `backend/server.py::startup` وبالترتيب)
+1. فهارس مباشرة: `users.email` (unique)، `packages.rahal_ref`،
+   `trip_passports(package_id, passport_norm)` (unique)،
+   `traveler_documents(booking_id, registrant_index)`، `cancellation_evidence.booking_id`،
+   و**`advertisements(status, placements, start_date, end_date)`**.
+2. `seed_admin()` — ينشئ حساب الإدارة من ENV إن لم يوجد؛ وإن وُجد يحدّث كلمة المرور/الدور
+   لنفس السجل فقط ولا يحذف أي مستخدم. Idempotent.
+3. `ensure_indexes()` (admin_ops) — فهارس فقط. Idempotent.
+4. `seed_notification_templates()` (orgs) — `upsert` بـ`$setOnInsert` فقط، فلا يستبدل تعديلات
+   الإدارة على القوالب. Idempotent.
+5. `ensure_default_rule()` (commissions) — **السلوك الفعلي في الكود**: يخرج فوراً إذا كان
+   `commission_rules.count_documents({}) > 0`، أي أنه **ينشئ القاعدتين الافتراضيتين فقط عندما
+   تكون المجموعة فارغة تماماً**، ولا يعدّل ولا يحدّث ولا يحذف أي قاعدة موجودة إطلاقاً
+   (لا `update`، لا `upsert`، لا `delete`). عند الفراغ يُنشئ:
+   «عمولة المنصة الأساسية — المكاتب» (`mode: percent`, القيمة = `platform_pct()` وهي نفس
+   النسبة المستخدمة أصلاً 10%, `charge_side: buyer`, `active: true`) و«قاعدة المشتري الفرد
+   (B2C) — معطّلة افتراضياً» (`active: false`). القيمة مطابقة للسلوك القائم فلا يتغيّر أي
+   حساب مالي؛ الغرض جعل القاعدة ظاهرة وقابلة للإدارة.
+
+لا يوجد أي ترحيل آخر، ولا أي سكربت حذف أو كتابة جماعية يعمل عند بدء التشغيل.
+### مجموعات GridFS لصور الإعلانات
+- رفع صور/بانرات الإعلانات يستخدم **GridFS bucket باسم `ad_images`**
+  (`AsyncIOMotorGridFSBucket(db, bucket_name="ad_images")` في `backend/ads.py`).
+- المجموعات الفعلية التي ينشئها MongoDB/GridFS تلقائياً عند أول رفع:
+  - `ad_images.files` (بيانات الملف الوصفية: الاسم، الحجم، `metadata.content_type`,
+    `metadata.by`, `metadata.at`)
+  - `ad_images.chunks` (محتوى الصورة مقسّماً إلى أجزاء)
+- خصائصها: **Additive** بالكامل • **خاصة بملفات صور الإعلانات فقط** •
+  **لا تستبدل أي بيانات موجودة** (كل رفع ينشئ ملفاً جديداً بمعرّف جديد) •
+  **لا تعدّل المحافظ ولا الطلبات ولا أي معاملة مالية** • لا تُحذف تلقائياً بأي وظيفة صيانة.
+- التقديم للقراءة عبر `GET /api/ads/image/{file_id}` (قراءة فقط).
+
+### تأكيدات
+- لا drop/dropDatabase/dropCollection ولا deleteMany تلقائي ولا استبدال قاعدة ولا إعادة تعيين
+  أرصدة/طلبات/مستخدمين في أي كود أُضيف.
+- التقارير والمطابقة وتتبّع التسوية: قراءة فقط 100%.

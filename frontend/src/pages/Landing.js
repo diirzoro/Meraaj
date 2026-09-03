@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { money, fmtDate, PKG_TYPE, roomCustomer } from "@/lib/format";
 import { PkgImage } from "@/components/PkgImage";
+import { AdSlot } from "@/components/AdSlot";
 import { Button } from "@/components/ui/button";
 import {
   Network, Store, Wallet, ShieldCheck, ArrowLeft, CheckCircle2,
@@ -105,6 +106,11 @@ export default function Landing() {
             </div>
           </div>
         </div>
+      </section>
+
+      {/* Advertisements & promotions (approved + active only) */}
+      <section className="max-w-6xl mx-auto px-5 sm:px-8 pt-16">
+        <AdSlot placement="homepage" limit={2} variant="banner" />
       </section>
 
       {/* Latest programs (public browsing) */}

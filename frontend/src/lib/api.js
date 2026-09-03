@@ -18,10 +18,20 @@ export const setToken = (t) => {
 };
 
 export function apiError(e) {
+  const status = e?.response?.status;
   const d = e?.response?.data?.detail;
-  if (d == null) return "حدث خطأ. حاول مرة أخرى.";
+  if (d == null) {
+    if (status === 401) return "انتهت الجلسة — يرجى تسجيل الدخول مرة أخرى.";
+    if (status === 403) return "لا تملك صلاحية تنفيذ هذا الإجراء.";
+    if (status === 404) return "العنصر المطلوب غير موجود.";
+    if (status === 500) return "حدث خطأ داخلي في الخادم. تم تسجيل الخطأ، حاول مرة أخرى أو راجع الدعم التقني.";
+    if (status === 503) return "الخدمة غير متاحة حالياً — بعض أدوات الخادم غير مهيّأة.";
+    if (!status) return "تعذّر الاتصال بالخادم — تحقّق من الشبكة.";
+    return "حدث خطأ. حاول مرة أخرى.";
+  }
   if (typeof d === "string") return d;
-  if (Array.isArray(d)) return d.map((x) => x?.msg || JSON.stringify(x)).join(" ");
+  if (Array.isArray(d)) return d.map((x) => x?.msg || "قيمة غير صحيحة").join(" • ");
+  if (typeof d === "object") return d.message || d.detail || "حدث خطأ. حاول مرة أخرى.";
   return String(d);
 }
 

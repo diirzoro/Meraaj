@@ -36,6 +36,29 @@ TXN_LABEL = {
 }
 
 
+async def safe_account(raw):
+    """Account lookup that NEVER raises. Legacy/Rahaal rows can carry a non-ObjectId
+    office_id; `oid()` would abort the whole request with 404 and make the page look empty."""
+    if not raw:
+        return None
+    from bson import ObjectId
+    from bson.errors import InvalidId
+    try:
+        o = ObjectId(raw)
+    except (InvalidId, TypeError):
+        return await db.users.find_one({"rahal_office_ref": raw},
+                                       {"office_name": 1, "email": 1, "phone": 1,
+                                        "wallet": 1, "role": 1})
+    return await db.users.find_one({"_id": o}, {"office_name": 1, "email": 1, "phone": 1,
+                                                "wallet": 1, "role": 1})
+
+
+def account_label(u, fallback="حساب غير معروف"):
+    if not u:
+        return fallback
+    return u.get("office_name") or u.get("email") or fallback
+
+
 # ---------------- unified ledger ----------------
 def _ledger_filter(office_id, currency, txn_type, date_from, date_to, q):
     f = {}
@@ -135,11 +158,30 @@ def booking_reconciliation(b: dict, txns: list) -> dict:
 
     platform_movement = round(abs(s([t for t in txns if t.get("type")
                                      in ("commission_adjustment", "marketer_commission")])), 2)
-    platform_retained = round(buyer_net - released, 2)
+    derived = round(buyer_net - released, 2)
     ledger_raw_sum = round(s(txns), 2)
+
+    # SINGLE SOURCE OF TRUTH for the commission: the order's own snapshot (platform_fee,
+    # written when the order was priced). The derived difference is only a cross-check and
+    # is never presented as the commission when a snapshot exists.
+    has_snapshot = b.get("platform_fee") is not None
+    snapshot = round(float(b.get("platform_fee") or 0), 2)
+    if has_snapshot:
+        platform_retained = snapshot
+        commission_source = "snapshot"
+    elif platform_movement:
+        platform_retained = platform_movement
+        commission_source = "movement"
+    else:
+        platform_retained = derived
+        commission_source = "derived_difference"
+    unexplained = round(derived - platform_retained, 2)
 
     return {
         "currency": cur,
+        "commission_snapshot": snapshot if has_snapshot else None,
+        "derived_difference": derived,
+        "unexplained_difference": unexplained,
         "buyer_debits": buyer_debits,
         "buyer_credits": buyer_credits,
         "buyer_net": buyer_net,
@@ -149,9 +191,14 @@ def booking_reconciliation(b: dict, txns: list) -> dict:
         "seller_escrow_open": escrow_open,
         "platform_retained": platform_retained,
         "platform_movement": platform_movement,
-        "commission_source": "movement" if platform_movement else "derived_difference",
+        "commission_source": commission_source,
+        "commission_source_label": {
+            "snapshot": "عمولة الطلب المسجّلة وقت التسعير (المصدر المعتمد)",
+            "movement": "حركة عمولة مستقلّة في الدفتر",
+            "derived_difference": "مشتقّة من الفرق (لا توجد عمولة مسجّلة على الطلب)",
+        }[commission_source],
         "ledger_raw_sum": ledger_raw_sum,
-        "balanced": bool(abs(buyer_net - (released + platform_retained)) < 0.01),
+        "balanced": bool(abs(unexplained) < 0.01),
         "identity": "صافي المشتري = المُحرَّر للبائع + المحتفظ به للمنصة",
         "explanation": [
             f"محفظة المشتري: خرج {buyer_debits} {cur} ورجع {buyer_credits} {cur} "
@@ -159,11 +206,11 @@ def booking_reconciliation(b: dict, txns: list) -> dict:
             f"سجل البائع: إيراد معلّق {escrow_in} {cur} — مُحرَّر {released} {cur} — "
             f"أُلغي مع الاسترداد {escrow_void} {cur} — ما زال معلّقاً {escrow_open} {cur}. "
             f"الإيراد المعلّق قيد عرض لا يدخل الرصيد القابل للسحب.",
-            (f"عمولة المنصة {platform_retained} {cur} مشتقّة من الفرق "
-             f"(لا توجد حركة مستقلة لها في الدفتر): {buyer_debits} − {buyer_credits} "
-             f"− {released} = {platform_retained} {cur}.")
-            if not platform_movement else
-            f"عمولة المنصة {platform_movement} {cur} مسجَّلة كحركة مستقلّة في الدفتر.",
+            (f"عمولة المنصة المعتمدة {platform_retained} {cur} "
+             f"({'مسجّلة على الطلب وقت التسعير' if commission_source == 'snapshot' else 'حركة مستقلّة في الدفتر' if commission_source == 'movement' else 'مشتقّة من الفرق'})."
+             + (f" الفرق المحسوب من الحركات {derived} {cur}، والفارق غير المفسَّر "
+                f"{unexplained} {cur}." if abs(unexplained) >= 0.01 else
+                " ويتطابق مع الفرق المحسوب من الحركات.")),
             f"مجموع أسطر الدفتر الحسابي المباشر = {ledger_raw_sum} {cur}، وهو ليس رصيداً: "
             f"يجمع حركات محفظة المشتري مع قيود الإيراد المعلّق للبائع، والصحيح مقارنة كل "
             f"طرف على حدة كما أعلاه.",
@@ -212,9 +259,17 @@ async def booking_financials_endpoint(booking_id: str, admin: dict = Depends(req
 async def ledger(office_id: Optional[str] = None, currency: Optional[str] = None,
                  txn_type: Optional[str] = None, date_from: Optional[str] = None,
                  date_to: Optional[str] = None, q: Optional[str] = None,
+                 office_q: Optional[str] = None, ref: Optional[str] = None,
                  page: int = 1, limit: int = Query(50, le=500),
                  admin: dict = Depends(require_admin)):
     f = _ledger_filter(office_id, currency, txn_type, date_from, date_to, q)
+    if ref:
+        f["ref"] = {"$regex": ref, "$options": "i"}
+    if office_q:
+        ids = [str(u["_id"]) async for u in db.users.find(
+            {"$or": [{"office_name": {"$regex": office_q, "$options": "i"}},
+                     {"email": {"$regex": office_q, "$options": "i"}}]}, {"_id": 1})]
+        f["office_id"] = {"$in": ids}
     total = await db.transactions.count_documents(f)
     docs = await db.transactions.find(f).sort("created_at", -1) \
         .skip(max(0, (page - 1) * limit)).limit(limit).to_list(limit)
@@ -222,8 +277,7 @@ async def ledger(office_id: Optional[str] = None, currency: Optional[str] = None
     for d in docs:
         oid_ = d.get("office_id")
         if oid_ and oid_ not in names:
-            u = await db.users.find_one({"_id": oid(oid_)}, {"office_name": 1, "email": 1})
-            names[oid_] = (u or {}).get("office_name") or (u or {}).get("email") or "—"
+            names[oid_] = account_label(await safe_account(oid_), "—")
     items = []
     for d in serialize(docs):
         d["office_name"] = names.get(d.get("office_id"), "—")
@@ -248,15 +302,27 @@ async def ledger(office_id: Optional[str] = None, currency: Optional[str] = None
 async def export_ledger(office_id: Optional[str] = None, currency: Optional[str] = None,
                         txn_type: Optional[str] = None, date_from: Optional[str] = None,
                         date_to: Optional[str] = None, q: Optional[str] = None,
+                        office_q: Optional[str] = None, ref: Optional[str] = None,
                         admin: dict = Depends(require_admin)):
     f = _ledger_filter(office_id, currency, txn_type, date_from, date_to, q)
+    if ref:
+        f["ref"] = {"$regex": ref, "$options": "i"}
+    if office_q:
+        ids = [str(u["_id"]) async for u in db.users.find(
+            {"$or": [{"office_name": {"$regex": office_q, "$options": "i"}},
+                     {"email": {"$regex": office_q, "$options": "i"}}]}, {"_id": 1})]
+        f["office_id"] = {"$in": ids}
     docs = await db.transactions.find(f).sort("created_at", -1).to_list(20000)
     buf = io.StringIO()
     buf.write("\ufeff")  # BOM so Excel opens Arabic correctly
     w = csv.writer(buf)
     w.writerow(["التاريخ", "الحساب", "نوع الحركة", "الوصف", "المرجع", "المبلغ", "العملة"])
+    names = {}
     for d in docs:
-        w.writerow([d.get("created_at"), d.get("office_id"),
+        o = d.get("office_id")
+        if o and o not in names:
+            names[o] = account_label(await safe_account(o), "—")
+        w.writerow([d.get("created_at"), names.get(o, "—"),
                     TXN_LABEL.get(d.get("type"), d.get("type")), d.get("description"),
                     d.get("ref"), d.get("amount"), d.get("currency")])
     buf.seek(0)
@@ -324,7 +390,7 @@ async def voucher(txn_id: str, admin: dict = Depends(require_admin)):
     t = await db.transactions.find_one({"_id": oid(txn_id)})
     if not t:
         raise HTTPException(404, "الحركة غير موجودة")
-    u = await db.users.find_one({"_id": oid(t["office_id"])}, {"office_name": 1, "email": 1, "phone": 1})
+    u = await safe_account(t.get("office_id"))
     amount = float(t.get("amount") or 0)
     kind = "receipt" if amount >= 0 else "payment"
     if t.get("type") in ("p2p_in", "p2p_out"):
@@ -506,10 +572,16 @@ async def reconciliation_preview(admin: dict = Depends(require_admin)):
         exists = await db.transactions.find_one({"office_id": m["office_id"],
                                                  "currency": m["currency"],
                                                  "type": "opening_balance"})
-        u = await db.users.find_one({"_id": oid(m["office_id"])},
-                                    {"email": 1, "wallet": 1, "role": 1})
+        u = await safe_account(m["office_id"])
         cw = ((u or {}).get("wallet") or {}).get(m["currency"]) or {}
-        rows.append({**m, "proposed_entry": m["difference"],
+        rows.append({**m,
+                     # explicit dry-run vocabulary requested for the reconciliation screen
+                     "expected": m["wallet_total"],
+                     "actual": m["ledger_total"],
+                     "reason": ("فرق بين رصيد المحفظة ومجموع قيود الدفتر لهذا الحساب — "
+                                "يُوثَّق بقيد افتتاحي واحد دون تعديل الرصيد"),
+                     "order": None,
+                     "proposed_entry": m["difference"],
                      "already_adjusted": bool(exists),
                      "entry_type": "opening_balance",
                      "account_email": (u or {}).get("email"),
@@ -564,8 +636,7 @@ async def withdrawal_detail(wid: str, admin: dict = Depends(require_admin)):
     w = await db.withdrawals.find_one({"_id": oid(wid)})
     if not w:
         raise HTTPException(404, "طلب السحب غير موجود")
-    u = await db.users.find_one({"_id": oid(w["office_id"])},
-                                {"office_name": 1, "email": 1, "phone": 1, "wallet": 1})
+    u = await safe_account(w.get("office_id"))
     d = serialize(w)
     d["stage"] = w.get("stage") or ("closed" if w.get("status") == "approved" else "requested")
     d["stage_label"] = STAGE_LABEL.get(d["stage"], d["stage"])

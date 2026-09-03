@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { Search, Download, Printer, Scale, RotateCcw, FileText } from "lucide-react";
 
 export default function AdminLedger() {
-  const [f, setF] = useState({ q: "", currency: "", txn_type: "", date_from: "", date_to: "", page: 1 });
+  const [f, setF] = useState({ q: "", office_q: "", ref: "", currency: "", txn_type: "", date_from: "", date_to: "", page: 1 });
   const [d, setD] = useState({ items: [], total: 0, inflow: {}, outflow: {}, net: {}, types: {} });
   const [recon, setRecon] = useState(null);
   const [prev, setPrev] = useState(null);
@@ -16,6 +16,7 @@ export default function AdminLedger() {
   const [voucher, setVoucher] = useState(null);
   const [voucherId, setVoucherId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
 
   const qs = useCallback(() => {
     const p = new URLSearchParams();
@@ -26,7 +27,11 @@ export default function AdminLedger() {
 
   const load = useCallback(() => {
     setLoading(true);
-    api.get(`/admin/ledger?${qs()}`).then((r) => setD(r.data)).finally(() => setLoading(false));
+    setErr("");
+    api.get(`/admin/ledger?${qs()}`)
+      .then((r) => setD(r.data))
+      .catch((e) => { setErr(apiError(e)); toast.error(apiError(e)); })
+      .finally(() => setLoading(false));
   }, [qs]);
   useEffect(() => { load(); }, [load]);
 
@@ -67,9 +72,15 @@ export default function AdminLedger() {
           <input value={f.q} onChange={(e) => setF({ ...f, q: e.target.value, page: 1 })} data-testid="ledger-search"
             placeholder="ابحث بالوصف أو المرجع" className="w-full h-9 rounded-md border border-input pr-9 pl-3 text-xs" />
         </div>
+        <input value={f.office_q} onChange={(e) => setF({ ...f, office_q: e.target.value, page: 1 })}
+          data-testid="ledger-office" placeholder="المكتب / المستخدم"
+          className="h-9 rounded-md border border-input px-3 text-xs min-w-[150px]" />
+        <input value={f.ref} onChange={(e) => setF({ ...f, ref: e.target.value, page: 1 })}
+          data-testid="ledger-ref" placeholder="مرجع الطلب"
+          className="h-9 rounded-md border border-input px-3 text-xs min-w-[130px]" />
         <select value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value, page: 1 })} data-testid="ledger-currency"
           className="h-9 rounded-md border border-input px-2 text-xs">
-          <option value="">كل العملات</option><option value="SAR">ريال</option><option value="USD">دولار</option>
+          <option value="">كل العملات</option><option value="SAR">ريال سعودي</option><option value="USD">دولار أمريكي</option>
         </select>
         <select value={f.txn_type} onChange={(e) => setF({ ...f, txn_type: e.target.value, page: 1 })} data-testid="ledger-type"
           className="h-9 rounded-md border border-input px-2 text-xs">
@@ -80,7 +91,7 @@ export default function AdminLedger() {
           data-testid="ledger-from" className="h-9 rounded-md border border-input px-2 text-xs" />
         <input type="date" value={f.date_to} onChange={(e) => setF({ ...f, date_to: e.target.value, page: 1 })}
           data-testid="ledger-to" className="h-9 rounded-md border border-input px-2 text-xs" />
-        <Button size="sm" variant="outline" onClick={() => setF({ q: "", currency: "", txn_type: "", date_from: "", date_to: "", page: 1 })}
+        <Button size="sm" variant="outline" onClick={() => setF({ q: "", office_q: "", ref: "", currency: "", txn_type: "", date_from: "", date_to: "", page: 1 })}
           data-testid="ledger-reset"><RotateCcw className="w-3.5 h-3.5" /> تصفير</Button>
         <Button size="sm" className="bg-[#0A2540] hover:bg-[#061A2E]" onClick={exportCsv} data-testid="ledger-export">
           <Download className="w-4 h-4" /> تصدير Excel/CSV
@@ -102,6 +113,13 @@ export default function AdminLedger() {
           {d.total} حركة
         </span>
       </div>
+
+      {err && (
+        <div className="bg-[#FEF2F2] border border-[#FECACA] text-[#B91C1C] rounded-xl px-4 py-3 text-xs mb-5"
+          data-testid="ledger-error">
+          تعذّر تحميل الدفتر: {err}
+        </div>
+      )}
 
       <div className="bg-white rounded-2xl border card-shadow overflow-x-auto" data-testid="ledger-table">
         <table className="w-full text-xs min-w-[880px]">
@@ -264,10 +282,9 @@ export default function AdminLedger() {
                   <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2 mb-2">
                     <SM label="صافي المشتري" v={money(stmt.reconciliation.buyer_net, stmt.reconciliation.currency)} tid="rec-buyer-net" />
                     <SM label="المُحرَّر للبائع" v={money(stmt.reconciliation.seller_released, stmt.reconciliation.currency)} tid="rec-released" />
-                    <SM label={stmt.reconciliation.commission_source === "movement"
-                      ? "عمولة المنصة (حركة مسجَّلة)" : "عمولة المنصة (مشتقّة من الفرق)"}
+                    <SM label={`عمولة المنصة — ${stmt.reconciliation.commission_source === "snapshot" ? "المصدر المعتمد" : stmt.reconciliation.commission_source === "movement" ? "حركة مسجّلة" : "مشتقّة من الفرق"}`}
                       v={money(stmt.reconciliation.platform_retained, stmt.reconciliation.currency)} tid="rec-commission" />
-                    <SM label="إيراد معلّق قائم" v={money(stmt.reconciliation.seller_escrow_open, stmt.reconciliation.currency)} tid="rec-escrow-open" />
+                    <SM label="فرق غير مفسَّر" v={money(stmt.reconciliation.unexplained_difference || 0, stmt.reconciliation.currency)} tid="rec-unexplained" />
                   </div>
                   <div className={`text-[11px] rounded-lg px-3 py-2 mb-2 ${stmt.reconciliation.balanced
                     ? "bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0]"
