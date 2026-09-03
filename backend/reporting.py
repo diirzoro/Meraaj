@@ -16,7 +16,7 @@ VALUE_LABELS = {
     # booking status
     "active": "نشط", "cancelled": "ملغي", "completed": "مكتمل", "pending": "قيد الانتظار",
     "requested": "مطلوب", "approved": "معتمد", "rejected": "مرفوض", "expired": "منتهي",
-    "legacy": "قديم (قبل نظام الموافقات)", "draft": "مسودة", "listed": "معروض",
+    "legacy": "طلب قديم (تم قبل تفعيل الموافقات)", "draft": "مسودة", "listed": "معروض",
     "archived": "مؤرشف", "suspended": "موقوف", "paid": "مدفوع", "closed": "مغلق",
     "under_review": "قيد المراجعة", "approved_internal": "اعتماد داخلي",
     "sent_to_accounting": "أُحيل للمحاسبة", "executed": "منفّذ",
@@ -30,6 +30,16 @@ VALUE_LABELS = {
     "success": "ناجحة", "failed": "فاشلة", "valid": "سليمة", "invalid": "غير سليمة",
     "percent": "نسبة", "fixed": "قيمة ثابتة", "true": "نعم", "false": "لا",
     "delivered": "مُسلَّم",
+    # transaction types (shown in ledger/report columns)
+    "topup": "إيداع رصيد", "booking_debit": "خصم حجز", "booking_escrow": "إيراد معلّق للبائع",
+    "hold_release": "تحرير إيراد للبائع", "cancel_refund": "استرداد إلغاء",
+    "cancel_deduction": "خصم إلغاء", "dispute_release": "تحرير بعد نزاع",
+    "dispute_refund": "استرداد بعد نزاع", "p2p_out": "تحويل صادر", "p2p_in": "تحويل وارد",
+    "withdrawal": "سحب رصيد", "marketer_commission": "عمولة مسوّق",
+    "marketer_commission_reversal": "عكس عمولة مسوّق",
+    "seller_compensation": "تعويض بائع", "commission_adjustment": "تسوية عمولة",
+    # approval / package lifecycle extras
+    "staged": "قيد التجهيز", "sent": "أُرسل", "opening_balance": "قيد افتتاحي",
     "pending_approval": "بانتظار الاعتماد", "paused": "موقوف مؤقتاً",
     "ad": "إعلان", "promotion": "عرض ترويجي", "preview": "بيئة المعاينة",
     "test": "بيئة الاختبار", "live": "البيئة الحقيقية", "unknown": "غير محددة",

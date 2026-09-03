@@ -27,6 +27,46 @@ RETENTION = 7
 ENV_LABEL = {"preview": "بيئة المعاينة (Emergent)", "test": "بيئة الاختبار (Test)",
              "live": "البيئة الحقيقية (Live)", "unknown": "غير معروفة"}
 
+# Human labels for the audit log — shared by the audit screen AND the audit report,
+# so both always read identically.
+ENTITY_AR = {"settings": "الإعدادات", "booking": "طلب", "credit": "الائتمان",
+             "commission": "العمولات", "package": "برنامج", "backup": "نسخة احتياطية",
+             "integration": "التكامل", "user": "مستخدم", "org": "مؤسسة",
+             "advertisement": "إعلان", "reconciliation": "تسوية", "maintenance": "صيانة",
+             "withdrawal": "سحب", "role": "دور"}
+ACTION_AR = {"settings_updated": "تحديث إعدادات", "backup_run": "تنفيذ نسخة احتياطية",
+             "backup_uploaded": "استيراد نسخة احتياطية", "webhook_probe": "فحص وجهة رحّال",
+             "webhook_target_updated": "تحديث وجهة رحّال",
+             "outbox_manual_retry": "إعادة إرسال حدث", "user_created": "إنشاء مستخدم",
+             "user_updated": "تعديل مستخدم", "password_reset": "إعادة كلمة المرور",
+             "force_logout": "إخراج قسري", "org_created": "إنشاء مؤسسة",
+             "org_updated": "تعديل مؤسسة", "credit_granted": "منح سقف ائتماني",
+             "credit_frozen": "تجميد سقف", "ad_created": "إنشاء إعلان",
+             "ad_updated": "تعديل إعلان", "ad_active": "اعتماد ونشر إعلان",
+             "ad_pending_approval": "إرسال إعلان للاعتماد",
+             "ad_paused": "إيقاف إعلان مؤقتاً", "ad_archived": "أرشفة إعلان",
+             "ad_draft": "إرجاع إعلان لمسودة", "technical_view": "عرض تفاصيل تقنية",
+             "ad_rejected": "رفض إعلان", "opening_balance_entry": "قيد افتتاحي موثّق"}
+
+
+def _audit_label(v):
+    from reporting import label as _lbl
+    return _lbl(v)
+
+
+def audit_human(v) -> str:
+    """Readable one-line summary instead of a raw JSON dump."""
+    from reporting import label as _lbl, FIELD_LABELS as _FL
+    if v is None or v == {} or v == "":
+        return "—"
+    if isinstance(v, dict):
+        return " • ".join(
+            f"{_FL.get(k, k)}: {_lbl(x) if not isinstance(x, (dict, list)) else '…'}"
+            for k, x in list(v.items())[:6])
+    if isinstance(v, list):
+        return "، ".join(str(_lbl(x)) for x in v[:6])
+    return str(_lbl(v))
+
 
 def _environment() -> str:
     """Explicit environment — read from ENVIRONMENT only, never inferred from data."""
@@ -259,8 +299,11 @@ async def _run(report: str, date_from: Optional[str], date_to: Optional[str],
         rows = []
         f = _rng(date_from, date_to, "at")
         for a in await db.audit_log.find(f).sort("at", -1).to_list(3000):
-            rows.append([str(a.get("at"))[:19], a.get("entity"), a.get("action"), a.get("actor"),
-                         a.get("reason") or "", str(a.get("before") or ""), str(a.get("after") or "")])
+            rows.append([str(a.get("at"))[:19],
+                         ENTITY_AR.get(a.get("entity"), a.get("entity")),
+                         ACTION_AR.get(a.get("action"), _audit_label(a.get("action"))),
+                         a.get("actor"), a.get("reason") or "",
+                         audit_human(a.get("before")), audit_human(a.get("after"))])
         return {"columns": cols, "rows": rows}
 
     if report == "fx":
@@ -408,45 +451,13 @@ async def audit_trail(entity: Optional[str] = None, actor: Optional[str] = None,
         al = actor.lower()
         out = [x for x in out if al in str(x.get("actor") or "").lower()]
     out.sort(key=lambda x: str(x.get("at") or ""), reverse=True)
-    from reporting import label as _lbl, FIELD_LABELS as _FL
-    ENTITY_AR = {"settings": "الإعدادات", "booking": "طلب", "credit": "الائتمان",
-                 "commission": "العمولات", "package": "برنامج", "backup": "نسخة احتياطية",
-                 "integration": "التكامل", "user": "مستخدم", "org": "مؤسسة",
-                 "advertisement": "إعلان", "reconciliation": "تسوية", "maintenance": "صيانة",
-                 "withdrawal": "سحب", "role": "دور"}
-    ACTION_AR = {"settings_updated": "تحديث إعدادات", "backup_run": "تنفيذ نسخة احتياطية",
-                 "backup_uploaded": "استيراد نسخة احتياطية", "webhook_probe": "فحص وجهة رحّال",
-                 "webhook_target_updated": "تحديث وجهة رحّال",
-                 "outbox_manual_retry": "إعادة إرسال حدث", "user_created": "إنشاء مستخدم",
-                 "user_updated": "تعديل مستخدم", "password_reset": "إعادة كلمة المرور",
-                 "force_logout": "إخراج قسري", "org_created": "إنشاء مؤسسة",
-                 "org_updated": "تعديل مؤسسة", "credit_granted": "منح سقف ائتماني",
-                 "credit_frozen": "تجميد سقف", "ad_created": "إنشاء إعلان",
-                 "ad_updated": "تعديل إعلان", "ad_active": "اعتماد ونشر إعلان",
-                 "ad_pending_approval": "إرسال إعلان للاعتماد",
-                 "ad_paused": "إيقاف إعلان مؤقتاً", "ad_archived": "أرشفة إعلان",
-                 "ad_draft": "إرجاع إعلان لمسودة", "technical_view": "عرض تفاصيل تقنية",
-                 "ad_rejected": "رفض إعلان", "opening_balance_entry": "قيد افتتاحي موثّق"}
-
-    def human(v):
-        """Readable one-line summary instead of a raw JSON dump."""
-        if v is None or v == {}:
-            return "—"
-        if isinstance(v, dict):
-            return " • ".join(f"{_FL.get(k, k)}: {_lbl(x) if not isinstance(x, (dict, list)) else '…'}"
-                              for k, x in list(v.items())[:6])
-        if isinstance(v, list):
-            return "، ".join(str(_lbl(x)) for x in v[:6])
-        return str(_lbl(v))
-
     items = []
     for x in out[:limit]:
         items.append({**x,
                       "entity_label": ENTITY_AR.get(x.get("entity"), x.get("entity")),
-                      "action_label": ACTION_AR.get(x.get("action"),
-                                                    _lbl(x.get("action"))),
-                      "before_text": human(x.get("before")),
-                      "after_text": human(x.get("after")),
+                      "action_label": ACTION_AR.get(x.get("action"), _audit_label(x.get("action"))),
+                      "before_text": audit_human(x.get("before")),
+                      "after_text": audit_human(x.get("after")),
                       "technical": {"before": x.get("before"), "after": x.get("after")}})
     return {"items": items, "total": len(out)}
 

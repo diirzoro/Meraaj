@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { AdPreview } from "@/components/AdSlot";
 import { Megaphone, Plus, Eye, MousePointerClick, CheckCircle2, XCircle, PauseCircle } from "lucide-react";
 
 const EMPTY = {
@@ -26,6 +27,7 @@ export default function AdminAds() {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [pv, setPv] = useState("banner");
 
   const load = useCallback(() => {
     api.get(`/admin/ads?kind=${tab}`).then((r) => setD(r.data)).catch((e) => toast.error(apiError(e)));
@@ -41,15 +43,47 @@ export default function AdminAds() {
     finally { setBusy(false); }
   };
 
-  const save = () => act(async () => {
-    const payload = { ...form, kind: tab, contract_value: Number(form.contract_value) || 0,
-      priority: Number(form.priority) || 10,
-      linked_package_id: form.linked_package_id || null,
-      linked_office_id: form.linked_office_id || null };
-    if (editId) await api.patch(`/admin/ads/${editId}`, payload);
-    else await api.post("/admin/ads", payload);
-    setOpen(false); setForm(EMPTY); setEditId(null);
-  }, editId ? "تم تحديث الإعلان" : "تم إنشاء الإعلان كمسودة");
+  const missing = (() => {
+    const m = [];
+    if (!form.title || form.title.trim().length < 3) m.push("العنوان (3 أحرف على الأقل)");
+    if (!form.advertiser_name || form.advertiser_name.trim().length < 2) m.push("اسم المعلن");
+    if (!form.start_date) m.push("تاريخ البداية");
+    if (!form.end_date) m.push("تاريخ النهاية");
+    if (form.start_date && form.end_date && form.end_date < form.start_date) m.push("تاريخ النهاية يجب أن يكون بعد البداية");
+    if (!form.placements || form.placements.length === 0) m.push("مكان عرض واحد على الأقل");
+    if (form.paid && !(Number(form.contract_value) > 0)) m.push("قيمة العقد للإعلان المدفوع");
+    if (!form.reason || form.reason.trim().length < 3) m.push("سبب الإجراء (3 أحرف على الأقل)");
+    return m;
+  })();
+
+  const save = () => {
+    if (missing.length) {
+      toast.error(`أكمل الحقول الناقصة: ${missing.join(" • ")}`);
+      return;
+    }
+    act(async () => {
+      const payload = { ...form, kind: tab, contract_value: Number(form.contract_value) || 0,
+        priority: Number(form.priority) || 10,
+        linked_package_id: form.linked_package_id || null,
+        linked_office_id: form.linked_office_id || null };
+      if (editId) await api.patch(`/admin/ads/${editId}`, payload);
+      else await api.post("/admin/ads", payload);
+      setOpen(false); setForm(EMPTY); setEditId(null);
+    }, editId ? "تم تحديث الإعلان" : "تم إنشاء الإعلان كمسودة");
+  };
+
+  const uploadImage = async (file) => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await api.post("/admin/ads/upload-image", fd,
+        { headers: { "Content-Type": "multipart/form-data" } });
+      setForm((f) => ({ ...f, image_url: r.data.image_url }));
+      toast.success(`تم رفع الصورة (${(r.data.size / 1024).toFixed(0)} كيلوبايت)`);
+    } catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
+  };
 
   const setStatus = (id, status, ask) => {
     const reason = window.prompt(ask);
@@ -189,8 +223,24 @@ export default function AdminAds() {
               onChange={(e) => setForm({ ...form, start_date: e.target.value })} /></F>
             <F label="تاريخ النهاية"><Input type="date" className="h-9 text-xs" value={form.end_date} data-testid="ad-end"
               onChange={(e) => setForm({ ...form, end_date: e.target.value })} /></F>
-            <F label="رابط الصورة/البانر"><Input className="h-9 text-xs" dir="ltr" value={form.image_url} data-testid="ad-image"
-              onChange={(e) => setForm({ ...form, image_url: e.target.value })} /></F>
+            <div className="sm:col-span-2">
+              <Label className="text-[11px]">صورة / بانر الإعلان</Label>
+              <div className="flex flex-wrap gap-2 items-center">
+                <input type="file" accept="image/png,image/jpeg,image/webp,image/gif"
+                  data-testid="ad-image-file" className="text-[11px]"
+                  onChange={(e) => uploadImage(e.target.files?.[0])} />
+                {form.image_url && (
+                  <img src={form.image_url} alt="بانر" data-testid="ad-image-thumb"
+                    className="w-16 h-10 object-cover rounded border" />
+                )}
+              </div>
+              <div className="text-[10px] text-muted-foreground mt-1">
+                ارفع الصورة من جهازك (حتى 5 ميجابايت) — أو استخدم رابطاً خارجياً كخيار إضافي:
+              </div>
+              <Input className="h-9 text-xs mt-1" dir="ltr" value={form.image_url} data-testid="ad-image"
+                placeholder="اختياري: رابط صورة خارجي"
+                onChange={(e) => setForm({ ...form, image_url: e.target.value })} />
+            </div>
             <F label="الرابط المستهدف"><Input className="h-9 text-xs" dir="ltr" value={form.target_url} data-testid="ad-target-url"
               onChange={(e) => setForm({ ...form, target_url: e.target.value })} /></F>
             <F label="نص زر الإجراء"><Input className="h-9 text-xs" value={form.cta_label} data-testid="ad-cta"
@@ -228,12 +278,30 @@ export default function AdminAds() {
                 onChange={(e) => setForm({ ...form, reason: e.target.value })} />
             </div>
           </div>
+          <div className="border-t pt-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-semibold text-[#0A2540]">معاينة آمنة (لا تُحتسب مشاهدة)</span>
+              <div className="flex gap-1">
+                {[["banner", "بانر الرئيسية"], ["card", "بطاقة سوق البرامج"], ["compact", "شريط تفاصيل البرنامج"]].map(([k, l]) => (
+                  <button key={k} type="button" data-testid={`preview-variant-${k}`}
+                    onClick={() => setPv(k)}
+                    className={`text-[10px] px-2 py-1 rounded border ${pv === k ? "bg-[#0A2540] text-white border-[#0A2540]" : "bg-white"}`}>{l}</button>
+                ))}
+              </div>
+            </div>
+            <AdPreview ad={{ ...form, kind: tab }} variant={pv} />
+          </div>
+          {missing.length > 0 && (
+            <div className="bg-[#FEFCE8] border border-[#FEF08A] text-[#A16207] rounded-lg px-3 py-2 text-[11px]"
+              data-testid="ad-missing-fields">
+              <b>الحقول الناقصة:</b> {missing.join(" • ")}
+            </div>
+          )}
           <div className="text-[10px] text-muted-foreground">
             يُنشأ العنصر كمسودة ولا يظهر للجمهور إلا بعد إرساله للاعتماد واعتماده من مسؤول آخر.
           </div>
           <Button className="bg-[#0A2540] hover:bg-[#061A2E] w-full" data-testid="ad-save-btn"
-            disabled={busy || !form.title || !form.advertiser_name || !form.start_date || !form.end_date || form.reason.trim().length < 3}
-            onClick={save}>{busy ? "جارٍ الحفظ..." : "حفظ"}</Button>
+            disabled={busy} onClick={save}>{busy ? "جارٍ الحفظ..." : "حفظ"}</Button>
         </DialogContent>
       </Dialog>
 

@@ -128,3 +128,4 @@ pytest.ini
 **/backend_test.py
 /test_reports/
 /test_result.md
+frontend/node_modules/.cache/default-development/14.pack

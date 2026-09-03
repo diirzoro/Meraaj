@@ -7,7 +7,8 @@ approved + active + in-window items. Fully additive: no existing collection is m
 from datetime import datetime, timezone
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from db import db, serialize, oid, now_iso
@@ -229,6 +230,8 @@ async def public_ads(placement: str = Query("homepage"), limit: int = 6):
                     "image_url": d.get("image_url"), "target_url": d.get("target_url"),
                     "cta_label": d.get("cta_label") or "التفاصيل",
                     "advertiser_name": d.get("advertiser_name"),
+                    "end_date": d.get("end_date"),
+                    "kind_label": KINDS.get(d.get("kind"), "إعلان"),
                     "paid": bool(d.get("paid")),
                     "linked_package_id": d.get("linked_package_id")})
     return {"items": out, "placement": placement,
@@ -236,17 +239,55 @@ async def public_ads(placement: str = Query("homepage"), limit: int = 6):
 
 
 @router.post("/ads/{ad_id}/view")
-async def count_view(ad_id: str):
+async def count_view(ad_id: str, source: str = "public"):
+    """Only public/user-facing impressions are counted. Admin previews pass source=admin
+    (or anything else) and are ignored so Views/CTR stay clean."""
+    if source != "public":
+        return {"ok": True, "counted": False, "reason": "عرض إداري لا يُحتسب"}
     await db.advertisements.update_one({"_id": oid(ad_id), "status": "active"},
                                       {"$inc": {"views": 1}})
-    return {"ok": True}
+    return {"ok": True, "counted": True}
 
 
 @router.post("/ads/{ad_id}/click")
-async def count_click(ad_id: str):
+async def count_click(ad_id: str, source: str = "public"):
+    if source != "public":
+        return {"ok": True, "counted": False, "reason": "نقرة إدارية لا تُحتسب"}
     await db.advertisements.update_one({"_id": oid(ad_id), "status": "active"},
                                        {"$inc": {"clicks": 1}})
-    return {"ok": True}
+    return {"ok": True, "counted": True}
+
+
+@router.post("/admin/ads/upload-image")
+async def upload_ad_image(file: UploadFile = File(...), admin: dict = Depends(require_admin)):
+    """Direct banner upload from the admin's device (stored in GridFS). URL stays optional."""
+    if (file.content_type or "") not in ("image/png", "image/jpeg", "image/webp", "image/gif"):
+        raise HTTPException(400, "نوع الصورة غير مدعوم — استخدم PNG أو JPEG أو WEBP أو GIF")
+    data = await file.read()
+    if len(data) > 5 * 1024 * 1024:
+        raise HTTPException(400, "حجم الصورة يتجاوز 5 ميجابايت")
+    from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+    bucket = AsyncIOMotorGridFSBucket(db, bucket_name="ad_images")
+    fid = await bucket.upload_from_stream(file.filename or "banner",
+                                          data, metadata={"content_type": file.content_type,
+                                                          "by": admin.get("email"),
+                                                          "at": now_iso()})
+    return {"image_url": f"/api/ads/image/{fid}", "size": len(data),
+            "content_type": file.content_type}
+
+
+@router.get("/ads/image/{file_id}")
+async def ad_image(file_id: str):
+    from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+    bucket = AsyncIOMotorGridFSBucket(db, bucket_name="ad_images")
+    try:
+        stream = await bucket.open_download_stream(oid(file_id))
+    except Exception:
+        raise HTTPException(404, "الصورة غير موجودة")
+    data = await stream.read()
+    ctype = (stream.metadata or {}).get("content_type", "image/png")
+    return Response(content=data, media_type=ctype,
+                    headers={"Cache-Control": "public, max-age=86400"})
 
 
 @router.get("/ads/mine")

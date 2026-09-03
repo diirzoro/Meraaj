@@ -266,7 +266,7 @@ export default function PackageDetail() {
     <>
       <PageHeader title={pkg.title} subtitle={`${PKG_TYPE[pkg.type] || pkg.type} • ${pkg.seller_office_name}`} />
 
-      <AdSlot placement="program_details" limit={2} className="mb-6" />
+      <AdSlot placement="program_details" limit={2} variant="compact" className="mb-6" />
 
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">

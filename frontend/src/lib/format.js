@@ -85,7 +85,7 @@ export const roomCustomer = (customer, cat = "adult") => {
 export const VALUE_AR = {
   active: "نشط", cancelled: "ملغي", completed: "مكتمل", pending: "قيد الانتظار",
   requested: "مطلوب", approved: "معتمد", rejected: "مرفوض", expired: "منتهي",
-  legacy: "قديم (قبل نظام الموافقات)", draft: "مسودة", listed: "معروض",
+  legacy: "طلب قديم (تم قبل تفعيل الموافقات)", draft: "مسودة", listed: "معروض",
   archived: "مؤرشف", suspended: "موقوف", paid: "مدفوع", closed: "مغلق",
   blue: "قيد التسجيل", yellow: "صدرت التأشيرات", green: "تم التفويج",
   office: "مكتب", individual: "فرد", marketer: "مسوّق", staff: "موظف",

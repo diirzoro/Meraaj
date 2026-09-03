@@ -78,7 +78,7 @@ export default function Market() {
     <>
       <PageHeader title="سوق البرامج" subtitle="ابحث وصفِّ برامج العمرة والسياحة المتاحة من المكاتب" />
 
-      <AdSlot placement="programs" limit={3} className="mb-6" />
+      <AdSlot placement="programs" limit={3} variant="card" className="mb-6" />
 
       {/* Filter bar */}
       <div className="bg-white rounded-2xl border card-shadow p-4 sm:p-5 mb-6 space-y-4" data-testid="market-filters">

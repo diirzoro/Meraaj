@@ -110,7 +110,7 @@ export default function Landing() {
 
       {/* Advertisements & promotions (approved + active only) */}
       <section className="max-w-6xl mx-auto px-5 sm:px-8 pt-16">
-        <AdSlot placement="homepage" limit={3} />
+        <AdSlot placement="homepage" limit={2} variant="banner" />
       </section>
 
       {/* Latest programs (public browsing) */}
