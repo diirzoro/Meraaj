@@ -9,9 +9,27 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { FileSpreadsheet, Download, Printer, Search } from "lucide-react";
 
+const PERIODS = [["day", "يومي"], ["week", "أسبوعي"], ["month", "شهري"],
+  ["year", "سنوي"], ["custom", "مخصص"]];
+
+const iso = (d) => d.toISOString().slice(0, 10);
+
+// Quick period presets: they only prefill the two inclusive date filters below.
+const periodRange = (k) => {
+  const today = new Date();
+  if (k === "custom") return { date_from: "", date_to: "" };
+  const to = iso(today);
+  const from = new Date(today);
+  if (k === "week") from.setDate(from.getDate() - 6);
+  if (k === "month") from.setDate(1);
+  if (k === "year") { from.setMonth(0); from.setDate(1); }
+  return { date_from: iso(from), date_to: to };
+};
+
 export default function AdminReports() {
   const [cat, setCat] = useState({ reports: {}, saved: [] });
   const [sel, setSel] = useState("sales");
+  const [period, setPeriod] = useState("custom");
   const [flt, setFlt] = useState({ date_from: "", date_to: "", currency: "" });
   const [res, setRes] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -39,7 +57,7 @@ export default function AdminReports() {
 
   return (
     <>
-      <PageHeader title="مركز التقارير" subtitle="١٣ تقريراً بفلاتر وحفظ وطباعة وتصدير إلى Excel — والطباعة تنتج PDF عربي صحيح الاتجاه" />
+      <PageHeader title="مركز التقارير" subtitle="١٤ تقريراً بفترات جاهزة (يومي/أسبوعي/شهري/سنوي/مخصص) وفلاتر وحفظ وطباعة وتصدير إلى Excel وPDF عربي" />
 
       <div className="bg-white rounded-2xl border card-shadow p-4 mb-5" data-testid="reports-panel">
         <div className="flex flex-wrap gap-2 mb-4">
@@ -50,13 +68,23 @@ export default function AdminReports() {
             </button>
           ))}
         </div>
+        <div className="flex flex-wrap gap-2 items-center mb-3" data-testid="report-periods">
+          <span className="text-[11px] text-muted-foreground">الفترة:</span>
+          {PERIODS.map(([k, label]) => (
+            <button key={k} type="button" data-testid={`period-${k}`}
+              onClick={() => { setPeriod(k); const r = periodRange(k); setFlt({ ...flt, ...r }); }}
+              className={`px-3 h-8 rounded-lg text-[11px] font-semibold border transition-colors ${period === k ? "bg-[#D4AF37] text-[#0A2540] border-[#D4AF37]" : "bg-white text-[#0A2540] hover:bg-[#F4F6F8]"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
         <div className="flex flex-wrap gap-3 items-end">
           <div><Label className="text-[11px]">من تاريخ</Label>
             <Input type="date" className="h-9 text-xs" value={flt.date_from} data-testid="report-from"
-              onChange={(e) => setFlt({ ...flt, date_from: e.target.value })} /></div>
+              onChange={(e) => { setPeriod("custom"); setFlt({ ...flt, date_from: e.target.value }); }} /></div>
           <div><Label className="text-[11px]">إلى تاريخ</Label>
             <Input type="date" className="h-9 text-xs" value={flt.date_to} data-testid="report-to"
-              onChange={(e) => setFlt({ ...flt, date_to: e.target.value })} /></div>
+              onChange={(e) => { setPeriod("custom"); setFlt({ ...flt, date_to: e.target.value }); }} /></div>
           <div><Label className="text-[11px]">العملة</Label>
             <select value={flt.currency} onChange={(e) => setFlt({ ...flt, currency: e.target.value })}
               data-testid="report-currency" className="h-9 rounded-md border border-input px-2 text-xs bg-white">

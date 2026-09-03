@@ -31,6 +31,7 @@ REPORTS = {
     "offices": "أداء المكاتب والبائعين", "users": "نشاط المستخدمين",
     "audit": "سجل التدقيق", "escrow": "الأموال المعلقة والمحررة",
     "fx": "مقارنة العملات وأسعار الصرف",
+    "order_financials": "التفصيل المالي للطلبات (مدين/دائن/معلّق/محرَّر)",
 }
 
 
@@ -79,6 +80,34 @@ async def _run(report: str, date_from: Optional[str], date_to: Optional[str],
                      d.get("seller_office_name"), d.get("seats"), d.get("amount_charged", 0),
                      d.get("net_cost_total", 0), d.get("status"),
                      d.get("approval_status") or "legacy", d.get("currency")] for d in docs]
+        return {"columns": cols, "rows": rows}
+
+    if report == "order_financials":
+        # READ-ONLY: reuses the existing statement helper, no formula or balance is touched.
+        from finance import booking_financials
+        f = dict(base)
+        if office_id:
+            f["$or"] = [{"buyer_id": office_id}, {"seller_id": office_id}]
+        docs = await db.bookings.find(f).sort("created_at", -1).to_list(2000)
+        cols = ["التاريخ", "الطلب", "البرنامج", "المشتري", "البائع", "مدين (خصم)",
+                "دائن (استرداد)", "المدفوع", "المعلّق", "المحرَّر", "المسترد",
+                "المستحق على المشتري", "المستحق للبائع", "عمولة المنصة", "صافي المنصة",
+                "المحوَّل", "المتبقي", "الحالة", "العملة"]
+        rows = []
+        for d in docs:
+            ref = str(d["_id"])
+            txns = await db.transactions.find({"ref": ref}).to_list(300)
+            fin = booking_financials(d, txns)
+            debit = round(sum(abs(float(t.get("amount") or 0)) for t in txns
+                              if float(t.get("amount") or 0) < 0), 2)
+            credit = round(sum(float(t.get("amount") or 0) for t in txns
+                               if float(t.get("amount") or 0) > 0), 2)
+            rows.append([d.get("created_at", "")[:10], ref[-6:], d.get("package_title"),
+                         d.get("buyer_office_name"), d.get("seller_office_name"),
+                         debit, credit, fin["paid"], fin["pending"], fin["released"],
+                         fin["refunded"], fin["due_from_buyer"], fin["due_to_seller"],
+                         fin["platform_commission"], fin["platform_net"],
+                         fin["transferred"], fin["remaining"], fin["status"], fin["currency"]])
         return {"columns": cols, "rows": rows}
 
     if report == "wallets":
