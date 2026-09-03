@@ -113,6 +113,30 @@ export default function AdminOrderDetail() {
               <F label="نوع الغرفة" v={b.room_type || "—"} />
               <F label="تسليم رحّال" v={b.delivery_status || "—"} />
             </div>
+            {d.reconciliation && (
+              <div className="mt-4 border-t pt-3" data-testid="fin-reconciliation">
+                <div className="text-xs font-semibold text-[#0A2540] mb-2">
+                  مطابقة البيان المالي مع الدفتر (عرض وتدقيق فقط)
+                </div>
+                <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2 mb-2">
+                  <F label="صافي المشتري (خرج − رجع)" v={money(d.reconciliation.buyer_net, c)} tid="rec-buyer-net" />
+                  <F label="المُحرَّر للبائع فعلياً" v={money(d.reconciliation.seller_released, c)} tid="rec-released" />
+                  <F label={d.reconciliation.commission_source === "movement"
+                    ? "عمولة المنصة (حركة مسجَّلة)" : "عمولة المنصة (مشتقّة من الفرق)"}
+                    v={money(d.reconciliation.platform_retained, c)} tid="rec-commission" />
+                  <F label="إيراد معلّق ما زال قائماً" v={money(d.reconciliation.seller_escrow_open, c)} tid="rec-escrow-open" />
+                </div>
+                <div className={`text-[11px] rounded-lg px-3 py-2 mb-2 ${d.reconciliation.balanced
+                  ? "bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0]"
+                  : "bg-[#FEFCE8] text-[#A16207] border border-[#FEF08A]"}`} data-testid="rec-identity">
+                  {d.reconciliation.identity} — {d.reconciliation.balanced ? "مطابقة سليمة" : "تحتاج مراجعة"}
+                </div>
+                <ul className="text-[10px] text-muted-foreground space-y-1 list-disc pr-4" data-testid="rec-explanation">
+                  {d.reconciliation.explanation.map((line, i) => <li key={i}>{line}</li>)}
+                </ul>
+                <div className="text-[10px] text-muted-foreground mt-1">{d.reconciliation.note}</div>
+              </div>
+            )}
             {d.transactions.length > 0 && (
               <div className="mt-4 border-t pt-3">
                 <div className="text-xs font-semibold text-[#0A2540] mb-2">
@@ -359,8 +383,8 @@ const Card = ({ title, icon: Icon, children, tid }) => (
   </div>
 );
 
-const F = ({ label, v, big }) => (
-  <div className="bg-[#F4F6F8] rounded-lg px-3 py-2">
+const F = ({ label, v, big, tid }) => (
+  <div className="bg-[#F4F6F8] rounded-lg px-3 py-2" data-testid={tid}>
     <div className="text-[10px] text-muted-foreground">{label}</div>
     <div className={`tabular font-bold text-[#0A2540] ${big ? "text-lg" : "text-sm"}`}>{v}</div>
   </div>

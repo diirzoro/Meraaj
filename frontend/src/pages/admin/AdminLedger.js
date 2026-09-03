@@ -256,6 +256,30 @@ export default function AdminLedger() {
                 <SM label="المتبقي" v={money(stmt.financials.remaining, stmt.financials.currency)} tone="hold" tid="stmt-remaining" />
               </div>
               <div className="text-[10px] text-muted-foreground">{stmt.financials.note}</div>
+              {stmt.reconciliation && (
+                <div className="border-t pt-3" data-testid="stmt-reconciliation">
+                  <div className="text-xs font-semibold text-[#0A2540] mb-2">
+                    مطابقة البيان المالي مع الدفتر (عرض وتدقيق فقط)
+                  </div>
+                  <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2 mb-2">
+                    <SM label="صافي المشتري" v={money(stmt.reconciliation.buyer_net, stmt.reconciliation.currency)} tid="rec-buyer-net" />
+                    <SM label="المُحرَّر للبائع" v={money(stmt.reconciliation.seller_released, stmt.reconciliation.currency)} tid="rec-released" />
+                    <SM label={stmt.reconciliation.commission_source === "movement"
+                      ? "عمولة المنصة (حركة مسجَّلة)" : "عمولة المنصة (مشتقّة من الفرق)"}
+                      v={money(stmt.reconciliation.platform_retained, stmt.reconciliation.currency)} tid="rec-commission" />
+                    <SM label="إيراد معلّق قائم" v={money(stmt.reconciliation.seller_escrow_open, stmt.reconciliation.currency)} tid="rec-escrow-open" />
+                  </div>
+                  <div className={`text-[11px] rounded-lg px-3 py-2 mb-2 ${stmt.reconciliation.balanced
+                    ? "bg-[#F0FDF4] text-[#15803D] border border-[#BBF7D0]"
+                    : "bg-[#FEFCE8] text-[#A16207] border border-[#FEF08A]"}`} data-testid="rec-identity">
+                    {stmt.reconciliation.identity} — {stmt.reconciliation.balanced ? "مطابقة سليمة" : "تحتاج مراجعة"}
+                  </div>
+                  <ul className="text-[10px] text-muted-foreground space-y-1 list-disc pr-4" data-testid="rec-explanation">
+                    {stmt.reconciliation.explanation.map((line, i) => <li key={i}>{line}</li>)}
+                  </ul>
+                  <div className="text-[10px] text-muted-foreground mt-1">{stmt.reconciliation.note}</div>
+                </div>
+              )}
               <div className="border-t pt-3">
                 <div className="text-xs font-semibold text-[#0A2540] mb-2">سجل الحركات المالية الكامل ({stmt.movements.length})</div>
                 <div className="space-y-1.5" data-testid="stmt-movements">

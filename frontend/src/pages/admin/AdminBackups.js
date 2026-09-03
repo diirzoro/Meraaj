@@ -26,6 +26,7 @@ export default function AdminBackups() {
   const [confirmRun, setConfirmRun] = useState(false);
   const [upReason, setUpReason] = useState("");
   const [upFile, setUpFile] = useState(null);
+  const [upRes, setUpRes] = useState(null);
   const [check, setCheck] = useState(null);
   const [restore, setRestore] = useState({ file: "", confirm_phrase: "", reason: "" });
   const [busy, setBusy] = useState(false);
@@ -138,12 +139,32 @@ export default function AdminBackups() {
               const fd = new FormData();
               fd.append("file", upFile);
               fd.append("reason", upReason.trim());
+              setUpRes(null);
               const r = await api.post("/admin/backups/upload", fd,
                 { headers: { "Content-Type": "multipart/form-data" } });
+              setUpRes(r.data);
               toast.success(`تم استيراد النسخة بنجاح — التحقق: سليمة (${(r.data.size / 1048576).toFixed(2)} MB)`);
               setUpFile(null); setUpReason("");
             })}>استيراد وتحقق</Button>
         </div>
+        {upRes && (
+          <div className="mt-3 rounded-xl border border-[#BBF7D0] bg-[#F0FDF4] px-3 py-2 text-[11px] text-[#15803D] space-y-1"
+            data-testid="upload-summary">
+            <div className="font-bold">تم قبول الملف وتخزينه بعد التحقق الكامل</div>
+            <div data-testid="upload-summary-file">اسم الملف: <b dir="ltr">{upRes.file}</b></div>
+            <div data-testid="upload-summary-size">الحجم: <b>{(upRes.size / 1048576).toFixed(2)} ميجابايت</b></div>
+            <div data-testid="upload-summary-enc">
+              التشفير: <b>{upRes.encrypted ? "مشفّر AES-256-CBC + PBKDF2 (فُكّ التشفير بنجاح)" : "غير مشفّر"}</b>
+            </div>
+            <div data-testid="upload-summary-sha" className="break-all">
+              بصمة التحقق SHA-256: <b dir="ltr">{upRes.sha256}</b>
+            </div>
+            <div data-testid="upload-summary-result">
+              نتيجة التحقق: <b>{upRes.integrity === "valid" ? "سليمة (أرشيف mongodump صالح)" : upRes.integrity}</b> •
+              التخزين: <b>{upRes.storage === "gridfs" ? "GridFS داخل قاعدة البيانات" : upRes.storage}</b>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-2xl border card-shadow p-5 mb-5" data-testid="drill-panel">

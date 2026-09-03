@@ -106,6 +106,73 @@ def booking_financials(b: dict, txns: list) -> dict:
     }
 
 
+def booking_reconciliation(b: dict, txns: list) -> dict:
+    """READ-ONLY reconciliation bridge between the ledger movements and the statement figures.
+    It only sums the already-posted transactions per party so the reader can see WHY the raw
+    ledger sum differs from the statement: buyer-wallet cash and seller held-revenue records
+    live on two different sides and must not be added together. Nothing is recalculated,
+    posted or settled here."""
+    cur = b.get("currency") or "USD"
+    buyer_id, seller_id = b.get("buyer_id"), b.get("seller_id")
+    ESCROW = ("booking_escrow",)
+    RELEASE = ("hold_release", "dispute_release", "settlement")
+
+    def s(rows):
+        return round(sum(float(t.get("amount") or 0) for t in rows), 2)
+
+    buyer_rows = [t for t in txns if t.get("office_id") == buyer_id]
+    seller_rows = [t for t in txns if t.get("office_id") == seller_id]
+    buyer_debits = round(abs(s([t for t in buyer_rows if float(t.get("amount") or 0) < 0])), 2)
+    buyer_credits = round(s([t for t in buyer_rows if float(t.get("amount") or 0) > 0]), 2)
+    buyer_net = round(buyer_debits - buyer_credits, 2)
+
+    escrow_in = round(s([t for t in seller_rows if t.get("type") in ESCROW]), 2)
+    released = round(s([t for t in seller_rows if t.get("type") in RELEASE]), 2)
+    refunded = round(abs(s([t for t in txns if t.get("type")
+                            in ("cancel_refund", "dispute_refund")])), 2)
+    escrow_void = round(min(escrow_in, refunded), 2)
+    escrow_open = round(max(escrow_in - released - escrow_void, 0), 2)
+
+    platform_movement = round(abs(s([t for t in txns if t.get("type")
+                                     in ("commission_adjustment", "marketer_commission")])), 2)
+    platform_retained = round(buyer_net - released, 2)
+    ledger_raw_sum = round(s(txns), 2)
+
+    return {
+        "currency": cur,
+        "buyer_debits": buyer_debits,
+        "buyer_credits": buyer_credits,
+        "buyer_net": buyer_net,
+        "seller_escrow_in": escrow_in,
+        "seller_released": released,
+        "seller_escrow_void": escrow_void,
+        "seller_escrow_open": escrow_open,
+        "platform_retained": platform_retained,
+        "platform_movement": platform_movement,
+        "commission_source": "movement" if platform_movement else "derived_difference",
+        "ledger_raw_sum": ledger_raw_sum,
+        "balanced": bool(abs(buyer_net - (released + platform_retained)) < 0.01),
+        "identity": "صافي المشتري = المُحرَّر للبائع + المحتفظ به للمنصة",
+        "explanation": [
+            f"محفظة المشتري: خرج {buyer_debits} {cur} ورجع {buyer_credits} {cur} "
+            f"⇒ الصافي على المشتري {buyer_net} {cur}.",
+            f"سجل البائع: إيراد معلّق {escrow_in} {cur} — مُحرَّر {released} {cur} — "
+            f"أُلغي مع الاسترداد {escrow_void} {cur} — ما زال معلّقاً {escrow_open} {cur}. "
+            f"الإيراد المعلّق قيد عرض لا يدخل الرصيد القابل للسحب.",
+            (f"عمولة المنصة {platform_retained} {cur} مشتقّة من الفرق "
+             f"(لا توجد حركة مستقلة لها في الدفتر): {buyer_debits} − {buyer_credits} "
+             f"− {released} = {platform_retained} {cur}.")
+            if not platform_movement else
+            f"عمولة المنصة {platform_movement} {cur} مسجَّلة كحركة مستقلّة في الدفتر.",
+            f"مجموع أسطر الدفتر الحسابي المباشر = {ledger_raw_sum} {cur}، وهو ليس رصيداً: "
+            f"يجمع حركات محفظة المشتري مع قيود الإيراد المعلّق للبائع، والصحيح مقارنة كل "
+            f"طرف على حدة كما أعلاه.",
+        ],
+        "note": "جدول مطابقة للعرض والتدقيق فقط — مشتقّ من الحركات المسجّلة دون أي إعادة حساب "
+                "أو تعديل على الأرصدة.",
+    }
+
+
 @router.get("/bookings/{booking_id}/financials")
 async def booking_financials_endpoint(booking_id: str, admin: dict = Depends(require_admin)):
     """Read-only financial statement of one order: the ten headline figures plus the full
@@ -137,6 +204,7 @@ async def booking_financials_endpoint(booking_id: str, admin: dict = Depends(req
         rows.append(d)
     return {"booking_id": booking_id, "package_title": b.get("package_title"),
             "parties": parties, "financials": booking_financials(b, txns),
+            "reconciliation": booking_reconciliation(b, txns),
             "movements": rows}
 
 
