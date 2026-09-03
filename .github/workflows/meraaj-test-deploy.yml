@@ -23,6 +23,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Guard - only push to main may deploy Test
+        run: |
+          echo "event=${{ github.event_name }} ref=${{ github.ref }}"
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "BLOCKED: only a push to main (merge) may deploy Test. Event: ${{ github.event_name }}"
+            exit 1
+          fi
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "BLOCKED: Test deploy may only run on refs/heads/main. Current: ${{ github.ref }}"
+            exit 1
+          fi
+          echo "Guard OK - deploying Test from main."
+
       - name: Checkout
         uses: actions/checkout@v4
 

@@ -1,4 +1,5 @@
 import os
+import uuid
 import jwt
 import bcrypt
 from datetime import datetime, timezone, timedelta
@@ -29,9 +30,35 @@ def _secret() -> str:
 
 
 def create_access_token(user_id: str, email: str, role: str) -> str:
-    payload = {"sub": user_id, "email": email, "role": role,
-               "exp": datetime.now(timezone.utc) + timedelta(days=7), "type": "access"}
+    now = datetime.now(timezone.utc)
+    payload = {"sub": user_id, "email": email, "role": role, "iat": int(now.timestamp()),
+               "jti": uuid.uuid4().hex, "exp": now + timedelta(days=7), "type": "access"}
     return jwt.encode(payload, _secret(), algorithm=JWT_ALGORITHM)
+
+
+def token_jti(token: str) -> Optional[str]:
+    try:
+        return jwt.decode(token, _secret(), algorithms=[JWT_ALGORITHM]).get("jti")
+    except jwt.InvalidTokenError:
+        return None
+
+
+async def record_session(user: dict, request: Optional[Request] = None,
+                         source: str = "password", token: Optional[str] = None):
+    """Session bookkeeping for the admin security screen. Never blocks a login.
+    The token's `jti` is stored so an admin force-logout can revoke that exact token."""
+    try:
+        ip = ua = ""
+        if request is not None:
+            ip = request.headers.get("x-forwarded-for", "") or (request.client.host if request.client else "")
+            ua = request.headers.get("user-agent", "")[:250]
+        await db.sessions.insert_one({
+            "user_id": str(user["_id"]), "email": user.get("email"),
+            "role": user.get("role"), "source": source, "ip": ip, "user_agent": ua,
+            "jti": token_jti(token) if token else None,
+            "revoked": False, "created_at": now_iso(), "last_seen": now_iso()})
+    except Exception:
+        pass
 
 
 async def get_current_user(request: Request) -> dict:
@@ -47,6 +74,37 @@ async def get_current_user(request: Request) -> dict:
         user = await db.users.find_one({"_id": oid(payload["sub"])})
         if not user:
             raise HTTPException(status_code=401, detail="المستخدم غير موجود")
+        forced = user.get("force_logout_at")
+        if payload.get("jti"):
+            # Exact-token revocation (admin force-logout / suspend revokes the session rows),
+            # so a NEW login right after a force-logout is immediately valid.
+            revoked = await db.sessions.find_one({"jti": payload["jti"], "revoked": True},
+                                                 {"_id": 1})
+            if revoked:
+                raise HTTPException(status_code=401, detail="تم إنهاء الجلسة من الإدارة")
+        elif forced and payload.get("iat"):
+            # Legacy tokens issued before `jti` existed: fall back to the timestamp epoch.
+            try:
+                if datetime.fromisoformat(forced).timestamp() > float(payload["iat"]):
+                    raise HTTPException(status_code=401, detail="تم إنهاء الجلسة من الإدارة")
+            except (ValueError, TypeError):
+                pass
+        if user.get("parent_office_id"):
+            # Staff account: acts INSIDE the office identity, so it shares the office wallet,
+            # ledger and bookings. No separate wallet is ever created for staff.
+            if user.get("status") != "active":
+                raise HTTPException(status_code=403, detail="حساب الموظف معطّل")
+            parent = await db.users.find_one({"_id": oid(user["parent_office_id"])})
+            if not parent:
+                raise HTTPException(status_code=401, detail="المكتب المرتبط غير موجود")
+            if parent.get("status") == "suspended":
+                raise HTTPException(status_code=403, detail="حساب المكتب معلَّق")
+            parent["_acting_staff"] = {
+                "id": str(user["_id"]), "email": user.get("email"),
+                "name": user.get("staff_name") or user.get("email"),
+                "roles": user.get("staff_roles") or [],
+            }
+            return parent
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="انتهت صلاحية الجلسة")
@@ -174,11 +232,12 @@ async def register(payload: RegisterInput, response: Response):
     token = create_access_token(str(res.inserted_id), email, role)
     _set_cookie(response, token)
     base["_id"] = res.inserted_id
+    await record_session(base, None, "register", token)
     return {"user": serialize(base), "access_token": token}
 
 
 @router.post("/login")
-async def login(payload: LoginInput, response: Response):
+async def login(payload: LoginInput, response: Response, request: Request):
     email = payload.email.lower()
     now = datetime.now(timezone.utc)
     rec = await db.login_attempts.find_one({"email": email})
@@ -196,15 +255,29 @@ async def login(payload: LoginInput, response: Response):
         raise HTTPException(status_code=401, detail="بيانات الدخول غير صحيحة")
     if rec:
         await db.login_attempts.delete_one({"email": email})
+    if user.get("status") == "suspended":
+        raise HTTPException(status_code=403, detail="الحساب معلَّق من إدارة معراج — تواصل مع الدعم")
     token = create_access_token(str(user["_id"]), email, user["role"])
     _set_cookie(response, token)
+    await record_session(user, request, "password", token)
     return {"user": serialize(user), "access_token": token}
 
 
 @router.post("/logout")
-async def logout(response: Response):
+async def logout(request: Request, response: Response):
+    """Ends the session: the presented token is revoked server-side, so it can never be
+    reused even if the cookie/localStorage copy is kept."""
+    token = request.cookies.get("access_token")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        token = auth[7:] if auth.startswith("Bearer ") else None
+    jti = token_jti(token) if token else None
+    if jti:
+        await db.sessions.update_one({"jti": jti},
+                                     {"$set": {"revoked": True, "revoked_at": now_iso()}},
+                                     upsert=True)
     response.delete_cookie("access_token", path="/")
-    return {"ok": True}
+    return {"ok": True, "revoked": bool(jti)}
 
 
 @router.get("/me")

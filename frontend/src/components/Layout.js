@@ -3,7 +3,9 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import {
   LayoutDashboard, Store, Package, ShoppingBag, TicketCheck, Wallet,
-  Users, Banknote, ShieldAlert, LogOut, Building2, Network, Menu, X, TrendingUp, Ban,
+  Banknote, ShieldAlert, LogOut, Building2, Network, Menu, X, TrendingUp, Ban,
+  Database, Eraser,
+  BookOpen, ArrowDownCircle, Percent, Gauge, Bell, FileSpreadsheet, Settings2,
 } from "lucide-react";
 
 const officeNav = [
@@ -25,8 +27,22 @@ const individualNav = [
 
 const adminNav = [
   { to: "/admin", label: "لوحة المؤشرات", icon: LayoutDashboard },
+  { to: "/admin/orders", label: "مركز الطلبات", icon: ShoppingBag },
   { to: "/admin/finance", label: "المركز المالي", icon: Banknote },
-  { to: "/admin/offices", label: "إدارة المكاتب", icon: Users },
+  { to: "/admin/ledger", label: "الدفتر المالي", icon: BookOpen },
+  { to: "/admin/withdrawals", label: "دورة السحوبات", icon: ArrowDownCircle },
+  { to: "/admin/commissions", label: "محرك العمولات", icon: Percent },
+  { to: "/admin/credit", label: "السقف الائتماني", icon: Gauge },
+  { to: "/admin/programs", label: "البرامج والمقاعد", icon: Package },
+  { to: "/admin/travelers", label: "المسافرون والمستندات", icon: TicketCheck },
+  { to: "/admin/integrations", label: "صحة التكامل", icon: Network },
+  { to: "/admin/orgs", label: "المؤسسات والمكاتب", icon: Building2 },
+  { to: "/admin/roles", label: "الصلاحيات والأمان", icon: ShieldAlert },
+  { to: "/admin/notifications", label: "الإشعارات والمهام", icon: Bell },
+  { to: "/admin/reports", label: "التقارير", icon: FileSpreadsheet },
+  { to: "/admin/system", label: "إعدادات النظام", icon: Settings2 },
+  { to: "/admin/backups", label: "النسخ الاحتياطي", icon: Database },
+  { to: "/admin/maintenance", label: "الصيانة والاحتفاظ", icon: Eraser },
   { to: "/admin/cancellations", label: "طلبات الإلغاء", icon: Ban },
   { to: "/admin/disputes", label: "النزاعات", icon: ShieldAlert },
 ];
@@ -87,7 +103,7 @@ export default function Layout({ children }) {
           <button className="lg:hidden" onClick={() => setOpen(false)} data-testid="menu-close-btn"><X className="w-5 h-5" /></button>
         </div>
 
-        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+        <nav className="flex-1 px-3 py-4 pb-24 space-y-1 overflow-y-auto">
           {nav.map((item) => (
             <NavLink
               key={item.to} to={item.to} end={item.to === "/admin"}

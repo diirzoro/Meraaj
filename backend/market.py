@@ -10,8 +10,11 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Union, Dict
 from db import (db, serialize, oid, now_iso, adjust_wallet, log_txn,
                 platform_pct, cancel_fee_pct, marketer_pct, log_platform_revenue,
-                plan_debit, wallet_available, CurrencyField,
+                plan_debit, wallet_available, CurrencyField, other_ccy,
                 approval_timeout_hours, iso_in_hours, audit)
+from commissions import resolve_commission
+from credit import credit_allows, credit_frozen
+from orgs import notify
 from security import (get_current_user, get_optional_user, require_office,
                       require_buyer, require_permission)
 from integration import notify_rahal, refund_and_release, apply_approval_financials
@@ -518,12 +521,19 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
     if is_office:
         # B2B: office pays net + platform fee (double commission); keeps margin offline
         buyer_commission_total = comm_total
-        platform_fee = round(buyer_commission_total * platform_pct(), 2)
+        cats = {"adult": 0, "child": 0, "infant": 0, "seats": seats}
+        for r in payload.registrants:
+            cats[r.category if r.category in cats else "adult"] += 1
+        commission_snapshot = await resolve_commission(
+            buyer_type=user["role"], currency=cur, package=pkg,
+            seller_id=pkg["seller_id"], base_amount=buyer_commission_total, per_category=cats)
+        platform_fee = round(float(commission_snapshot["amount"]), 2)
         required = round(net_total + platform_fee, 2)
     else:
         # B2C: consumer pays full retail; seller gets net; margin => platform (+marketer)
         buyer_commission_total = 0.0
         platform_fee = 0.0
+        commission_snapshot = None
         required = sale_total
         margin_total = round(sale_total - net_total, 2)
         if payload.ref:
@@ -535,9 +545,17 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
         platform_profit = round(margin_total - marketer_commission, 2)
 
     fresh = await db.users.find_one({"_id": user["_id"]})
+    if await credit_frozen(fresh, cur):
+        raise HTTPException(400, "حساب المكتب مجمّد ائتمانياً — لا يمكن إتمام الحجز")
     split = plan_debit(fresh["wallet"], cur, required)
+    credit_used = 0.0
     if split is None:
-        raise HTTPException(400, f"الرصيد المتاح غير كافٍ. المطلوب: {required} {cur}")
+        # Credit Control: allow going negative only within the approved credit ceiling.
+        allowed, msg, room = await credit_allows(fresh, cur, required)
+        if not allowed:
+            raise HTTPException(400, msg or f"الرصيد المتاح غير كافٍ. المطلوب: {required} {cur}")
+        split = {cur: round(required, 2), other_ccy(cur): 0.0}
+        credit_used = round(max(0.0, required - max(0.0, room["available_balance"])), 2)
 
     is_rahal = pkg.get("source") == "rahal" and bool(pkg.get("rahal_ref"))
 
@@ -589,6 +607,8 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
         "platform_profit": platform_profit,
         "amount_charged": required,
         "debit_split": split,
+        "commission_snapshot": commission_snapshot,
+        "credit_used": credit_used,
         "currency": cur,
         "status": "blue",
         "dispatched_at": None,
@@ -617,8 +637,11 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
                               f"عمولة تسويق (معلّقة): {pkg['title']}", bid, currency=cur)
             if platform_profit:
                 await log_platform_revenue(platform_profit, f"أرباح المنصة من حجز مباشر: {pkg['title']}", bid, currency=cur)
+    await notify(pkg["seller_id"], "booking_created", "طلب حجز جديد",
+                 f"طلب جديد على: {pkg['title']} — عدد المقاعد {len(payload.registrants)}",
+                 "/bookings", {"booking_id": bid, "package_title": pkg["title"],
+                               "seats": len(payload.registrants)})
     if pkg.get("source") == "rahal" and pkg.get("rahal_ref"):
-        # Rahaal Production v2 contract: {id, type, timestamp, data{...}}
         await notify_rahal("meraaj.booking.created", {}, envelope={
             "id": str(uuid.uuid4()),
             "type": "meraaj.booking.created",
@@ -688,6 +711,9 @@ async def approve_booking(booking_id: str, user: dict = Depends(require_permissi
         raise HTTPException(409, "تم تحديث حالة الطلب بالفعل")
     await apply_approval_financials(claimed)
     await audit(booking_id, "seller_approved", "seller", actor_id=str(user["_id"]))
+    await notify(claimed.get("buyer_id"), "booking_approved", "تم قبول طلبك",
+                 f"قبل البائع طلبك على: {claimed.get('package_title')}",
+                 f"/bookings", {"booking_id": booking_id})
     if claimed.get("rahal_ref"):
         await notify_rahal("meraaj.booking.approved", {}, envelope={
             "id": str(uuid.uuid4()), "type": "meraaj.booking.approved",
@@ -695,7 +721,6 @@ async def approve_booking(booking_id: str, user: dict = Depends(require_permissi
             "data": {"package_ref": claimed["rahal_ref"], "booking_ref": booking_id,
                      "decided_by": f"office:{user['_id']}"}})
     return {"ok": True, "approval_status": "approved"}
-
 
 @router.post("/bookings/{booking_id}/reject")
 async def reject_booking(booking_id: str, payload: Optional[Dict] = Body(default=None),
@@ -718,6 +743,9 @@ async def reject_booking(booking_id: str, payload: Optional[Dict] = Body(default
         raise HTTPException(409, "تم تحديث حالة الطلب بالفعل")
     await refund_and_release(claimed)
     await audit(booking_id, "seller_rejected", "seller", actor_id=str(user["_id"]), reason=reason)
+    await notify(claimed.get("buyer_id"), "booking_rejected", "تم رفض طلبك",
+                 f"رفض البائع طلبك على: {claimed.get('package_title')} — {reason or 'بدون سبب'}",
+                 "/bookings", {"booking_id": booking_id})
     if claimed.get("rahal_ref"):
         await notify_rahal("meraaj.booking.rejected", {}, envelope={
             "id": str(uuid.uuid4()), "type": "meraaj.booking.rejected",
@@ -842,6 +870,12 @@ async def cancel_request(booking_id: str, payload: Optional[Dict] = Body(default
                 "cancellation_reason": reason}})
             await audit(str(b["_id"]), "cancellation_requested", "buyer",
                         actor_id=str(user["_id"]), reason=reason)
+            await notify(b.get("seller_id"), "cancellation_requested",
+                         "طلب إلغاء بانتظار القرار",
+                         f"طلب إلغاء على: {b.get('package_title')} — السبب: {reason or 'غير محدد'}",
+                         "/bookings", {"booking_id": str(b["_id"]),
+                                       "package_title": b.get("package_title"),
+                                       "reason": reason or "غير محدد"})
             if b.get("rahal_ref"):
                 await notify_rahal("meraaj.booking.cancellation_requested", {}, envelope={
                     "id": str(uuid.uuid4()), "type": "meraaj.booking.cancellation_requested",
@@ -882,6 +916,12 @@ async def cancel_request(booking_id: str, payload: Optional[Dict] = Body(default
         await db.bookings.update_one({"_id": b["_id"]}, {"$set": {"status": "cancelled",
                                      "cancellation": {"type": "auto_blue", "refund": refund, "admin_fee": admin_fee}}})
         await log_txn(user["_id"], "cancel_refund", refund, f"استرداد إلغاء: {b['package_title']}", booking_id, currency=cur)
+        for uid in (b.get("buyer_id"), b.get("seller_id")):
+            await notify(uid, "booking_cancelled", "تم إلغاء الطلب",
+                         f"أُلغي الطلب على: {b.get('package_title')} — استرداد {refund} {cur}",
+                         "/bookings", {"booking_id": booking_id,
+                                       "package_title": b.get("package_title"),
+                                       "reason": "إلغاء قبل التأشيرات"})
         if b.get("rahal_ref"):
             await notify_rahal("meraaj.booking.cancelled", {
                 "package_ref": b["rahal_ref"], "meraaj_booking_id": booking_id, "seats_released": b["seats"]})
@@ -936,6 +976,12 @@ async def cancel_accept(booking_id: str, user: dict = Depends(require_buyer)):
                                                   "refund": refund}}})
     await log_txn(user["_id"], "cancel_refund", refund, f"استرداد إلغاء (أصفر): {b['package_title']}", booking_id, currency=cur)
     await log_txn(b["seller_id"], "cancel_deduction", seller_keeps, f"خصم إلغاء: {b['package_title']}", booking_id, currency=cur)
+    for uid in (b.get("buyer_id"), b.get("seller_id")):
+        await notify(uid, "booking_cancelled", "تم إلغاء الطلب",
+                     f"أُلغي الطلب على: {b.get('package_title')} — استرداد {refund} {cur}",
+                     "/bookings", {"booking_id": booking_id,
+                                   "package_title": b.get("package_title"),
+                                   "reason": "إلغاء بعد التأشيرات (تسوية)"})
     if b.get("platform_fee"):
         await log_platform_revenue(-b["platform_fee"], f"عكس عمولة منصة (إلغاء أصفر): {b['package_title']}", booking_id, currency=cur)
     if platform_cut:

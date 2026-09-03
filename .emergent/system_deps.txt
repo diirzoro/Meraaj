@@ -1,1 +1,2 @@
 cron=3.0pl1-162
+fonts-hosny-amiri=0.113-1

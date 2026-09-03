@@ -1,0 +1,22 @@
+crons:
+  - name: daily-db-backup
+    description: "Encrypted daily MongoDB backup at 01:00 Riyadh with 7-day retention"
+    cron: "0 22 * * *"
+    endpoint: "{{BASE_URL}}/api/cron/backup"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true
+  - name: daily-cleanup
+    description: "Retention-based cleanup of eligible operational data (no-op unless enabled by an admin)"
+    cron: "30 23 * * *"
+    endpoint: "{{BASE_URL}}/api/cron/cleanup"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true
+  - name: daily-alert-scan
+    description: "Scans missing documents, passports, credit limits and overdue tasks daily"
+    cron: "0 5 * * *"
+    endpoint: "{{BASE_URL}}/api/cron/alerts"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

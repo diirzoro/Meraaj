@@ -42,7 +42,22 @@ export default function AdminCancellations() {
 
               {b.cancellation_position && (
                 <div className="bg-[#F4F6F8] rounded-lg p-3 mt-3 text-sm" data-testid={`position-${b.id}`}>
-                  <span className="font-semibold text-[#0A2540]">موقف صاحب الباكيج: </span>{b.cancellation_position}
+                  <span className="font-semibold text-[#0A2540]">موقف صاحب الباكيج: </span>
+                  {typeof b.cancellation_position === "object"
+                    ? (b.cancellation_position.position || "—")
+                    : b.cancellation_position}
+                  {typeof b.cancellation_position === "object" && b.cancellation_position.actual_costs_total != null && (
+                    <span className="block text-xs text-muted-foreground mt-1">
+                      تكاليف فعلية (من رحّال): {money(b.cancellation_position.actual_costs_total, b.cancellation_position.costs_currency || b.currency)}
+                    </span>
+                  )}
+                  {typeof b.cancellation_position === "object" && Array.isArray(b.cancellation_position.executed_services) && b.cancellation_position.executed_services.length > 0 && (
+                    <ul className="text-xs text-muted-foreground mt-1 list-disc pr-4">
+                      {b.cancellation_position.executed_services.map((s, i) => (
+                        <li key={i}>{typeof s === "object" ? `${s.name || s.service || "خدمة"}: ${s.amount ?? ""}` : String(s)}</li>
+                      ))}
+                    </ul>
+                  )}
                   {b.actual_costs_total != null && <span className="block text-xs text-muted-foreground mt-1">تكاليف فعلية منفّذة: {money(b.actual_costs_total, b.currency)}</span>}
                 </div>
               )}

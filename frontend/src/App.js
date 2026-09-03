@@ -21,8 +21,23 @@ import WalletPage from "@/pages/Wallet";
 import Marketer from "@/pages/Marketer";
 import EmbedMarket from "@/pages/EmbedMarket";
 import AdminDashboard from "@/pages/admin/AdminDashboard";
+import AdminOrders from "@/pages/admin/AdminOrders";
+import AdminOrderDetail from "@/pages/admin/AdminOrderDetail";
+import AdminLedger from "@/pages/admin/AdminLedger";
+import AdminWithdrawals from "@/pages/admin/AdminWithdrawals";
+import AdminCommissions from "@/pages/admin/AdminCommissions";
+import AdminCredit from "@/pages/admin/AdminCredit";
+import AdminPrograms from "@/pages/admin/AdminPrograms";
+import AdminTravelers from "@/pages/admin/AdminTravelers";
+import AdminIntegrations from "@/pages/admin/AdminIntegrations";
+import AdminOrgs from "@/pages/admin/AdminOrgs";
+import AdminBackups from "@/pages/admin/AdminBackups";
+import AdminMaintenance from "@/pages/admin/AdminMaintenance";
+import AdminRoles from "@/pages/admin/AdminRoles";
+import AdminNotifications from "@/pages/admin/AdminNotifications";
+import AdminReports from "@/pages/admin/AdminReports";
+import AdminSystem from "@/pages/admin/AdminSystem";
 import AdminFinance from "@/pages/admin/AdminFinance";
-import AdminOffices from "@/pages/admin/AdminOffices";
 import AdminCancellations from "@/pages/admin/AdminCancellations";
 import AdminDisputes from "@/pages/admin/AdminDisputes";
 
@@ -80,8 +95,26 @@ function AppRoutes() {
       <Route path="/marketer" element={<Protected role="individual"><Marketer /></Protected>} />
 
       <Route path="/admin" element={<Protected role="admin"><AdminDashboard /></Protected>} />
+      <Route path="/admin/orders" element={<Protected role="admin"><AdminOrders /></Protected>} />
+      <Route path="/admin/orders/:id" element={<Protected role="admin"><AdminOrderDetail /></Protected>} />
+      <Route path="/admin/ledger" element={<Protected role="admin"><AdminLedger /></Protected>} />
+      <Route path="/admin/withdrawals" element={<Protected role="admin"><AdminWithdrawals /></Protected>} />
+      <Route path="/admin/commissions" element={<Protected role="admin"><AdminCommissions /></Protected>} />
+      <Route path="/admin/credit" element={<Protected role="admin"><AdminCredit /></Protected>} />
+      <Route path="/admin/programs" element={<Protected role="admin"><AdminPrograms /></Protected>} />
+      <Route path="/admin/travelers" element={<Protected role="admin"><AdminTravelers /></Protected>} />
+      <Route path="/admin/integrations" element={<Protected role="admin"><AdminIntegrations /></Protected>} />
+      <Route path="/admin/orgs" element={<Protected role="admin"><AdminOrgs /></Protected>} />
+      <Route path="/admin/roles" element={<Protected role="admin"><AdminRoles /></Protected>} />
+      <Route path="/admin/notifications" element={<Protected role="admin"><AdminNotifications /></Protected>} />
+      <Route path="/admin/reports" element={<Protected role="admin"><AdminReports /></Protected>} />
+      <Route path="/admin/system" element={<Protected role="admin"><AdminSystem /></Protected>} />
+      <Route path="/admin/backups" element={<Protected role="admin"><AdminBackups /></Protected>} />
+      <Route path="/admin/maintenance" element={<Protected role="admin"><AdminMaintenance /></Protected>} />
       <Route path="/admin/finance" element={<Protected role="admin"><AdminFinance /></Protected>} />
-      <Route path="/admin/offices" element={<Protected role="admin"><AdminOffices /></Protected>} />
+      {/* Unified into /admin/orgs — old route kept as a backward-compatible redirect
+          until every function is manually confirmed as transferred. */}
+      <Route path="/admin/offices" element={<Navigate to="/admin/orgs" replace />} />
       <Route path="/admin/cancellations" element={<Protected role="admin"><AdminCancellations /></Protected>} />
       <Route path="/admin/disputes" element={<Protected role="admin"><AdminDisputes /></Protected>} />
 

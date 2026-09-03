@@ -13,6 +13,9 @@ from pydantic import BaseModel
 from db import db, serialize, oid, now_iso, audit
 from security import get_current_user
 from storage import get_storage, MAX_FILE_BYTES, ALLOWED_MIME
+
+PER_FILE_BYTES = min(MAX_FILE_BYTES, 10 * 1024 * 1024)
+BATCH_BYTES = 20 * 1024 * 1024
 from integration import notify_rahal
 
 router = APIRouter(prefix="/api", tags=["documents"])
@@ -113,8 +116,10 @@ async def upload_document(booking_id: str, payload: DocIn, user: dict = Depends(
         raw = base64.b64decode(payload.content_base64.split(",")[-1])
     except Exception:
         raise HTTPException(400, "محتوى الملف غير صالح")
-    if len(raw) == 0 or len(raw) > MAX_FILE_BYTES:
-        raise HTTPException(400, "حجم الملف يتجاوز 20 ميجابايت للملف الواحد أو أنه فارغ")
+    if len(raw) == 0 or len(raw) > PER_FILE_BYTES:
+        raise HTTPException(400, "حجم الملف يتجاوز 10 ميجابايت للملف الواحد أو أنه فارغ")
+    if payload.batch_total_bytes and payload.batch_total_bytes > BATCH_BYTES:
+        raise HTTPException(400, "حجم الدفعة يتجاوز 20 ميجابايت")
     ct = mimetypes.guess_type(payload.filename)[0] or "application/octet-stream"
     if ct not in ALLOWED_MIME:
         raise HTTPException(400, "نوع الملف غير مدعوم (PDF أو صورة فقط)")
