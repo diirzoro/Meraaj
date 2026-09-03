@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -7,18 +7,30 @@ WORKDIR /app
 
 # MongoDB Database Tools (mongodump/mongorestore) are required by the backup feature,
 # and an Arabic OpenType font is required by the Arabic RTL PDF reports.
+# The tools come from the official tarball: the MongoDB apt repo 404s for this package and
+# its .deb declares the obsolete `libcomerr2` dependency, which cannot be satisfied on
+# Debian 12 (the package is named libcom-err2 there) — that was the build failure.
 # Minimal runtime dependency only: no port, network, topology or entrypoint change.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        curl ca-certificates gnupg openssl fonts-hosny-amiri \
-    && curl -fsSL https://pgp.mongodb.com/server-7.0.asc \
-        | gpg --dearmor -o /usr/share/keyrings/mongodb-server-7.0.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg] \
-https://repo.mongodb.org/apt/debian bookworm/mongodb-org/7.0 main" \
-        > /etc/apt/sources.list.d/mongodb-org-7.0.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends mongodb-database-tools \
-    && rm -rf /var/lib/apt/lists/*
+ARG MONGO_TOOLS_VERSION=100.13.0
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        curl ca-certificates openssl fonts-hosny-amiri fonts-freefont-ttf \
+        libgssapi-krb5-2 libkrb5-3 libk5crypto3 libcom-err2 libkrb5support0 libkeyutils1; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+        amd64) pkg="mongodb-database-tools-debian12-x86_64-${MONGO_TOOLS_VERSION}.tgz" ;; \
+        arm64) pkg="mongodb-database-tools-ubuntu2204-arm64-${MONGO_TOOLS_VERSION}.tgz" ;; \
+        *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/mongodb-tools.tgz "https://fastdl.mongodb.org/tools/db/${pkg}"; \
+    tar -xzf /tmp/mongodb-tools.tgz -C /tmp; \
+    install -m 0755 /tmp/mongodb-database-tools-*/bin/mongodump /usr/local/bin/mongodump; \
+    install -m 0755 /tmp/mongodb-database-tools-*/bin/mongorestore /usr/local/bin/mongorestore; \
+    rm -rf /tmp/mongodb-tools.tgz /tmp/mongodb-database-tools-*; \
+    mongodump --version; \
+    mongorestore --version; \
+    rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt /tmp/requirements.txt
 
