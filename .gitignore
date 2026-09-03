@@ -106,3 +106,25 @@ frontend/node_modules/.cache/default-development/1.pack
 frontend/node_modules/.cache/default-development/10.pack
 frontend/node_modules/.cache/default-development/13.pack
 frontend/node_modules/.cache/default-development/7.pack
+
+# Backup artifacts (never commit database dumps/backups)
+backups/
+**/*.archive.gz
+**/*.archive.gz.enc
+**/*.archive
+**/*.bson
+**/*.dump
+
+# Test-only / QA artifacts (never commit)
+backend/tests/
+tests/
+pytest.ini
+**/_probe*.py
+**/*_probe.py
+**/seed_*.py
+**/cleanup_*.py
+**/manual_*.py
+**/manual_*.sh
+**/backend_test.py
+/test_reports/
+/test_result.md
