@@ -108,6 +108,16 @@ async def _run(report: str, date_from: Optional[str], date_to: Optional[str],
                          fin["refunded"], fin["due_from_buyer"], fin["due_to_seller"],
                          fin["platform_commission"], fin["platform_net"],
                          fin["transferred"], fin["remaining"], fin["status"], fin["currency"]])
+        # Totals section at the bottom, kept STRICTLY separate per currency and summed from
+        # the same read-only booking_financials figures above (no recalculation).
+        for c in CCY:
+            cur_rows = [r for r in rows if r[18] == c]
+            if not cur_rows:
+                continue
+            def col(i):
+                return round(sum(float(r[i] or 0) for r in cur_rows), 2)
+            rows.append(["—", f"الإجمالي {c}", f"عدد الطلبات: {len(cur_rows)}", "", ""]
+                        + [col(i) for i in range(5, 17)] + ["إجمالي", c])
         return {"columns": cols, "rows": rows}
 
     if report == "wallets":

@@ -151,11 +151,15 @@ export default function AdminReports() {
             <tbody>
               {res.rows.length === 0 ? (
                 <tr><td colSpan={res.columns.length} className="text-center py-10 text-muted-foreground" data-testid="report-empty">لا توجد بيانات</td></tr>
-              ) : res.rows.map((r, i) => (
-                <tr key={i} className="border-t hover:bg-[#FAFBFC]" data-testid={`report-row-${i}`}>
+              ) : res.rows.map((r, i) => {
+                const isTotal = r[r.length - 2] === "إجمالي";
+                return (
+                <tr key={i} className={`border-t ${isTotal ? "bg-[#F0FDF4] font-bold text-[#0A2540] border-t-2" : "hover:bg-[#FAFBFC]"}`}
+                  data-testid={isTotal ? `report-total-${r[r.length - 1]}` : `report-row-${i}`}>
                   {r.map((c, j) => <td key={j} className="px-3 py-2 whitespace-nowrap">{String(c ?? "—").slice(0, 60)}</td>)}
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
