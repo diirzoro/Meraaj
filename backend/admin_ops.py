@@ -169,12 +169,48 @@ def classify_outbox_error(status, last_error: str) -> dict:
                 "required_reference": None, "owner": "rahal",
                 "next_action": "تأكيد عنوان/مسار Webhook حيّ من رحّال ثم إعادة المعالجة.",
                 "retry_useful": True}
-    if status in (401, 403):
+    if status == 409 or "conflict" in raw.lower() or code in ("duplicate", "already_exists"):
+        low = raw.lower()
+        if "price" in low or "amount" in low or "سعر" in raw:
+            return {"cause": "business", "code": "price_mismatch",
+                    "title": "اختلاف في السعر بين معراج ورحّال",
+                    "reason_ar": ("رحّال رفض الحدث لاختلاف السعر/المبلغ المُرسل عن المسجّل "
+                                  "لديه لنفس الطلب."),
+                    "required_reference": detail.get("booking_ref"), "owner": "shared",
+                    "next_action": ("استخدم «تتبّع مبلغ التسوية» لتحديد الرقم المعتمد ثم "
+                                    "اتفق مع رحّال على القيمة الصحيحة قبل أي إعادة إرسال."),
+                    "retry_useful": False}
+        if "settle" in low or "تسوية" in raw:
+            return {"cause": "business", "code": "settlement_mismatch",
+                    "title": "اختلاف في مبلغ التسوية",
+                    "reason_ar": "مبلغ التسوية المُرسل لا يطابق ما يتوقعه رحّال لهذا الطلب.",
+                    "required_reference": detail.get("booking_ref"), "owner": "shared",
+                    "next_action": ("راجع «تتبّع مبلغ التسوية» للطلب وحدّد مصدر الفرق قبل "
+                                    "أي إعادة إرسال."),
+                    "retry_useful": False}
+        return {"cause": "business", "code": "conflict",
+                "title": "تعارض في حالة الطلب لدى رحّال (409)",
+                "reason_ar": ("رحّال يرى الطلب في حالة مختلفة (مُعالَج مسبقاً أو مكرر) "
+                              "فرفض الحدث."),
+                "required_reference": detail.get("booking_ref"), "owner": "rahal",
+                "next_action": ("لا تُعِد الإرسال: تأكد أولاً من حالة الطلب لدى رحّال "
+                                "لتجنّب ازدواج القيود."),
+                "retry_useful": False}
+    if status in (401, 403) or "signature" in raw.lower() or "hmac" in raw.lower():
         return {"cause": "signature", "code": "signature_rejected",
-                "title": "التوقيع أو المصادقة مرفوضة",
+                "title": "التوقيع أو المصادقة مرفوضة (HMAC)",
                 "reason_ar": "الخادم موجود لكنه رفض التوقيع — تحقق من تطابق السر المشترك.",
                 "required_reference": None, "owner": "shared",
                 "next_action": "مطابقة بصمة السر بين الطرفين ثم إعادة المعالجة.",
+                "retry_useful": True}
+    if status == 404:
+        return {"cause": "endpoint", "code": "not_found_404",
+                "title": "غير موجود على خادم رحّال (404)",
+                "reason_ar": ("الخادم رد بـ404: إمّا المسار غير مُخدَّم أو المرجع المُرسل غير "
+                              "موجود في قاعدة رحّال."),
+                "required_reference": detail.get("booking_ref") or detail.get("package_ref"),
+                "owner": "rahal",
+                "next_action": "تأكيد المسار والمرجع من رحّال ثم إعادة المعالجة بقرار موثّق.",
                 "retry_useful": True}
     if status is None:
         return {"cause": "transport", "code": "unreachable",

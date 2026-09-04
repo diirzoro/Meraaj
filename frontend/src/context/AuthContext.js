@@ -6,6 +6,7 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null); // null=loading, false=guest, object=user
   const [loading, setLoading] = useState(true);
+  const [permissions, setPermissions] = useState([]);
 
   useEffect(() => {
     (async () => {
@@ -59,8 +60,18 @@ export function AuthProvider({ children }) {
     setUser(data);
   };
 
+  // Server-side permissions (RBAC): drives menu visibility; the API enforces the same keys.
+  useEffect(() => {
+    if (!user) { setPermissions([]); return; }
+    api.get("/admin/my-permissions")
+      .then((r) => setPermissions(r.data.permissions || []))
+      .catch(() => setPermissions([]));
+  }, [user]);
+
+  const can = (key) => permissions.includes("*") || permissions.includes(key);
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, ssoLogin, rahalPasswordLogin, logout, refreshUser }}>
+    <AuthContext.Provider value={{ user, loading, permissions, can, login, register, ssoLogin, rahalPasswordLogin, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );

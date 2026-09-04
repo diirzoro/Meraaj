@@ -117,7 +117,7 @@ export default function AdminOrgs() {
         <span className="text-[11px] text-muted-foreground mr-auto" data-testid="orgs-count">{d.total} مؤسسة</span>
       </div>
 
-      <div className="bg-white rounded-2xl border card-shadow overflow-x-auto" data-testid="orgs-table">
+      <div className="bg-white rounded-2xl border card-shadow table-scroll" data-testid="orgs-table">
         <table className="w-full text-xs min-w-[900px]">
           <thead className="bg-[#F4F6F8] text-muted-foreground">
             <tr>{["المؤسسة", "المالك", "المحافظة", "المخاطر", "واتساب", "متاح (ريال)", "متاح (دولار)",
@@ -182,7 +182,7 @@ export default function AdminOrgs() {
 
       {/* Create organization */}
       <Dialog open={!!newOrg} onOpenChange={(o) => !o && setNewOrg(null)}>
-        <DialogContent dir="rtl" className="max-w-lg" data-testid="new-org-dialog">
+        <DialogContent dir="rtl" className="max-w-lg max-h-[85vh] overflow-y-auto" data-testid="new-org-dialog">
           <DialogHeader><DialogTitle>إنشاء مؤسسة/مكتب جديد</DialogTitle></DialogHeader>
           {newOrg && (
             <div className="grid sm:grid-cols-2 gap-2">
@@ -209,7 +209,7 @@ export default function AdminOrgs() {
 
       {/* Edit organization info */}
       <Dialog open={!!editOrg} onOpenChange={(o) => !o && setEditOrg(null)}>
-        <DialogContent dir="rtl" className="max-w-lg" data-testid="edit-org-dialog">
+        <DialogContent dir="rtl" className="max-w-lg max-h-[85vh] overflow-y-auto" data-testid="edit-org-dialog">
           <DialogHeader><DialogTitle>تعديل بيانات المؤسسة</DialogTitle></DialogHeader>
           {editOrg && (
             <div className="grid sm:grid-cols-2 gap-2">
@@ -238,7 +238,7 @@ export default function AdminOrgs() {
 
       {/* Edit branch */}
       <Dialog open={!!editBranch} onOpenChange={(o) => !o && setEditBranch(null)}>
-        <DialogContent dir="rtl" className="max-w-md" data-testid="edit-branch-dialog">
+        <DialogContent dir="rtl" className="max-w-md max-h-[85vh] overflow-y-auto" data-testid="edit-branch-dialog">
           <DialogHeader><DialogTitle>تعديل الفرع</DialogTitle></DialogHeader>
           {editBranch && (
             <div className="space-y-2">

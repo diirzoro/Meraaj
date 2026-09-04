@@ -319,7 +319,7 @@ export default function AdminBackups() {
       </div>
 
       <Dialog open={confirmRun} onOpenChange={setConfirmRun}>
-        <DialogContent dir="rtl" className="max-w-md" data-testid="run-backup-dialog">
+        <DialogContent dir="rtl" className="max-w-md max-h-[85vh] overflow-y-auto" data-testid="run-backup-dialog">
           <DialogHeader><DialogTitle>تشغيل نسخة احتياطية الآن</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div className="text-xs bg-[#F4F6F8] rounded-lg px-3 py-2">

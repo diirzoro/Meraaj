@@ -15,6 +15,7 @@ const officeNav = [
   { to: "/sales", label: "مبيعاتي", icon: TicketCheck },
   { to: "/bookings", label: "حجوزاتي (مشتري)", icon: ShoppingBag },
   { to: "/wallet", label: "المحفظة", icon: Wallet },
+  { to: "/my-ads", label: "إعلاناتي وعروضي", icon: Megaphone, perm: "ads.view" },
 ];
 
 const individualNav = [
@@ -40,7 +41,7 @@ const adminNav = [
   { to: "/admin/roles", label: "الصلاحيات والأمان", icon: ShieldAlert },
   { to: "/admin/notifications", label: "الإشعارات والمهام", icon: Bell },
   { to: "/admin/reports", label: "التقارير", icon: FileSpreadsheet },
-  { to: "/admin/ads", label: "الإعلانات والعروض", icon: Megaphone },
+  { to: "/admin/ads", label: "الإعلانات والعروض", icon: Megaphone, perm: "ads.view" },
   { to: "/admin/system", label: "إعدادات النظام", icon: Settings2 },
   { to: "/admin/backups", label: "النسخ الاحتياطي", icon: Database },
   { to: "/admin/maintenance", label: "الصيانة والاحتفاظ", icon: Eraser },
@@ -55,10 +56,10 @@ function navFor(role) {
 }
 
 export default function Layout({ children }) {
-  const { user, logout } = useAuth();
+  const { user, logout, can } = useAuth();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
-  const nav = navFor(user?.role);
+  const nav = navFor(user?.role).filter((i) => !i.perm || can(i.perm));
 
   const doLogout = async () => { localStorage.removeItem("meraaj_resume_route"); await logout(); navigate("/login"); };
 

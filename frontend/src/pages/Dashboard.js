@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { PageHeader } from "@/components/Layout";
+import { AdSlot } from "@/components/AdSlot";
 import { money } from "@/lib/format";
 import StatusBadge from "@/components/StatusBadge";
 import { Wallet, Clock, CheckCircle2, Store, Package, ShoppingBag, ArrowLeft } from "lucide-react";
@@ -57,6 +58,8 @@ export default function Dashboard() {
     <>
       <PageHeader title={`أهلاً، ${user?.office_name}`}
         subtitle={isIndividual ? "احجز رحلتك بأمان وتابع حجوزاتك" : "نظرة عامة على محفظتك ونشاطك في السوق"} />
+
+      <AdSlot placement="dashboard" limit={2} variant="card" className="mb-6" />
 
       <div className="grid md:grid-cols-2 gap-5 mb-8">
         <WalletCard title="محفظة الريال السعودي" ccy="SAR" available={sar.available} pending={sar.pending} icon={Wallet} tone="gold" />

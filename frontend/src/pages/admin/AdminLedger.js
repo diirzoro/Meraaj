@@ -66,37 +66,37 @@ export default function AdminLedger() {
         ))}
       </div>
 
-      <div className="bg-white rounded-2xl border card-shadow p-4 mb-5 flex flex-wrap gap-3 items-end" data-testid="ledger-filters">
-        <div className="relative flex-1 min-w-[200px]">
+      <div className="bg-white rounded-2xl border card-shadow p-4 mb-5 grid grid-cols-1 sm:grid-cols-2 lg:flex lg:flex-wrap gap-3 lg:items-end" data-testid="ledger-filters">
+        <div className="relative sm:col-span-2 lg:flex-1 lg:min-w-[200px]">
           <Search className="w-4 h-4 absolute top-2.5 right-3 text-muted-foreground" />
           <input value={f.q} onChange={(e) => setF({ ...f, q: e.target.value, page: 1 })} data-testid="ledger-search"
             placeholder="ابحث بالوصف أو المرجع" className="w-full h-9 rounded-md border border-input pr-9 pl-3 text-xs" />
         </div>
         <input value={f.office_q} onChange={(e) => setF({ ...f, office_q: e.target.value, page: 1 })}
           data-testid="ledger-office" placeholder="المكتب / المستخدم"
-          className="h-9 rounded-md border border-input px-3 text-xs min-w-[150px]" />
+          className="h-9 w-full lg:w-auto rounded-md border border-input px-3 text-xs lg:min-w-[150px]" />
         <input value={f.ref} onChange={(e) => setF({ ...f, ref: e.target.value, page: 1 })}
           data-testid="ledger-ref" placeholder="مرجع الطلب"
-          className="h-9 rounded-md border border-input px-3 text-xs min-w-[130px]" />
+          className="h-9 w-full lg:w-auto rounded-md border border-input px-3 text-xs lg:min-w-[130px]" />
         <select value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value, page: 1 })} data-testid="ledger-currency"
-          className="h-9 rounded-md border border-input px-2 text-xs">
+          className="h-9 w-full lg:w-auto rounded-md border border-input px-2 text-xs bg-white">
           <option value="">كل العملات</option><option value="SAR">ريال سعودي</option><option value="USD">دولار أمريكي</option>
         </select>
         <select value={f.txn_type} onChange={(e) => setF({ ...f, txn_type: e.target.value, page: 1 })} data-testid="ledger-type"
-          className="h-9 rounded-md border border-input px-2 text-xs">
+          className="h-9 w-full lg:w-auto rounded-md border border-input px-2 text-xs bg-white">
           <option value="">كل الأنواع</option>
           {Object.entries(d.types || {}).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
         </select>
         <input type="date" value={f.date_from} onChange={(e) => setF({ ...f, date_from: e.target.value, page: 1 })}
-          data-testid="ledger-from" className="h-9 rounded-md border border-input px-2 text-xs" />
+          data-testid="ledger-from" className="h-9 w-full lg:w-auto rounded-md border border-input px-2 text-xs" />
         <input type="date" value={f.date_to} onChange={(e) => setF({ ...f, date_to: e.target.value, page: 1 })}
-          data-testid="ledger-to" className="h-9 rounded-md border border-input px-2 text-xs" />
-        <Button size="sm" variant="outline" onClick={() => setF({ q: "", office_q: "", ref: "", currency: "", txn_type: "", date_from: "", date_to: "", page: 1 })}
+          data-testid="ledger-to" className="h-9 w-full lg:w-auto rounded-md border border-input px-2 text-xs" />
+        <Button size="sm" variant="outline" className="w-full lg:w-auto" onClick={() => setF({ q: "", office_q: "", ref: "", currency: "", txn_type: "", date_from: "", date_to: "", page: 1 })}
           data-testid="ledger-reset"><RotateCcw className="w-3.5 h-3.5" /> تصفير</Button>
-        <Button size="sm" className="bg-[#0A2540] hover:bg-[#061A2E]" onClick={exportCsv} data-testid="ledger-export">
+        <Button size="sm" className="bg-[#0A2540] hover:bg-[#061A2E] w-full lg:w-auto" onClick={exportCsv} data-testid="ledger-export">
           <Download className="w-4 h-4" /> تصدير Excel/CSV
         </Button>
-        <Button size="sm" variant="outline" data-testid="recon-btn"
+        <Button size="sm" variant="outline" className="w-full lg:w-auto" data-testid="recon-btn"
           onClick={async () => { const r = await api.get("/admin/reconciliation"); setRecon(r.data); }}>
           <Scale className="w-4 h-4" /> المطابقة المالية
         </Button>
@@ -121,7 +121,11 @@ export default function AdminLedger() {
         </div>
       )}
 
-      <div className="bg-white rounded-2xl border card-shadow overflow-x-auto" data-testid="ledger-table">
+      <div className="text-[10px] text-muted-foreground mb-2 sm:hidden" data-testid="ledger-scroll-hint">
+        اسحب الجدول أفقياً لعرض بقية الأعمدة →
+      </div>
+
+      <div className="bg-white rounded-2xl border card-shadow table-scroll" data-testid="ledger-table">
         <table className="w-full text-xs min-w-[880px]">
           <thead className="bg-[#F4F6F8] text-muted-foreground">
             <tr>{["التاريخ", "الحساب", "النوع", "الوصف", "المرجع", "المبلغ", ""].map((h) => (
@@ -323,7 +327,7 @@ export default function AdminLedger() {
 
       {/* Voucher */}
       <Dialog open={!!voucher} onOpenChange={(o) => !o && setVoucher(null)}>
-        <DialogContent dir="rtl" className="max-w-md" data-testid="voucher-dialog">
+        <DialogContent dir="rtl" className="max-w-md max-h-[85vh] overflow-y-auto" data-testid="voucher-dialog">
           <DialogHeader><DialogTitle>{voucher?.kind_label} — {voucher?.voucher_no}</DialogTitle></DialogHeader>
           {voucher && (
             <div className="space-y-2 text-sm">

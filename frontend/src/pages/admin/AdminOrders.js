@@ -90,7 +90,7 @@ export default function AdminOrders() {
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border card-shadow overflow-x-auto" data-testid="orders-table">
+      <div className="bg-white rounded-2xl border card-shadow table-scroll" data-testid="orders-table">
         <table className="w-full text-xs min-w-[900px]">
           <thead className="bg-[#F4F6F8] text-muted-foreground">
             <tr>

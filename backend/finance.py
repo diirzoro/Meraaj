@@ -64,7 +64,9 @@ def _ledger_filter(office_id, currency, txn_type, date_from, date_to, q):
     f = {}
     if office_id:
         f["office_id"] = office_id
-    if currency in CCY:
+    if currency:
+        # Any currency code is honoured (SAR/USD/legacy others); empty value = ALL currencies
+        # and must never add a currency clause.
         f["currency"] = currency
     if txn_type:
         f["type"] = txn_type
@@ -281,20 +283,30 @@ async def ledger(office_id: Optional[str] = None, currency: Optional[str] = None
     items = []
     for d in serialize(docs):
         d["office_name"] = names.get(d.get("office_id"), "—")
-        d["type_label"] = TXN_LABEL.get(d.get("type"), d.get("type"))
+        d["currency"] = d.get("currency") or "—"
+        d["type_label"] = TXN_LABEL.get(d.get("type")) or d.get("type") or "حركة غير مصنّفة"
         items.append(d)
+    # Totals: keep SAR/USD keys always present, and never drop rows whose currency is
+    # missing or legacy — they are grouped under "أخرى" instead of breaking the request.
     inflow = {c: 0.0 for c in CCY}
     outflow = {c: 0.0 for c in CCY}
+    other_in = other_out = 0.0
     async for r in db.transactions.aggregate([{"$match": f}, {"$group": {
             "_id": {"c": "$currency", "sign": {"$cond": [{"$gte": ["$amount", 0]}, "in", "out"]}},
             "t": {"$sum": "$amount"}}}]):
-        c = r["_id"]["c"]
-        if c not in CCY:
-            continue
-        (inflow if r["_id"]["sign"] == "in" else outflow)[c] = round(r["t"], 2)
+        c = r["_id"].get("c")
+        amt = round(float(r.get("t") or 0), 2)
+        if c in CCY:
+            (inflow if r["_id"]["sign"] == "in" else outflow)[c] = amt
+        elif r["_id"]["sign"] == "in":
+            other_in += amt
+        else:
+            other_out += amt
     return {"items": items, "total": total, "page": page, "limit": limit,
             "inflow": inflow, "outflow": outflow,
             "net": {c: round(inflow[c] + outflow[c], 2) for c in CCY},
+            "other_currencies": {"inflow": round(other_in, 2), "outflow": round(other_out, 2),
+                                 "net": round(other_in + other_out, 2)},
             "types": TXN_LABEL}
 
 

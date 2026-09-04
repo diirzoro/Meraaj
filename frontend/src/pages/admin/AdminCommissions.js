@@ -153,7 +153,7 @@ export default function AdminCommissions() {
 
       {/* Rule dialog */}
       <Dialog open={!!form} onOpenChange={(o) => !o && setForm(null)}>
-        <DialogContent dir="rtl" className="max-w-lg" data-testid="rule-dialog">
+        <DialogContent dir="rtl" className="max-w-lg max-h-[85vh] overflow-y-auto" data-testid="rule-dialog">
           <DialogHeader><DialogTitle>{form?.id ? "تعديل قاعدة" : "قاعدة عمولة جديدة"}</DialogTitle></DialogHeader>
           {form && (
             <div className="space-y-3">

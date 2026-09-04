@@ -9,12 +9,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { AdPreview } from "@/components/AdSlot";
+import AdminAdPackages from "@/pages/admin/AdminAdPackages";
 import { Megaphone, Plus, Eye, MousePointerClick, CheckCircle2, XCircle, PauseCircle } from "lucide-react";
 
 const EMPTY = {
   kind: "ad", title: "", description_ar: "", advertiser_name: "", advertiser_type: "office",
   paid: false, contract_value: 0, currency: "SAR", start_date: "", end_date: "",
-  image_url: "", target_url: "", audience: "all", placements: ["homepage"], priority: 10,
+  image_url: "", target_url: "", audience: "all", audience_user_ids: [], audience_org_ids: [],
+  placements: ["homepage"], placement_group: null, advertiser_owner_id: "",
+  advertiser_org_id: "", priority: 10,
   cta_label: "", linked_package_id: "", linked_office_id: "", reason: "",
 };
 
@@ -30,6 +33,7 @@ export default function AdminAds() {
   const [pv, setPv] = useState("banner");
 
   const load = useCallback(() => {
+    if (tab === "packages") return;
     api.get(`/admin/ads?kind=${tab}`).then((r) => setD(r.data)).catch((e) => toast.error(apiError(e)));
   }, [tab]);
 
@@ -91,8 +95,16 @@ export default function AdminAds() {
     act(() => api.post(`/admin/ads/${id}/status`, { status, reason: reason.trim() }), "تم تحديث الحالة");
   };
 
+  const decideCancel = (id, decision) => {
+    const reason = window.prompt(decision === "accept" ? "سبب اعتماد الإلغاء؟" : "سبب رفض طلب الإلغاء؟");
+    if (!reason || reason.trim().length < 3) return;
+    act(() => api.post(`/admin/ads/${id}/cancellation`, { decision, reason: reason.trim() }),
+      decision === "accept" ? "تم اعتماد الإلغاء" : "تم رفض طلب الإلغاء");
+  };
+
   const togglePlacement = (p) => setForm((f) => ({
-    ...f, placements: f.placements.includes(p)
+    ...f, placement_group: null,
+    placements: f.placements.includes(p)
       ? f.placements.filter((x) => x !== p) : [...f.placements, p] }));
 
   if (!cat) return <div className="text-center py-20 text-muted-foreground" data-testid="ads-loading">جارٍ التحميل...</div>;
@@ -110,16 +122,19 @@ export default function AdminAds() {
       </div>
 
       <div className="flex flex-wrap gap-2 mb-5 items-center">
-        {[["ad", "الإعلانات"], ["promotion", "العروض الترويجية"]].map(([k, l]) => (
+        {[["ad", "الإعلانات"], ["promotion", "العروض الترويجية"], ["packages", "الباقات الإعلانية"]].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} data-testid={`ads-tab-${k}`}
             className={`px-3 h-9 rounded-lg text-xs font-semibold border ${tab === k ? "bg-[#0A2540] text-white border-[#0A2540]" : "bg-white text-[#0A2540] hover:bg-[#F4F6F8]"}`}>{l}</button>
         ))}
+        {tab !== "packages" && (
         <Button size="sm" className="bg-[#D4AF37] text-[#0A2540] hover:bg-[#c39f2f] mr-auto"
           data-testid="ads-new-btn" onClick={() => { setForm(EMPTY); setEditId(null); setOpen(true); }}>
           <Plus className="w-4 h-4" /> {tab === "ad" ? "إعلان جديد" : "عرض جديد"}
         </Button>
+        )}
       </div>
 
+      {tab === "packages" ? <AdminAdPackages /> : (
       <div className="bg-white rounded-2xl border card-shadow table-scroll" data-testid="ads-table">
         <table className="w-full text-xs min-w-[900px]">
           <thead className="bg-[#F4F6F8] text-muted-foreground">
@@ -146,6 +161,11 @@ export default function AdminAds() {
                   <span className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap ${a.status === "active" ? "bg-[#F0FDF4] text-[#15803D] border-[#BBF7D0]" : a.status === "pending_approval" ? "bg-[#FEFCE8] text-[#A16207] border-[#FEF08A]" : a.status === "rejected" ? "bg-[#FEF2F2] text-[#B91C1C] border-[#FECACA]" : "bg-[#F4F6F8] text-[#64748B]"}`}>
                     {a.status_label}
                   </span>
+                  {a.cancellation?.state === "requested" && (
+                    <span className="block text-[10px] text-[#B91C1C]" data-testid={`ad-cancel-reason-${a.id}`}>
+                      سبب طلب الإلغاء: {a.cancellation.reason}
+                    </span>
+                  )}
                 </td>
                 <td className="px-3 py-2.5 tabular">{a.views || 0}</td>
                 <td className="px-3 py-2.5 tabular">{a.clicks || 0}</td>
@@ -169,6 +189,14 @@ export default function AdminAds() {
                     <button className="text-[#B91C1C] underline text-[10px]" data-testid={`ad-reject-${a.id}`}
                       onClick={() => setStatus(a.id, "rejected", "سبب الرفض؟")}>رفض</button>
                   )}
+                  {a.status === "cancellation_requested" && (
+                    <>
+                      <button className="text-[#15803D] underline text-[10px]" data-testid={`ad-cancel-accept-${a.id}`}
+                        onClick={() => decideCancel(a.id, "accept")}>اعتماد الإلغاء</button>
+                      <button className="text-[#B91C1C] underline text-[10px]" data-testid={`ad-cancel-reject-${a.id}`}
+                        onClick={() => decideCancel(a.id, "reject")}>رفض الإلغاء</button>
+                    </>
+                  )}
                   <button className="text-muted-foreground underline text-[10px]" data-testid={`ad-detail-${a.id}`}
                     onClick={async () => {
                       try { const r = await api.get(`/admin/ads/${a.id}`); setDetail(r.data); }
@@ -180,6 +208,7 @@ export default function AdminAds() {
           </tbody>
         </table>
       </div>
+      )}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto" dir="rtl" data-testid="ad-form-dialog">
@@ -202,6 +231,30 @@ export default function AdminAds() {
                 value={form.audience} onChange={(e) => setForm({ ...form, audience: e.target.value })}>
                 {Object.entries(cat.audiences).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </select>
+            </F>
+            {form.audience === "specific" && (
+              <div className="sm:col-span-2 grid sm:grid-cols-2 gap-3">
+                <F label="معرّفات مستخدمين (مفصولة بفاصلة)">
+                  <Input className="h-9 text-xs" dir="ltr" data-testid="ad-audience-users"
+                    value={(form.audience_user_ids || []).join(",")}
+                    onChange={(e) => setForm({ ...form, audience_user_ids: e.target.value.split(/[,،\s]+/).filter(Boolean) })} />
+                </F>
+                <F label="معرّفات جهات/مؤسسات (مفصولة بفاصلة)">
+                  <Input className="h-9 text-xs" dir="ltr" data-testid="ad-audience-orgs"
+                    value={(form.audience_org_ids || []).join(",")}
+                    onChange={(e) => setForm({ ...form, audience_org_ids: e.target.value.split(/[,،\s]+/).filter(Boolean) })} />
+                </F>
+              </div>
+            )}
+            <F label="حساب المعلن (يُستبعد من الجمهور)">
+              <Input className="h-9 text-xs" dir="ltr" data-testid="ad-owner-id"
+                value={form.advertiser_owner_id || ""}
+                onChange={(e) => setForm({ ...form, advertiser_owner_id: e.target.value })} />
+            </F>
+            <F label="مؤسسة المعلن (تُستبعد هي ومستخدموها)">
+              <Input className="h-9 text-xs" dir="ltr" data-testid="ad-owner-org-id"
+                value={form.advertiser_org_id || ""}
+                onChange={(e) => setForm({ ...form, advertiser_org_id: e.target.value })} />
             </F>
             <F label="مدفوع أم مجاني">
               <select className="h-9 w-full rounded-md border border-input px-2 text-xs bg-white" data-testid="ad-paid"
@@ -248,8 +301,20 @@ export default function AdminAds() {
             <F label="الأولوية (الأصغر يظهر أولاً)"><Input type="number" className="h-9 text-xs" value={form.priority}
               data-testid="ad-priority" onChange={(e) => setForm({ ...form, priority: e.target.value })} /></F>
             <div className="sm:col-span-2">
-              <Label className="text-[11px]">أماكن العرض</Label>
-              <div className="flex flex-wrap gap-2 mt-1">
+              <Label className="text-[11px]">أماكن العرض ({form.placements.length} مختارة)</Label>
+              <div className="flex flex-wrap gap-1.5 mt-1 mb-2" data-testid="ad-placement-groups">
+                {Object.entries(cat.placement_groups || {}).map(([k, g]) => (
+                  <button key={k} type="button" data-testid={`ad-group-${k}`}
+                    onClick={() => setForm({ ...form, placements: g.pages, placement_group: k })}
+                    className="text-[10px] px-2 py-1 rounded border bg-[#F4F6F8] hover:bg-[#EDF1F5]">
+                    {g.label} ({g.pages.length})
+                  </button>
+                ))}
+                <button type="button" data-testid="ad-group-clear"
+                  onClick={() => setForm({ ...form, placements: [], placement_group: null })}
+                  className="text-[10px] px-2 py-1 rounded border bg-white">تفريغ الاختيار</button>
+              </div>
+              <div className="flex flex-wrap gap-2">
                 {Object.entries(cat.placements).map(([k, l]) => (
                   <label key={k} className={`text-[11px] px-3 py-1.5 rounded-lg border cursor-pointer ${form.placements.includes(k) ? "bg-[#0A2540] text-white border-[#0A2540]" : "bg-white"}`}
                     data-testid={`ad-placement-${k}`}>
