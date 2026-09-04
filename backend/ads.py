@@ -24,6 +24,7 @@ STATUSES = {
     "draft": "مسودة", "pending_approval": "بانتظار الاعتماد", "active": "نشط",
     "paused": "موقوف مؤقتاً", "expired": "منتهي", "rejected": "مرفوض",
     "archived": "مؤرشف", "completed": "مكتمل (بلغ حدّ الباقة)",
+    "cancellation_requested": "طلب إلغاء قيد المراجعة", "cancelled": "ملغى",
 }
 PLACEMENTS = {
     "homepage": {"label": "الصفحة الرئيسية", "audience_scope": "public"},
@@ -108,6 +109,23 @@ def _validate(p: AdIn):
         raise HTTPException(400, "تاريخ النهاية قبل تاريخ البداية")
     if p.paid and p.contract_value <= 0:
         raise HTTPException(400, "الإعلان المدفوع يحتاج قيمة عقد أكبر من صفر")
+
+
+async def _notify_ad(ad: dict, kind: str, title: str, body: str, meta: Optional[dict] = None):
+    """In-app notification tied to the campaign itself (never a generic message)."""
+    from orgs import notify
+    uid = str(ad.get("advertiser_owner_id") or ad.get("created_by_id") or "")
+    if not uid:
+        return
+    await notify(uid, kind, title, body, link="/my-ads",
+                 meta={"advertisement_id": str(ad["_id"]), "title": ad.get("title"),
+                       **(meta or {})})
+
+
+def _money_line(b: dict) -> str:
+    if not b or not b.get("held"):
+        return "الباقة مجانية — لا يوجد مبلغ مستحق."
+    return f"{round(float(b['held']), 2)} {b.get('currency')}"
 
 
 async def _audit(entity_id, action, actor, reason, before=None, after=None):
@@ -285,15 +303,19 @@ async def set_status(ad_id: str, payload: StatusIn, admin: dict = Depends(requir
     """Maker–Checker: only a DIFFERENT admin than the creator may activate an ad."""
     if payload.status not in STATUSES:
         raise HTTPException(400, "حالة غير مدعومة")
+    if payload.status in ("cancellation_requested", "cancelled"):
+        raise HTTPException(400, "الإلغاء يُدار من مسار طلبات الإلغاء وليس من تغيير الحالة")
     ad = await db.advertisements.find_one({"_id": oid(ad_id)})
     if not ad:
         raise HTTPException(404, "الإعلان غير موجود")
-    upd = await _apply_status(ad, payload.status, admin, payload.reason.strip())
+    # Guards run BEFORE any money moves so a rejected transition can never charge a wallet.
     if payload.status == "active":
         if ad.get("status") not in ("pending_approval", "paused"):
             raise HTTPException(400, "يجب إرسال الإعلان للاعتماد قبل تنشيطه")
         if ad.get("created_by_id") == str(admin["_id"]) and ad.get("source") != "office":
             raise HTTPException(403, "مبدأ الفصل بين المنشئ والمعتمد: يعتمد الإعلان مسؤول آخر")
+    upd = await _apply_status(ad, payload.status, admin, payload.reason.strip())
+    if payload.status == "active":
         upd["approved_by"] = admin.get("email")
         upd["approved_at"] = now_iso()
     if payload.status == "rejected":
@@ -301,6 +323,30 @@ async def set_status(ad_id: str, payload: StatusIn, admin: dict = Depends(requir
     await db.advertisements.update_one({"_id": ad["_id"]}, {"$set": upd})
     await _audit(ad_id, f"ad_{payload.status}", admin, payload.reason.strip(),
                  before={"status": ad.get("status")}, after={"status": payload.status})
+    b = upd.get("billing") or {}
+    if payload.status == "active":
+        snap = ad.get("package_snapshot") or {}
+        await _notify_ad(ad, "ad_approved", "تم اعتماد إعلانك ونشره",
+                         (f"تم قبول «{ad.get('title')}» بنجاح.\n"
+                          f"الباقة: {b.get('package_name') or snap.get('name') or '—'}\n"
+                          f"المدة: {snap.get('duration_days') or ad.get('duration_days') or '—'} يوم "
+                          f"({ad.get('start_date')} ← {ad.get('end_date')})\n"
+                          f"قيمة الباقة: {_money_line(b)}\n"
+                          + ("تم تحويل المبلغ المحجوز إلى خصم نهائي من رصيدك."
+                             if b.get("state") == "captured" else
+                             "لا يوجد مبلغ مستحق على هذه الباقة.")),
+                         meta={"package": b.get("package_name"),
+                               "amount": b.get("held"), "currency": b.get("currency"),
+                               "start_date": ad.get("start_date"), "end_date": ad.get("end_date"),
+                               "billing_state": b.get("state")})
+    if payload.status == "rejected":
+        await _notify_ad(ad, "ad_rejected", "تم رفض إعلانك",
+                         (f"تم رفض «{ad.get('title')}» للأسباب التالية: {payload.reason.strip()}\n"
+                          + ("تم فكّ حجز المبلغ وإعادته إلى رصيدك المتاح."
+                             if b.get("state") == "released" else
+                             "لا يوجد مبلغ محجوز على هذا الإعلان.")),
+                         meta={"reason": payload.reason.strip(),
+                               "amount": b.get("held"), "currency": b.get("currency")})
     return _decorate(serialize(await db.advertisements.find_one({"_id": ad["_id"]})))
 
 
@@ -519,6 +565,7 @@ async def my_promotions(user: dict = Depends(get_current_user)):
                       "duration_days": snap.get("duration_days"),
                       "held_amount": (d.get("billing") or {}).get("held", 0),
                       "billing_state": (d.get("billing") or {}).get("state", "—"),
+                      "cancellation": d.get("cancellation"),
                       "remaining_views": (int(mv) - int(d.get("views") or 0)) if mv else None,
                       "remaining_clicks": (int(mc) - int(d.get("clicks") or 0)) if mc else None,
                       "completion_reason": d.get("completion_reason")})
@@ -625,6 +672,123 @@ async def my_ad_status(ad_id: str, payload: MyStatusIn,
     await _audit(ad_id, f"ad_{payload.status}", user, payload.reason.strip(),
                  before={"status": ad.get("status")}, after={"status": payload.status})
     fresh = await db.advertisements.find_one({"_id": ad["_id"]})
+    b = fresh.get("billing") or {}
+    if payload.status == "pending_approval":
+        await _notify_ad(fresh, "ad_submitted", "تم إرسال إعلانك للاعتماد",
+                         (f"«{fresh.get('title')}» بانتظار اعتماد إدارة معراج.\n"
+                          f"الباقة: {b.get('package_name') or '—'} — المبلغ المحجوز: {_money_line(b)}"),
+                         meta={"amount": b.get("held"), "currency": b.get("currency"),
+                               "package": b.get("package_name")})
     return {"ok": True, "ad": _decorate(serialize(fresh)),
             "billing": fresh.get("billing") or {}}
+
+
+class CancelRequestIn(BaseModel):
+    reason: str = Field(min_length=3)
+
+
+@router.post("/ads/mine/{ad_id}/cancellation-request")
+async def request_cancellation(ad_id: str, payload: CancelRequestIn,
+                               user: dict = Depends(get_current_user)):
+    """The advertiser ASKS to cancel. Nothing is deleted and no balance moves here —
+    an admin decides, and any money movement goes only through the wallet/ledger logic."""
+    ad = await _own_ad_or_403(ad_id, user)
+    if ad.get("status") not in ("active", "pending_approval", "paused"):
+        raise HTTPException(400, "طلب الإلغاء متاح للإعلان النشط أو الموقوف أو قيد الاعتماد فقط")
+    if ad.get("status") == "cancellation_requested":
+        raise HTTPException(400, "يوجد طلب إلغاء قيد المراجعة بالفعل")
+    cancellation = {"state": "requested", "reason": payload.reason.strip(),
+                    "requested_by": user.get("email"), "requested_by_id": str(user["_id"]),
+                    "requested_at": now_iso(), "previous_status": ad.get("status"),
+                    "decided_by": None, "decided_at": None, "decision_reason": None,
+                    "refund_amount": None, "refund_currency": None, "refund_txn": None}
+    await db.advertisements.update_one({"_id": ad["_id"]}, {"$set": {
+        "status": "cancellation_requested", "cancellation": cancellation,
+        "updated_at": now_iso()}})
+    await _audit(ad_id, "ad_cancellation_requested", user, payload.reason.strip(),
+                 before={"status": ad.get("status")}, after={"status": "cancellation_requested"})
+    await _notify_ad({**ad, "_id": ad["_id"]}, "ad_cancellation_requested",
+                     "تم استلام طلب إلغاء إعلانك",
+                     (f"طلب إلغاء «{ad.get('title')}» قيد مراجعة إدارة معراج.\n"
+                      f"سبب الطلب: {payload.reason.strip()}\n"
+                      "الإعلان لم يُحذف، ولن يتغير رصيدك إلا بقرار معتمد."),
+                     meta={"reason": payload.reason.strip()})
+    return {"ok": True, "status": "cancellation_requested",
+            "note": "الطلب بانتظار قرار الإدارة — لا حركة مالية حتى الآن"}
+
+
+class CancelDecisionIn(BaseModel):
+    decision: str                      # accept | reject
+    reason: str = Field(min_length=3)
+
+
+@router.get("/admin/ads-cancellations")
+async def list_cancellations(admin: dict = Depends(require_admin)):
+    docs = await db.advertisements.find({"status": "cancellation_requested"}) \
+        .sort("updated_at", -1).to_list(200)
+    return {"items": [_decorate(d) for d in serialize(docs)]}
+
+
+@router.post("/admin/ads/{ad_id}/cancellation")
+async def decide_cancellation(ad_id: str, payload: CancelDecisionIn,
+                              admin: dict = Depends(require_admin)):
+    """Accept → campaign stops showing and stays fully traceable.
+    Refund: a still-HELD amount is released through the standard wallet logic; an already
+    CAPTURED amount is NOT auto-refunded (refund policy needs a commercial decision)."""
+    if payload.decision not in ("accept", "reject"):
+        raise HTTPException(400, "القرار غير مدعوم")
+    ad = await db.advertisements.find_one({"_id": oid(ad_id)})
+    if not ad:
+        raise HTTPException(404, "الإعلان غير موجود")
+    if ad.get("status") != "cancellation_requested":
+        raise HTTPException(400, "لا يوجد طلب إلغاء قيد المراجعة على هذا الإعلان")
+    c = dict(ad.get("cancellation") or {})
+    reason = payload.reason.strip()
+    b = dict(ad.get("billing") or {})
+
+    if payload.decision == "reject":
+        upd = {"status": c.get("previous_status") or "active", "updated_at": now_iso(),
+               "cancellation": {**c, "state": "rejected", "decided_by": admin.get("email"),
+                                "decided_at": now_iso(), "decision_reason": reason}}
+        await db.advertisements.update_one({"_id": ad["_id"]}, {"$set": upd})
+        await _audit(ad_id, "ad_cancellation_rejected", admin, reason,
+                     before={"status": "cancellation_requested"},
+                     after={"status": upd["status"]})
+        await _notify_ad(ad, "ad_cancellation_rejected", "تم رفض طلب إلغاء إعلانك",
+                         (f"تم رفض طلب إلغاء «{ad.get('title')}». السبب: {reason}\n"
+                          f"يستمر الإعلان بحالته: {STATUSES.get(upd['status'], upd['status'])}"),
+                         meta={"reason": reason, "status": upd["status"]})
+        return {"ok": True, "status": upd["status"]}
+
+    from ads_billing import release_for_ad
+    refund = None
+    if b.get("state") == "held":
+        rel = await release_for_ad(ad, f"إلغاء معتمد: {reason}")
+        if rel:
+            b.update(rel)
+            refund = {"refund_amount": b.get("held"), "refund_currency": b.get("currency"),
+                      "refund_txn": "ad_hold_release"}
+    upd = {"status": "cancelled", "billing": b, "updated_at": now_iso(),
+           "cancellation": {**c, "state": "accepted", "decided_by": admin.get("email"),
+                            "decided_at": now_iso(), "decision_reason": reason,
+                            **(refund or {"refund_amount": 0, "refund_currency": b.get("currency"),
+                                          "refund_txn": None}),
+                            "captured_not_refunded": b.get("state") == "captured"}}
+    await db.advertisements.update_one({"_id": ad["_id"]}, {"$set": upd})
+    await _audit(ad_id, "ad_cancellation_approved", admin, reason,
+                 before={"status": "cancellation_requested", "billing_state": ad.get("billing", {}).get("state")},
+                 after={"status": "cancelled", "billing_state": b.get("state"),
+                        "refund_amount": (refund or {}).get("refund_amount", 0)})
+    await _notify_ad(ad, "ad_cancellation_approved", "تم اعتماد إلغاء إعلانك",
+                     (f"تم إلغاء «{ad.get('title')}» وتوقف ظهوره. السبب: {reason}\n"
+                      + (f"تم فكّ حجز المبلغ وإعادته إلى رصيدك: {_money_line(b)}" if refund else
+                         ("المبلغ كان قد خُصم نهائياً؛ أي استرجاع يتطلب قراراً من الإدارة "
+                          "وفق سياسة الاسترجاع." if b.get("state") == "captured" else
+                          "لا يوجد مبلغ مرتبط بهذا الإعلان."))),
+                     meta={"reason": reason, "refund_amount": (refund or {}).get("refund_amount", 0),
+                           "currency": b.get("currency")})
+    return {"ok": True, "status": "cancelled",
+            "refund": refund or {"refund_amount": 0},
+            "note": ("المبلغ المحجوز أُعيد بالكامل" if refund else
+                     "لا استرجاع تلقائي لمبلغ مخصوم نهائياً — سياسة الاسترجاع تحتاج قراراً تجارياً")}
 

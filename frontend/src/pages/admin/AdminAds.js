@@ -95,6 +95,13 @@ export default function AdminAds() {
     act(() => api.post(`/admin/ads/${id}/status`, { status, reason: reason.trim() }), "تم تحديث الحالة");
   };
 
+  const decideCancel = (id, decision) => {
+    const reason = window.prompt(decision === "accept" ? "سبب اعتماد الإلغاء؟" : "سبب رفض طلب الإلغاء؟");
+    if (!reason || reason.trim().length < 3) return;
+    act(() => api.post(`/admin/ads/${id}/cancellation`, { decision, reason: reason.trim() }),
+      decision === "accept" ? "تم اعتماد الإلغاء" : "تم رفض طلب الإلغاء");
+  };
+
   const togglePlacement = (p) => setForm((f) => ({
     ...f, placement_group: null,
     placements: f.placements.includes(p)
@@ -154,6 +161,11 @@ export default function AdminAds() {
                   <span className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap ${a.status === "active" ? "bg-[#F0FDF4] text-[#15803D] border-[#BBF7D0]" : a.status === "pending_approval" ? "bg-[#FEFCE8] text-[#A16207] border-[#FEF08A]" : a.status === "rejected" ? "bg-[#FEF2F2] text-[#B91C1C] border-[#FECACA]" : "bg-[#F4F6F8] text-[#64748B]"}`}>
                     {a.status_label}
                   </span>
+                  {a.cancellation?.state === "requested" && (
+                    <span className="block text-[10px] text-[#B91C1C]" data-testid={`ad-cancel-reason-${a.id}`}>
+                      سبب طلب الإلغاء: {a.cancellation.reason}
+                    </span>
+                  )}
                 </td>
                 <td className="px-3 py-2.5 tabular">{a.views || 0}</td>
                 <td className="px-3 py-2.5 tabular">{a.clicks || 0}</td>
@@ -176,6 +188,14 @@ export default function AdminAds() {
                   {a.status === "pending_approval" && (
                     <button className="text-[#B91C1C] underline text-[10px]" data-testid={`ad-reject-${a.id}`}
                       onClick={() => setStatus(a.id, "rejected", "سبب الرفض؟")}>رفض</button>
+                  )}
+                  {a.status === "cancellation_requested" && (
+                    <>
+                      <button className="text-[#15803D] underline text-[10px]" data-testid={`ad-cancel-accept-${a.id}`}
+                        onClick={() => decideCancel(a.id, "accept")}>اعتماد الإلغاء</button>
+                      <button className="text-[#B91C1C] underline text-[10px]" data-testid={`ad-cancel-reject-${a.id}`}
+                        onClick={() => decideCancel(a.id, "reject")}>رفض الإلغاء</button>
+                    </>
                   )}
                   <button className="text-muted-foreground underline text-[10px]" data-testid={`ad-detail-${a.id}`}
                     onClick={async () => {

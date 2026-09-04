@@ -216,3 +216,14 @@
 ### المتبقي (Backlog)
 - P2: Release B — التخزين والمرفقات (S3) — مؤجّل بطلب المستخدم.
 - P2: تنفيذ Scanner Bridge على Windows — مؤجّل.
+
+## دورة الاعتماد والإلغاء للإعلانات المدفوعة — 2026-06 (بعد تثبيت طبقة الفواتير)
+- إصلاح أمان مالي في `backend/ads.py::set_status`: كانت حراسات الحالة و Maker/Checker تُنفَّذ **بعد** حركة المال، فمحاولة اعتماد غير مصرّحة قد تخصم الرصيد ثم ترجع خطأ دون حفظ الحالة (خطر خصم مزدوج). الآن الحراسات قبل أي حركة مالية.
+- منع تغيير الحالة إلى cancellation_requested/cancelled من مسار الحالة العام (يُدار من مسار طلبات الإلغاء فقط).
+- حالتان جديدتان: `cancellation_requested`, `cancelled`.
+- مسار طلب الإلغاء: `POST /api/ads/mine/{id}/cancellation-request` (سبب إلزامي، بلا حذف وبلا حركة مالية) → `GET /api/admin/ads-cancellations` → `POST /api/admin/ads/{id}/cancellation` (accept/reject بسبب إلزامي).
+  - قبول الإلغاء: المبلغ المحجوز يُفكّ عبر منطق المحفظة القياسي؛ المبلغ المخصوم نهائياً **لا يُسترجع تلقائياً** (سياسة الاسترجاع تحتاج قراراً تجارياً).
+- إشعارات مرتبطة بالإعلان نفسه عبر `orgs.notify`: ad_submitted, ad_approved, ad_rejected, ad_cancellation_requested, ad_cancellation_approved, ad_cancellation_rejected (تحتوي الباقة والمدة والتواريخ والمبلغ والعملة وحالة الخصم).
+- تدقيق: ad_pending_approval, ad_active, ad_rejected, ad_cancellation_requested/approved/rejected + حركات المحفظة ad_hold/ad_charge/ad_hold_release.
+- تحقق محدود بـ curl/python: حجز→اعتماد→خصم واحد فقط (تكرار الاعتماد 400 بلا خصم ثانٍ)، منع الاعتماد الذاتي، منع الإرسال عند عدم كفاية الرصيد بلا أي حركة، الرفض يفكّ الحجز، رفض/قبول طلب الإلغاء، وقبول إلغاء إعلان محجوز يُعيد المبلغ كاملاً.
+- سياسة الاسترجاع للإعلان المنشور (Full/Partial/No refund) **معلّقة بانتظار قراركم** — لم يُنفَّذ أي استرجاع تلقائي.

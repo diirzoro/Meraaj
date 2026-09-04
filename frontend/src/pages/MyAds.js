@@ -79,6 +79,13 @@ export default function MyAds() {
   const cancel = (ad) => act(() => api.post(`/ads/mine/${ad.id}/status`,
     { status: "draft", reason: "إلغاء الإرسال وفكّ الحجز" }), "أُلغي الإرسال وفُكّ الحجز");
 
+  const requestCancel = (ad) => {
+    const reason = window.prompt("سبب طلب إلغاء الإعلان؟ (إلزامي)");
+    if (!reason || reason.trim().length < 3) return;
+    act(() => api.post(`/ads/mine/${ad.id}/cancellation-request`, { reason: reason.trim() }),
+      "أُرسل طلب الإلغاء لمراجعة إدارة معراج — لا حركة على رصيدك حتى القرار");
+  };
+
   if (!d) return <div className="text-center py-20 text-muted-foreground" data-testid="myads-loading">جارٍ التحميل...</div>;
 
   return (
@@ -125,6 +132,13 @@ export default function MyAds() {
                   <span className="text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap">{a.status_label}</span>
                   {a.rejection_reason && <span className="block text-[10px] text-[#B91C1C]">سبب الرفض: {a.rejection_reason}</span>}
                   {a.completion_reason && <span className="block text-[10px] text-muted-foreground">{a.completion_reason}</span>}
+                  {a.cancellation && (
+                    <span className="block text-[10px] text-muted-foreground" data-testid={`myad-cancel-state-${a.id}`}>
+                      طلب الإلغاء: {a.cancellation.state === "requested" ? "قيد المراجعة"
+                        : a.cancellation.state === "accepted" ? "مقبول" : "مرفوض"}
+                      {a.cancellation.decision_reason ? ` — ${a.cancellation.decision_reason}` : ""}
+                    </span>
+                  )}
                 </td>
                 <td className="px-3 py-2.5 tabular">{a.views || 0}</td>
                 <td className="px-3 py-2.5 tabular">{a.clicks || 0}</td>
@@ -147,6 +161,10 @@ export default function MyAds() {
                   {a.status === "pending_approval" && (
                     <button className="text-[#A16207] underline text-[10px]" data-testid={`myad-cancel-${a.id}`}
                       onClick={() => cancel(a)}>إلغاء الإرسال</button>
+                  )}
+                  {["active", "paused", "pending_approval"].includes(a.status) && (
+                    <button className="text-[#B91C1C] underline text-[10px]" data-testid={`myad-cancel-request-${a.id}`}
+                      onClick={() => requestCancel(a)}>طلب إلغاء الإعلان</button>
                   )}
                 </td>
               </tr>
