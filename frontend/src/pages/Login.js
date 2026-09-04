@@ -3,6 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { apiError } from "@/lib/api";
 import { RESUME_KEY } from "@/config";
+import { AdSlot } from "@/components/AdSlot";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -154,6 +155,8 @@ export default function Login() {
               أنشئ حساب مكتب
             </Link>
           </p>
+
+          <AdSlot placement="login" limit={1} variant="compact" className="mt-6" />
         </form>
       </div>
 

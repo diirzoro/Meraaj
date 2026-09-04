@@ -29,16 +29,16 @@ PLACEMENTS = {
     "homepage": {"label": "الصفحة الرئيسية", "audience_scope": "public"},
     "programs": {"label": "سوق البرامج", "audience_scope": "public"},
     "program_details": {"label": "تفاصيل البرنامج", "audience_scope": "public"},
-    "dashboard": {"label": "لوحة المستخدم", "audience_scope": "authenticated"},
-    "orders": {"label": "صفحة الطلبات", "audience_scope": "authenticated"},
-    "order_details": {"label": "تفاصيل الطلب", "audience_scope": "authenticated"},
-    "wallet": {"label": "المحفظة", "audience_scope": "authenticated"},
-    "notifications": {"label": "الإشعارات", "audience_scope": "authenticated"},
-    "sales": {"label": "صفحة المبيعات (البائع)", "audience_scope": "offices"},
-    "bookings": {"label": "حجوزاتي", "audience_scope": "authenticated"},
-    "create_package": {"label": "إنشاء برنامج", "audience_scope": "offices"},
     "login": {"label": "صفحة الدخول", "audience_scope": "public"},
+    "dashboard": {"label": "لوحة المستخدم", "audience_scope": "authenticated"},
+    "bookings": {"label": "حجوزاتي (الطلبات)", "audience_scope": "authenticated"},
+    "wallet": {"label": "المحفظة", "audience_scope": "authenticated"},
+    "sales": {"label": "مبيعاتي (البائع)", "audience_scope": "offices"},
+    "create_package": {"label": "إنشاء/تعديل برنامج", "audience_scope": "offices"},
 }
+# NOTE: a placement is listed here ONLY when a real user-facing <AdSlot/> renders it.
+# Pages without a public slot yet (لوحة الطلبات الإدارية، تفاصيل الطلب، مركز الإشعارات)
+# are intentionally NOT selectable so an admin can never pick a dead placement.
 # Ready-made groups so an admin picks a set instead of ticking pages one by one.
 PLACEMENT_GROUPS = {
     "all_eligible": {"label": "كل الصفحات المؤهلة",
@@ -51,7 +51,7 @@ PLACEMENT_GROUPS = {
                                if v["audience_scope"] in ("offices", "authenticated")]},
     "individual_pages": {"label": "صفحات الأفراد",
                          "pages": ["homepage", "programs", "program_details", "dashboard",
-                                   "bookings", "wallet", "notifications"]},
+                                   "bookings", "wallet"]},
 }
 AUDIENCES = {"all": "جميع المستخدمين", "offices": "المكاتب فقط",
              "individuals": "الأفراد فقط", "specific": "مستخدمون/جهات محددة"}

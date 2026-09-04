@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import api, { apiError } from "@/lib/api";
 import { PageHeader } from "@/components/Layout";
+import { AdSlot } from "@/components/AdSlot";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -146,6 +147,8 @@ export default function CreatePackage() {
     <>
       <PageHeader title={isEdit ? "تعديل البرنامج" : "إضافة برنامج جديد"}
         subtitle={isEdit ? "عدّل تفاصيل برنامجك المنشور" : "أنت هنا بدور المُصنّع/البائع"} />
+
+      <AdSlot placement="create_package" limit={1} variant="compact" className="mb-5" />
 
       <form onSubmit={submit} className="grid lg:grid-cols-3 gap-6" data-testid="create-pkg-form">
         <div className="lg:col-span-2 space-y-6">
