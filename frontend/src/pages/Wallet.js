@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import api, { apiError } from "@/lib/api";
 import { PageHeader } from "@/components/Layout";
+import { AdSlot } from "@/components/AdSlot";
 import { money, equiv, fmtDate } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,6 +47,8 @@ export default function WalletPage() {
           <TransferDialog onDone={load} wallet={w} />
           <WithdrawDialog onDone={load} wallet={w} />
         </div>} />
+
+      <AdSlot placement="wallet" limit={2} variant="compact" className="mb-5" />
 
       <div className="grid md:grid-cols-2 gap-5 mb-8">
         <CurrencyWallet ccy="SAR" title="محفظة الريال السعودي" data={w.SAR} loading={loading} gold />

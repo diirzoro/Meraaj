@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import api, { apiError } from "@/lib/api";
 import { PageHeader } from "@/components/Layout";
+import { AdSlot } from "@/components/AdSlot";
 import { money, fmtDate } from "@/lib/format";
 import StatusBadge, { ApprovalBadge, CancellationBadge } from "@/components/StatusBadge";
 import Timeline from "@/components/Timeline";
@@ -85,6 +86,8 @@ export default function Bookings() {
   return (
     <>
       <PageHeader title="حجوزاتي (كمشتري)" subtitle="متابعة الحجوزات التي اشتريتها من السوق ودورة حياتها" />
+
+      <AdSlot placement="bookings" limit={2} variant="compact" className="mb-5" />
 
       <div className="bg-gradient-to-l from-[#0A2540] to-[#123B5D] rounded-2xl p-3 sm:p-4 mb-5 card-shadow">
         <div className="grid grid-cols-4 gap-2">

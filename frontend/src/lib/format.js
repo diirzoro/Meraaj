@@ -2,6 +2,7 @@ export const SAR_RATE = 3.77;
 
 export const money = (n, currency = "USD") => {
   const v = Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (!currency || currency === "—") return v;
   const sym = currency === "USD" ? "$" : currency === "SAR" ? "ر.س" : currency;
   return `${v} ${sym}`;
 };

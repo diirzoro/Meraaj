@@ -73,7 +73,7 @@ export default function AdminTravelers() {
         </span>
       </div>
 
-      <div className="bg-white rounded-2xl border card-shadow overflow-x-auto" data-testid="travelers-table">
+      <div className="bg-white rounded-2xl border card-shadow table-scroll" data-testid="travelers-table">
         <table className="w-full text-xs min-w-[820px]">
           <thead className="bg-[#F4F6F8] text-muted-foreground">
             <tr>{["المسافر", "رقم الجواز", "الفئة", "الطلبات", "المستندات", "الناقص", "حالة الجواز", ""].map((h) => (
@@ -167,7 +167,7 @@ export default function AdminTravelers() {
       </Dialog>
 
       <Dialog open={!!del} onOpenChange={(o) => !o && setDel(null)}>
-        <DialogContent dir="rtl" className="max-w-md" data-testid="doc-delete-dialog">
+        <DialogContent dir="rtl" className="max-w-md max-h-[85vh] overflow-y-auto" data-testid="doc-delete-dialog">
           <DialogHeader><DialogTitle>حذف نهائي للمستند</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div className="text-xs bg-[#FEF2F2] text-[#B91C1C] border border-[#FECACA] rounded-lg px-3 py-2">

@@ -90,7 +90,7 @@ export default function AdminPrograms() {
         <span className="text-[11px] text-muted-foreground mr-auto" data-testid="programs-count">{d.total} برنامج</span>
       </div>
 
-      <div className="bg-white rounded-2xl border card-shadow overflow-x-auto" data-testid="programs-table">
+      <div className="bg-white rounded-2xl border card-shadow table-scroll" data-testid="programs-table">
         <table className="w-full text-xs min-w-[900px]">
           <thead className="bg-[#F4F6F8] text-muted-foreground">
             <tr>{["البرنامج", "المكتب", "المصدر", "الانطلاق", "السعر", "مخصص", "مباع", "متبقٍ", "الحالة", ""].map((h) => (

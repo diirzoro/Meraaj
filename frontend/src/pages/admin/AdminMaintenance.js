@@ -192,7 +192,7 @@ export default function AdminMaintenance() {
 
       {/* Cleanup confirmation */}
       <Dialog open={!!del} onOpenChange={(o) => !o && setDel(null)}>
-        <DialogContent dir="rtl" className="max-w-md" data-testid="cleanup-dialog">
+        <DialogContent dir="rtl" className="max-w-md max-h-[85vh] overflow-y-auto" data-testid="cleanup-dialog">
           <DialogHeader><DialogTitle>تنظيف — {del?.label}</DialogTitle></DialogHeader>
           {del && (
             <div className="space-y-3">
@@ -231,7 +231,7 @@ export default function AdminMaintenance() {
 
       {/* Archive confirmation */}
       <Dialog open={!!arch} onOpenChange={(o) => !o && setArch(null)}>
-        <DialogContent dir="rtl" className="max-w-md" data-testid="archive-dialog">
+        <DialogContent dir="rtl" className="max-w-md max-h-[85vh] overflow-y-auto" data-testid="archive-dialog">
           <DialogHeader><DialogTitle>أرشفة — {arch?.label}</DialogTitle></DialogHeader>
           {arch && (
             <div className="space-y-3">

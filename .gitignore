@@ -129,3 +129,4 @@ pytest.ini
 /test_reports/
 /test_result.md
 frontend/node_modules/.cache/default-development/14.pack
+frontend/node_modules/.cache/default-development/8.pack

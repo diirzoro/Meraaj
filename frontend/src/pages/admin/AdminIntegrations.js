@@ -413,7 +413,7 @@ export default function AdminIntegrations() {
       </Dialog>
 
       <Dialog open={!!retry} onOpenChange={(o) => !o && setRetry(null)}>
-        <DialogContent dir="rtl" className="max-w-md" data-testid="retry-dialog">
+        <DialogContent dir="rtl" className="max-w-md max-h-[85vh] overflow-y-auto" data-testid="retry-dialog">
           <DialogHeader><DialogTitle>{retry?.all ? "إعادة معالجة كل الأحداث الفاشلة" : "إعادة معالجة الحدث"}</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div className="text-xs text-muted-foreground">

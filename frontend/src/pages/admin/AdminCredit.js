@@ -101,7 +101,7 @@ export default function AdminCredit() {
         </Button>
       </div>
 
-      <div className="bg-white rounded-2xl border card-shadow overflow-x-auto" data-testid="credit-table">
+      <div className="bg-white rounded-2xl border card-shadow table-scroll" data-testid="credit-table">
         <table className="w-full text-xs min-w-[820px]">
           <thead className="bg-[#F4F6F8] text-muted-foreground">
             <tr>{["المكتب", "العملة", "السقف", "الرصيد", "المستخدم", "المتاح", "الاستخدام", ""].map((h) => (
@@ -154,7 +154,7 @@ export default function AdminCredit() {
       </div>
 
       <Dialog open={!!grant} onOpenChange={(o) => !o && setGrant(null)}>
-        <DialogContent dir="rtl" className="max-w-md" data-testid="grant-dialog">
+        <DialogContent dir="rtl" className="max-w-md max-h-[85vh] overflow-y-auto" data-testid="grant-dialog">
           <DialogHeader><DialogTitle>منح سقف ائتماني لمكتب</DialogTitle></DialogHeader>
           {grant && (
             <div className="space-y-3">
@@ -195,7 +195,7 @@ export default function AdminCredit() {
       </Dialog>
 
       <Dialog open={!!edit} onOpenChange={(o) => !o && setEdit(null)}>
-        <DialogContent dir="rtl" className="max-w-md" data-testid="limit-dialog">
+        <DialogContent dir="rtl" className="max-w-md max-h-[85vh] overflow-y-auto" data-testid="limit-dialog">
           <DialogHeader><DialogTitle>السقف الائتماني — {edit?.name}</DialogTitle></DialogHeader>
           {edit && (
             <div className="space-y-3">
@@ -214,7 +214,7 @@ export default function AdminCredit() {
       </Dialog>
 
       <Dialog open={!!frz} onOpenChange={(o) => !o && setFrz(null)}>
-        <DialogContent dir="rtl" className="max-w-md" data-testid="freeze-dialog">
+        <DialogContent dir="rtl" className="max-w-md max-h-[85vh] overflow-y-auto" data-testid="freeze-dialog">
           <DialogHeader><DialogTitle>{frz?.frozen ? "تجميد الحساب ائتمانياً" : "إلغاء التجميد"} — {frz?.name}</DialogTitle></DialogHeader>
           {frz && (
             <div className="space-y-3">
@@ -235,7 +235,7 @@ export default function AdminCredit() {
       </Dialog>
 
       <Dialog open={!!events} onOpenChange={(o) => !o && setEvents(null)}>
-        <DialogContent dir="rtl" className="max-w-lg max-h-[80vh] overflow-y-auto" data-testid="credit-events-dialog">
+        <DialogContent dir="rtl" className="max-w-lg max-h-[85vh] overflow-y-auto" data-testid="credit-events-dialog">
           <DialogHeader><DialogTitle>سجل تعديلات الحدود الائتمانية</DialogTitle></DialogHeader>
           <div className="space-y-2">
             {(events || []).length === 0 ? <div className="text-xs text-muted-foreground">لا يوجد سجل</div> :

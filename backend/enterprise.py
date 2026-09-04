@@ -1074,8 +1074,12 @@ async def verify_backup(payload: VerifyIn, admin: dict = Depends(require_admin))
     """Restore DRILL: decrypts the archive and restores it into a THROWAWAY database
     (`<DB>_restore_drill`), reports the collection counts, then drops that database.
     The live/preview database is never touched. Refuses to run on a live environment."""
-    if os.environ.get("ENVIRONMENT", "").lower() in ("live", "production", "prod"):
+    if _environment() == "live":
         raise HTTPException(403, "ممنوع تشغيل اختبار الاستعادة على بيئة Live")
+    if not shutil.which("mongorestore"):
+        raise HTTPException(503, "أداة mongorestore غير مثبّتة في بيئة تشغيل الخادم — "
+                                 "اختبار الاستعادة المعزول معطّل حتى تثبيت "
+                                 "mongodb-database-tools في صورة الخادم.")
     path = await _materialize(os.path.basename(payload.file))
     if not path:
         raise HTTPException(404, "ملف النسخة غير موجود")
@@ -1147,8 +1151,12 @@ async def restore_backup(payload: RestoreIn, admin: dict = Depends(require_admin
     if os.environ.get("ALLOW_RESTORE") != "true":
         raise HTTPException(403, "الاستعادة معطّلة في هذه البيئة (ALLOW_RESTORE غير مفعّل) — "
                                  "تُجرى على Test فقط")
-    if os.environ.get("ENVIRONMENT", "").lower() in ("live", "production", "prod"):
-        raise HTTPException(403, "ممنوع الاستعادة على بيئة Live")
+    env = _environment()
+    if env == "live":
+        raise HTTPException(403, "ممنوع الاستعادة على بيئة Live (محجوب نهائياً)")
+    if env == "unknown":
+        raise HTTPException(403, "البيئة غير محددة (ENVIRONMENT غير مضبوط) — "
+                                 "الاستعادة محجوبة حتى تحديد البيئة صراحةً")
     if payload.confirm_phrase.strip() != "أؤكد الاستعادة":
         raise HTTPException(400, "عبارة التأكيد غير صحيحة")
     path = await _materialize(os.path.basename(payload.file))

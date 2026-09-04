@@ -110,7 +110,7 @@ export default function AdminRoles() {
             )}
           </div>
 
-          <div className="bg-white rounded-2xl border card-shadow overflow-x-auto" data-testid="rbac-users-table">
+          <div className="bg-white rounded-2xl border card-shadow table-scroll" data-testid="rbac-users-table">
             <table className="w-full text-xs min-w-[860px]">
               <thead className="bg-[#F4F6F8] text-muted-foreground">
                 <tr>{["المستخدم", "النوع", "أدوار Enterprise", "الصلاحيات", "الحالة", "2FA", ""].map((h) => (
@@ -186,7 +186,7 @@ export default function AdminRoles() {
       )}
 
       {tab === "approvals" && (
-        <div className="bg-white rounded-2xl border card-shadow overflow-x-auto" data-testid="approvals-table">
+        <div className="bg-white rounded-2xl border card-shadow table-scroll" data-testid="approvals-table">
           <table className="w-full text-xs min-w-[760px]">
             <thead className="bg-[#F4F6F8] text-muted-foreground">
               <tr>{["العملية", "الهدف", "السبب", "المنشئ", "المعتمِد", "الحالة", ""].map((h) => (
@@ -340,7 +340,7 @@ export default function AdminRoles() {
       </Dialog>
 
       <Dialog open={!!editUser} onOpenChange={(o) => !o && setEditUser(null)}>
-        <DialogContent dir="rtl" className="max-w-md" data-testid="edit-user-dialog">
+        <DialogContent dir="rtl" className="max-w-md max-h-[85vh] overflow-y-auto" data-testid="edit-user-dialog">
           <DialogHeader><DialogTitle>تعديل بيانات {editUser?.email}</DialogTitle></DialogHeader>
           {editUser && (
             <div className="space-y-2">
@@ -400,7 +400,7 @@ export default function AdminRoles() {
       </Dialog>
 
       <Dialog open={!!pwd} onOpenChange={(o) => !o && setPwd(null)}>
-        <DialogContent dir="rtl" className="max-w-md" data-testid="pwd-dialog">
+        <DialogContent dir="rtl" className="max-w-md max-h-[85vh] overflow-y-auto" data-testid="pwd-dialog">
           <DialogHeader><DialogTitle>تصفير كلمة المرور — {pwd?.email}</DialogTitle></DialogHeader>
           {pwd && (
             <div className="space-y-3">

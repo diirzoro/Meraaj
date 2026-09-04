@@ -14,7 +14,9 @@ import { Megaphone, Plus, Eye, MousePointerClick, CheckCircle2, XCircle, PauseCi
 const EMPTY = {
   kind: "ad", title: "", description_ar: "", advertiser_name: "", advertiser_type: "office",
   paid: false, contract_value: 0, currency: "SAR", start_date: "", end_date: "",
-  image_url: "", target_url: "", audience: "all", placements: ["homepage"], priority: 10,
+  image_url: "", target_url: "", audience: "all", audience_user_ids: [], audience_org_ids: [],
+  placements: ["homepage"], placement_group: null, advertiser_owner_id: "",
+  advertiser_org_id: "", priority: 10,
   cta_label: "", linked_package_id: "", linked_office_id: "", reason: "",
 };
 
@@ -92,7 +94,8 @@ export default function AdminAds() {
   };
 
   const togglePlacement = (p) => setForm((f) => ({
-    ...f, placements: f.placements.includes(p)
+    ...f, placement_group: null,
+    placements: f.placements.includes(p)
       ? f.placements.filter((x) => x !== p) : [...f.placements, p] }));
 
   if (!cat) return <div className="text-center py-20 text-muted-foreground" data-testid="ads-loading">جارٍ التحميل...</div>;
@@ -203,6 +206,30 @@ export default function AdminAds() {
                 {Object.entries(cat.audiences).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </select>
             </F>
+            {form.audience === "specific" && (
+              <div className="sm:col-span-2 grid sm:grid-cols-2 gap-3">
+                <F label="معرّفات مستخدمين (مفصولة بفاصلة)">
+                  <Input className="h-9 text-xs" dir="ltr" data-testid="ad-audience-users"
+                    value={(form.audience_user_ids || []).join(",")}
+                    onChange={(e) => setForm({ ...form, audience_user_ids: e.target.value.split(/[,،\s]+/).filter(Boolean) })} />
+                </F>
+                <F label="معرّفات جهات/مؤسسات (مفصولة بفاصلة)">
+                  <Input className="h-9 text-xs" dir="ltr" data-testid="ad-audience-orgs"
+                    value={(form.audience_org_ids || []).join(",")}
+                    onChange={(e) => setForm({ ...form, audience_org_ids: e.target.value.split(/[,،\s]+/).filter(Boolean) })} />
+                </F>
+              </div>
+            )}
+            <F label="حساب المعلن (يُستبعد من الجمهور)">
+              <Input className="h-9 text-xs" dir="ltr" data-testid="ad-owner-id"
+                value={form.advertiser_owner_id || ""}
+                onChange={(e) => setForm({ ...form, advertiser_owner_id: e.target.value })} />
+            </F>
+            <F label="مؤسسة المعلن (تُستبعد هي ومستخدموها)">
+              <Input className="h-9 text-xs" dir="ltr" data-testid="ad-owner-org-id"
+                value={form.advertiser_org_id || ""}
+                onChange={(e) => setForm({ ...form, advertiser_org_id: e.target.value })} />
+            </F>
             <F label="مدفوع أم مجاني">
               <select className="h-9 w-full rounded-md border border-input px-2 text-xs bg-white" data-testid="ad-paid"
                 value={form.paid ? "1" : "0"} onChange={(e) => setForm({ ...form, paid: e.target.value === "1" })}>
@@ -248,8 +275,20 @@ export default function AdminAds() {
             <F label="الأولوية (الأصغر يظهر أولاً)"><Input type="number" className="h-9 text-xs" value={form.priority}
               data-testid="ad-priority" onChange={(e) => setForm({ ...form, priority: e.target.value })} /></F>
             <div className="sm:col-span-2">
-              <Label className="text-[11px]">أماكن العرض</Label>
-              <div className="flex flex-wrap gap-2 mt-1">
+              <Label className="text-[11px]">أماكن العرض ({form.placements.length} مختارة)</Label>
+              <div className="flex flex-wrap gap-1.5 mt-1 mb-2" data-testid="ad-placement-groups">
+                {Object.entries(cat.placement_groups || {}).map(([k, g]) => (
+                  <button key={k} type="button" data-testid={`ad-group-${k}`}
+                    onClick={() => setForm({ ...form, placements: g.pages, placement_group: k })}
+                    className="text-[10px] px-2 py-1 rounded border bg-[#F4F6F8] hover:bg-[#EDF1F5]">
+                    {g.label} ({g.pages.length})
+                  </button>
+                ))}
+                <button type="button" data-testid="ad-group-clear"
+                  onClick={() => setForm({ ...form, placements: [], placement_group: null })}
+                  className="text-[10px] px-2 py-1 rounded border bg-white">تفريغ الاختيار</button>
+              </div>
+              <div className="flex flex-wrap gap-2">
                 {Object.entries(cat.placements).map(([k, l]) => (
                   <label key={k} className={`text-[11px] px-3 py-1.5 rounded-lg border cursor-pointer ${form.placements.includes(k) ? "bg-[#0A2540] text-white border-[#0A2540]" : "bg-white"}`}
                     data-testid={`ad-placement-${k}`}>

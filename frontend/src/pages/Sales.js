@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import api, { apiError } from "@/lib/api";
 import { PageHeader } from "@/components/Layout";
+import { AdSlot } from "@/components/AdSlot";
 import { money, fmtDate } from "@/lib/format";
 import StatusBadge, { ApprovalBadge, CancellationBadge } from "@/components/StatusBadge";
 import Timeline from "@/components/Timeline";
@@ -41,6 +42,8 @@ export default function Sales() {
   return (
     <>
       <PageHeader title="مبيعاتي (كبائع)" subtitle="إدارة الحجوزات على برنامجاتك ودورة حياتها" />
+
+      <AdSlot placement="sales" limit={2} variant="compact" className="mb-5" />
       {items.length === 0 ? (
         <div className="text-center py-20 text-muted-foreground">لا توجد مبيعات بعد</div>
       ) : (

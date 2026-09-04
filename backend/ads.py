@@ -12,7 +12,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from db import db, serialize, oid, now_iso
-from security import require_admin, get_current_user
+from security import require_admin, get_current_user, get_optional_user
 
 router = APIRouter(prefix="/api", tags=["ads"])
 
@@ -26,11 +26,35 @@ STATUSES = {
     "archived": "مؤرشف",
 }
 PLACEMENTS = {
-    "homepage": "الصفحة الرئيسية", "programs": "صفحة البرامج",
-    "program_details": "تفاصيل البرنامج", "dashboard": "لوحة المستخدم",
+    "homepage": {"label": "الصفحة الرئيسية", "audience_scope": "public"},
+    "programs": {"label": "سوق البرامج", "audience_scope": "public"},
+    "program_details": {"label": "تفاصيل البرنامج", "audience_scope": "public"},
+    "dashboard": {"label": "لوحة المستخدم", "audience_scope": "authenticated"},
+    "orders": {"label": "صفحة الطلبات", "audience_scope": "authenticated"},
+    "order_details": {"label": "تفاصيل الطلب", "audience_scope": "authenticated"},
+    "wallet": {"label": "المحفظة", "audience_scope": "authenticated"},
+    "notifications": {"label": "الإشعارات", "audience_scope": "authenticated"},
+    "sales": {"label": "صفحة المبيعات (البائع)", "audience_scope": "offices"},
+    "bookings": {"label": "حجوزاتي", "audience_scope": "authenticated"},
+    "create_package": {"label": "إنشاء برنامج", "audience_scope": "offices"},
+    "login": {"label": "صفحة الدخول", "audience_scope": "public"},
 }
-AUDIENCES = {"all": "الجميع", "offices": "المكاتب", "individuals": "الأفراد",
-             "marketers": "المسوّقون"}
+# Ready-made groups so an admin picks a set instead of ticking pages one by one.
+PLACEMENT_GROUPS = {
+    "all_eligible": {"label": "كل الصفحات المؤهلة",
+                     "pages": list(PLACEMENTS.keys())},
+    "public_pages": {"label": "الصفحات العامة (زوار)",
+                     "pages": [k for k, v in PLACEMENTS.items()
+                               if v["audience_scope"] == "public"]},
+    "office_pages": {"label": "صفحات المكاتب",
+                     "pages": [k for k, v in PLACEMENTS.items()
+                               if v["audience_scope"] in ("offices", "authenticated")]},
+    "individual_pages": {"label": "صفحات الأفراد",
+                         "pages": ["homepage", "programs", "program_details", "dashboard",
+                                   "bookings", "wallet", "notifications"]},
+}
+AUDIENCES = {"all": "جميع المستخدمين", "offices": "المكاتب فقط",
+             "individuals": "الأفراد فقط", "specific": "مستخدمون/جهات محددة"}
 KINDS = {"ad": "إعلان", "promotion": "عرض ترويجي"}
 
 
@@ -48,7 +72,12 @@ class AdIn(BaseModel):
     image_url: str = ""
     target_url: str = ""
     audience: str = "all"
+    audience_user_ids: List[str] = []          # used when audience == "specific"
+    audience_org_ids: List[str] = []
     placements: List[str] = ["homepage"]
+    placement_group: Optional[str] = None      # optional shortcut, expands to pages
+    advertiser_owner_id: Optional[str] = None  # the advertiser's user account
+    advertiser_org_id: Optional[str] = None    # the advertiser's organisation/office
     priority: int = 10
     cta_label: str = ""
     linked_package_id: Optional[str] = None
@@ -63,9 +92,17 @@ def _validate(p: AdIn):
         raise HTTPException(400, "نوع المعلن غير مدعوم")
     if p.audience not in AUDIENCES:
         raise HTTPException(400, "الجمهور المستهدف غير مدعوم")
+    if p.placement_group and p.placement_group not in PLACEMENT_GROUPS:
+        raise HTTPException(400, "مجموعة صفحات غير معروفة")
+    if p.placement_group:
+        p.placements = PLACEMENT_GROUPS[p.placement_group]["pages"]
     bad = [x for x in p.placements if x not in PLACEMENTS]
     if bad:
         raise HTTPException(400, f"مكان عرض غير مدعوم: {', '.join(bad)}")
+    if not p.placements:
+        raise HTTPException(400, "اختر مكان عرض واحداً على الأقل")
+    if p.audience == "specific" and not (p.audience_user_ids or p.audience_org_ids):
+        raise HTTPException(400, "حدّد مستخدمين أو جهات عند اختيار استهداف محدد")
     if p.end_date < p.start_date:
         raise HTTPException(400, "تاريخ النهاية قبل تاريخ البداية")
     if p.paid and p.contract_value <= 0:
@@ -84,7 +121,8 @@ def _decorate(d: dict) -> dict:
     d["advertiser_type_label"] = AD_TYPES.get(d.get("advertiser_type"), d.get("advertiser_type"))
     d["kind_label"] = KINDS.get(d.get("kind"), d.get("kind"))
     d["audience_label"] = AUDIENCES.get(d.get("audience"), d.get("audience"))
-    d["placement_labels"] = [PLACEMENTS.get(p, p) for p in (d.get("placements") or [])]
+    d["placement_labels"] = [PLACEMENTS.get(p, {}).get("label", p)
+                             for p in (d.get("placements") or [])]
     views = int(d.get("views") or 0)
     clicks = int(d.get("clicks") or 0)
     d["ctr"] = round((clicks / views) * 100, 2) if views else 0.0
@@ -94,8 +132,12 @@ def _decorate(d: dict) -> dict:
 # ---------------- admin ----------------
 @router.get("/admin/ads/catalog")
 async def catalog(admin: dict = Depends(require_admin)):
-    return {"advertiser_types": AD_TYPES, "statuses": STATUSES, "placements": PLACEMENTS,
+    return {"advertiser_types": AD_TYPES, "statuses": STATUSES,
+            "placements": {k: v["label"] for k, v in PLACEMENTS.items()},
+            "placement_meta": PLACEMENTS, "placement_groups": PLACEMENT_GROUPS,
             "audiences": AUDIENCES, "kinds": KINDS,
+            "owner_exclusion": ("صاحب الإعلان لا يرى إعلانه: يُستبعد حساب المعلن ومؤسسته "
+                                "وكل مستخدمي تلك المؤسسة على مستوى الخادم"),
             "maker_checker": "النشر يحتاج اعتماد مستخدم آخر غير من أنشأ الإعلان"}
 
 
@@ -217,14 +259,67 @@ def _live_filter(placement: str) -> dict:
             "start_date": {"$lte": today}, "end_date": {"$gte": today}}
 
 
+async def _owner_excluded(ad: dict, user: Optional[dict]) -> bool:
+    """MANDATORY RULE: an advertiser never sees its own campaign.
+    Excluded: the advertiser account itself, the advertiser organisation, any user whose
+    org_id is that organisation, and the office linked to the campaign."""
+    if not user:
+        return False
+    uid = str(user.get("_id"))
+    uorg = str(user.get("org_id") or "")
+    owner = str(ad.get("advertiser_owner_id") or "")
+    org = str(ad.get("advertiser_org_id") or "")
+    linked_office = str(ad.get("linked_office_id") or "")
+    if owner and owner == uid:
+        return True
+    if linked_office and linked_office == uid:
+        return True
+    if org and (org == uorg or org == uid):
+        return True
+    if org and not uorg:
+        me = await db.users.find_one({"_id": user["_id"]}, {"org_id": 1})
+        if str((me or {}).get("org_id") or "") == org:
+            return True
+    return False
+
+
+def _audience_matches(ad: dict, user: Optional[dict]) -> bool:
+    aud = ad.get("audience") or "all"
+    if aud == "all":
+        return True
+    if not user:
+        return False                       # targeted campaigns need a signed-in visitor
+    role = user.get("role")
+    if aud == "offices":
+        return role in ("office", "staff")
+    if aud == "individuals":
+        return role == "individual"
+    if aud == "specific":
+        return (uid_in(user, ad.get("audience_user_ids"))
+                or str(user.get("org_id") or "") in
+                [str(x) for x in (ad.get("audience_org_ids") or [])])
+    return True
+
+
+def uid_in(user: dict, ids) -> bool:
+    return str(user.get("_id")) in [str(x) for x in (ids or [])]
+
+
 @router.get("/ads/public")
-async def public_ads(placement: str = Query("homepage"), limit: int = 6):
+async def public_ads(placement: str = Query("homepage"), limit: int = 6,
+                     user: Optional[dict] = Depends(get_optional_user)):
+    """Only approved + active + in-window campaigns, filtered on the BACKEND by audience
+    and by the advertiser-owner exclusion rule."""
     if placement not in PLACEMENTS:
         raise HTTPException(400, "مكان عرض غير مدعوم")
     docs = await db.advertisements.find(_live_filter(placement)) \
-        .sort([("priority", 1), ("created_at", -1)]).to_list(min(limit, 20))
+        .sort([("priority", 1), ("created_at", -1)]).to_list(60)
     out = []
     for d in docs:
+        if not _audience_matches(d, user):
+            continue
+        if await _owner_excluded(d, user):
+            continue
         out.append({"id": str(d["_id"]), "kind": d.get("kind"), "title": d.get("title"),
                     "description_ar": d.get("description_ar"),
                     "image_url": d.get("image_url"), "target_url": d.get("target_url"),
@@ -234,8 +329,10 @@ async def public_ads(placement: str = Query("homepage"), limit: int = 6):
                     "kind_label": KINDS.get(d.get("kind"), "إعلان"),
                     "paid": bool(d.get("paid")),
                     "linked_package_id": d.get("linked_package_id")})
+        if len(out) >= min(limit, 20):
+            break
     return {"items": out, "placement": placement,
-            "placement_label": PLACEMENTS[placement]}
+            "placement_label": PLACEMENTS[placement]["label"]}
 
 
 @router.post("/ads/{ad_id}/view")
