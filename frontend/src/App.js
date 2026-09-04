@@ -39,6 +39,7 @@ import AdminReports from "@/pages/admin/AdminReports";
 import AdminSystem from "@/pages/admin/AdminSystem";
 import AdminFinance from "@/pages/admin/AdminFinance";
 import AdminCancellations from "@/pages/admin/AdminCancellations";
+import MyAds from "@/pages/MyAds";
 import AdminAds from "@/pages/admin/AdminAds";
 import AdminDisputes from "@/pages/admin/AdminDisputes";
 
@@ -93,6 +94,7 @@ function AppRoutes() {
       <Route path="/bookings" element={<Protected role="member"><Bookings /></Protected>} />
       <Route path="/sales" element={<Protected role="office"><Sales /></Protected>} />
       <Route path="/wallet" element={<Protected role="member"><WalletPage /></Protected>} />
+      <Route path="/my-ads" element={<Protected role="member"><MyAds /></Protected>} />
       <Route path="/marketer" element={<Protected role="individual"><Marketer /></Protected>} />
 
       <Route path="/admin" element={<Protected role="admin"><AdminDashboard /></Protected>} />

@@ -23,7 +23,7 @@ AD_TYPES = {
 STATUSES = {
     "draft": "مسودة", "pending_approval": "بانتظار الاعتماد", "active": "نشط",
     "paused": "موقوف مؤقتاً", "expired": "منتهي", "rejected": "مرفوض",
-    "archived": "مؤرشف",
+    "archived": "مؤرشف", "completed": "مكتمل (بلغ حدّ الباقة)",
 }
 PLACEMENTS = {
     "homepage": {"label": "الصفحة الرئيسية", "audience_scope": "public"},
@@ -82,6 +82,7 @@ class AdIn(BaseModel):
     cta_label: str = ""
     linked_package_id: Optional[str] = None
     linked_office_id: Optional[str] = None
+    package_id: Optional[str] = None
     reason: str = Field(min_length=3)
 
 
@@ -166,8 +167,10 @@ async def list_ads(kind: Optional[str] = None, status: Optional[str] = None,
 @router.post("/admin/ads")
 async def create_ad(payload: AdIn, admin: dict = Depends(require_admin)):
     _validate(payload)
+    _require_owner_identity(payload)
     doc = {**payload.model_dump(exclude={"reason"}),
-           "status": "draft", "views": 0, "clicks": 0,
+           "status": "draft", "views": 0, "clicks": 0, "source": "admin",
+           "billing": {}, "package_snapshot": None,
            "created_by": admin.get("email"), "created_by_id": str(admin["_id"]),
            "approved_by": None, "approved_at": None, "rejection_reason": None,
            "created_at": now_iso(), "updated_at": now_iso()}
@@ -195,9 +198,86 @@ async def update_ad(ad_id: str, payload: AdIn, admin: dict = Depends(require_adm
     return _decorate(serialize(await db.advertisements.find_one({"_id": cur["_id"]})))
 
 
+def _require_owner_identity(p: AdIn):
+    """Owner identity must be explicit BEFORE approval so the exclusion rule can work."""
+    if p.advertiser_type == "individual" and not p.advertiser_owner_id:
+        raise HTTPException(400, "المعلن الفرد يتطلب تحديد حساب المعلن (advertiser_owner_id)")
+    if p.advertiser_type in ("office", "company", "partner") and not p.advertiser_org_id:
+        raise HTTPException(400, "المعلن المكتب/الشركة/الشريك يتطلب تحديد مؤسسة المعلن "
+                                 "(advertiser_org_id)")
+
+
+async def _ready_for_approval(ad: dict):
+    t = ad.get("advertiser_type")
+    if t == "individual" and not ad.get("advertiser_owner_id"):
+        raise HTTPException(400, "لا يمكن الإرسال للاعتماد: حساب المعلن الفرد غير محدد")
+    if t in ("office", "company", "partner") and not ad.get("advertiser_org_id"):
+        raise HTTPException(400, "لا يمكن الإرسال للاعتماد: مؤسسة المعلن غير محددة")
+    if ad.get("kind") == "promotion" and ad.get("linked_office_id") in ("", None) \
+            and t in ("office", "partner") and not ad.get("advertiser_org_id"):
+        raise HTTPException(400, "الحملة المرتبطة بمكتب تتطلب تحديد المكتب")
+
+
+async def _check_verified_org(ad: dict, pkg: dict):
+    """Commercial campaigns require a verified organisation with licence data."""
+    needs = bool(pkg.get("requires_verified_org")) or \
+        ad.get("advertiser_type") in ("office", "company", "partner")
+    if not needs:
+        return
+    org_id = str(ad.get("advertiser_org_id") or "")
+    acc = await db.users.find_one({"_id": oid(org_id)}) if org_id else None
+    org = await db.orgs.find_one({"_id": oid(org_id)}) if (org_id and not acc) else None
+    holder = acc or org
+    if not holder:
+        raise HTTPException(400, "مؤسسة المعلن غير موجودة في النظام")
+    if (holder.get("status") or "active") != "active":
+        raise HTTPException(403, "حساب المؤسسة غير مفعّل — لا يمكن شراء إعلان تجاري")
+    if not (holder.get("commercial_license") or holder.get("license")):
+        raise HTTPException(403, "الحساب غير موثّق: بيانات السجل التجاري للمؤسسة مطلوبة "
+                                 "لإطلاق إعلان تجاري")
+
+
 class StatusIn(BaseModel):
     status: str
     reason: str = Field(min_length=3)
+
+
+async def _apply_status(ad: dict, new: str, actor: dict, reason: str) -> dict:
+    """Shared status engine for admin and office flows (hold/capture/release + limits)."""
+    from ads_billing import hold_for_ad, capture_for_ad, release_for_ad
+    upd = {"status": new, "updated_at": now_iso()}
+    billing = dict(ad.get("billing") or {})
+
+    if new == "pending_approval":
+        await _ready_for_approval(ad)
+        if billing.get("state") != "held" and ad.get("package_id"):
+            pkg = await db.ad_packages.find_one({"_id": oid(ad["package_id"])})
+            if not pkg or not pkg.get("active"):
+                raise HTTPException(400, "الباقة غير متاحة — اختر باقة سارية")
+            await _check_verified_org(ad, pkg)
+            res = await hold_for_ad(ad, pkg, actor)
+            billing = {**res, "state": "held" if res["held"] else "free",
+                       "package_id": str(pkg["_id"]), "package_name": pkg.get("name"),
+                       "held_at": now_iso()}
+            upd["package_snapshot"] = __import__("ads_billing").snapshot(pkg)
+            upd["max_views"] = pkg.get("max_views")
+            upd["max_clicks"] = pkg.get("max_clicks")
+            upd["duration_days"] = pkg.get("duration_days")
+        elif not ad.get("package_id"):
+            raise HTTPException(400, "اختر باقة إعلانية قبل الإرسال للاعتماد")
+
+    if new == "active":
+        cap = await capture_for_ad({**ad, "billing": billing}, reason)
+        if cap:
+            billing.update(cap)
+    if new in ("rejected", "archived", "draft"):
+        rel = await release_for_ad({**ad, "billing": billing}, reason)
+        if rel:
+            billing.update(rel)
+    upd["billing"] = billing
+    if new == "rejected":
+        upd["rejection_reason"] = reason
+    return upd
 
 
 @router.post("/admin/ads/{ad_id}/status")
@@ -208,11 +288,11 @@ async def set_status(ad_id: str, payload: StatusIn, admin: dict = Depends(requir
     ad = await db.advertisements.find_one({"_id": oid(ad_id)})
     if not ad:
         raise HTTPException(404, "الإعلان غير موجود")
-    upd = {"status": payload.status, "updated_at": now_iso()}
+    upd = await _apply_status(ad, payload.status, admin, payload.reason.strip())
     if payload.status == "active":
         if ad.get("status") not in ("pending_approval", "paused"):
             raise HTTPException(400, "يجب إرسال الإعلان للاعتماد قبل تنشيطه")
-        if ad.get("created_by_id") == str(admin["_id"]):
+        if ad.get("created_by_id") == str(admin["_id"]) and ad.get("source") != "office":
             raise HTTPException(403, "مبدأ الفصل بين المنشئ والمعتمد: يعتمد الإعلان مسؤول آخر")
         upd["approved_by"] = admin.get("email")
         upd["approved_at"] = now_iso()
@@ -337,22 +417,54 @@ async def public_ads(placement: str = Query("homepage"), limit: int = 6,
 
 @router.post("/ads/{ad_id}/view")
 async def count_view(ad_id: str, source: str = "public"):
-    """Only public/user-facing impressions are counted. Admin previews pass source=admin
-    (or anything else) and are ignored so Views/CTR stay clean."""
+    """Only public/user-facing impressions are counted (server-authoritative), and the
+    campaign stops itself when the package view/click limit is reached."""
     if source != "public":
         return {"ok": True, "counted": False, "reason": "عرض إداري لا يُحتسب"}
-    await db.advertisements.update_one({"_id": oid(ad_id), "status": "active"},
-                                      {"$inc": {"views": 1}})
-    return {"ok": True, "counted": True}
+    ad = await db.advertisements.find_one_and_update(
+        {"_id": oid(ad_id), "status": "active"}, {"$inc": {"views": 1}},
+        return_document=True)
+    if ad:
+        await _enforce_limits(ad)
+    return {"ok": True, "counted": bool(ad)}
 
 
 @router.post("/ads/{ad_id}/click")
 async def count_click(ad_id: str, source: str = "public"):
     if source != "public":
         return {"ok": True, "counted": False, "reason": "نقرة إدارية لا تُحتسب"}
-    await db.advertisements.update_one({"_id": oid(ad_id), "status": "active"},
-                                       {"$inc": {"clicks": 1}})
-    return {"ok": True, "counted": True}
+    ad = await db.advertisements.find_one_and_update(
+        {"_id": oid(ad_id), "status": "active"}, {"$inc": {"clicks": 1}},
+        return_document=True)
+    if ad:
+        await _enforce_limits(ad)
+    return {"ok": True, "counted": bool(ad)}
+
+
+async def _enforce_limits(ad: dict):
+    """Auto-stop on the FIRST met condition: end date, max views or max clicks."""
+    snap = ad.get("package_snapshot") or {}
+    mv, mc = snap.get("max_views") or ad.get("max_views"), snap.get("max_clicks") or ad.get("max_clicks")
+    reason = None
+    if mv and int(ad.get("views") or 0) >= int(mv):
+        reason = f"بلغ الحد الأقصى للمشاهدات ({mv})"
+    elif mc and int(ad.get("clicks") or 0) >= int(mc):
+        reason = f"بلغ الحد الأقصى للنقرات ({mc})"
+    elif ad.get("end_date") and ad["end_date"] < datetime.now(timezone.utc).strftime("%Y-%m-%d"):
+        reason = "انتهت مدة الإعلان"
+    if reason:
+        await db.advertisements.update_one({"_id": ad["_id"]}, {"$set": {
+            "status": "completed", "completion_reason": reason, "updated_at": now_iso()}})
+        await db.audit_log.insert_one({
+            "entity": "advertisement", "entity_id": str(ad["_id"]),
+            "action": "ad_completed", "actor": "system", "reason": reason, "at": now_iso()})
+
+
+@router.post("/ads/upload-image")
+async def upload_my_ad_image(file: UploadFile = File(...),
+                             user: dict = Depends(get_current_user)):
+    """Advertiser-side banner upload (same GridFS bucket, same limits)."""
+    return await upload_ad_image(file, user)
 
 
 @router.post("/admin/ads/upload-image")
@@ -389,7 +501,130 @@ async def ad_image(file_id: str):
 
 @router.get("/ads/mine")
 async def my_promotions(user: dict = Depends(get_current_user)):
-    """Promotions attached to the signed-in office (read-only)."""
-    docs = await db.advertisements.find({"linked_office_id": str(user["_id"]),
-                                         "kind": "promotion"}).to_list(100)
-    return [_decorate(d) for d in serialize(docs)]
+    """Advertiser workspace: only MY campaigns (never another office's)."""
+    me = str(user["_id"])
+    org = str(user.get("org_id") or "")
+    f = {"$or": [{"advertiser_owner_id": me}, {"linked_office_id": me},
+                 {"created_by_id": me}] + ([{"advertiser_org_id": org}] if org else [])
+         + [{"advertiser_org_id": me}]}
+    docs = await db.advertisements.find(f).sort("created_at", -1).to_list(200)
+    items = []
+    for d in serialize(docs):
+        snap = d.get("package_snapshot") or {}
+        mv, mc = snap.get("max_views"), snap.get("max_clicks")
+        items.append({**_decorate(d),
+                      "package_name": snap.get("name") or (d.get("billing") or {}).get("package_name"),
+                      "package_price": snap.get("price"),
+                      "package_currency": snap.get("currency"),
+                      "duration_days": snap.get("duration_days"),
+                      "held_amount": (d.get("billing") or {}).get("held", 0),
+                      "billing_state": (d.get("billing") or {}).get("state", "—"),
+                      "remaining_views": (int(mv) - int(d.get("views") or 0)) if mv else None,
+                      "remaining_clicks": (int(mc) - int(d.get("clicks") or 0)) if mc else None,
+                      "completion_reason": d.get("completion_reason")})
+    txns = await db.transactions.find({"type": {"$in": ["ad_hold", "ad_charge",
+                                                        "ad_hold_release"]},
+                                       "office_id": {"$in": [me, org]}}) \
+        .sort("created_at", -1).to_list(100)
+    return {"items": items,
+            "wallet": {c: ((user.get("wallet") or {}).get(c) or {}) for c in ("SAR", "USD")},
+            "transactions": serialize(txns),
+            "placements": {k: v["label"] for k, v in PLACEMENTS.items()},
+            "audiences": AUDIENCES, "kinds": KINDS, "statuses": STATUSES}
+
+
+class OfficeAdIn(AdIn):
+    advertiser_type: str = "office"
+
+
+@router.post("/ads/mine")
+async def create_my_ad(payload: OfficeAdIn, user: dict = Depends(get_current_user)):
+    """An office/individual creates its OWN campaign as a draft. It can never publish it."""
+    if user.get("role") not in ("office", "staff", "individual"):
+        raise HTTPException(403, "غير مصرح بإنشاء إعلانات")
+    me = str(user["_id"])
+    values = payload.model_dump(exclude={"reason"})
+    # Ownership is forced from the session — an advertiser can never impersonate another.
+    if user.get("role") == "individual":
+        values["advertiser_type"] = "individual"
+        values["advertiser_owner_id"] = me
+        values["advertiser_org_id"] = None
+    else:
+        values["advertiser_owner_id"] = me
+        values["advertiser_org_id"] = str(user.get("org_id") or me)
+        values["linked_office_id"] = str(user.get("org_id") or me)
+    p = OfficeAdIn(**{**values, "reason": payload.reason})
+    _validate(p)
+    doc = {**p.model_dump(exclude={"reason"}), "status": "draft", "views": 0, "clicks": 0,
+           "source": "office", "billing": {}, "package_snapshot": None,
+           "created_by": user.get("email"), "created_by_id": me,
+           "approved_by": None, "approved_at": None, "rejection_reason": None,
+           "created_at": now_iso(), "updated_at": now_iso()}
+    res = await db.advertisements.insert_one(doc)
+    await _audit(res.inserted_id, "ad_created", user, payload.reason.strip(),
+                 after={"title": p.title, "status": "draft", "source": "office"})
+    return _decorate(serialize({**doc, "_id": res.inserted_id}))
+
+
+async def _own_ad_or_403(ad_id: str, user: dict) -> dict:
+    ad = await db.advertisements.find_one({"_id": oid(ad_id)})
+    if not ad:
+        raise HTTPException(404, "الإعلان غير موجود")
+    me, org = str(user["_id"]), str(user.get("org_id") or "")
+    owners = {str(ad.get("advertiser_owner_id") or ""), str(ad.get("created_by_id") or ""),
+              str(ad.get("advertiser_org_id") or ""), str(ad.get("linked_office_id") or "")}
+    if me not in owners and (not org or org not in owners):
+        raise HTTPException(403, "لا تملك صلاحية على هذا الإعلان")
+    return ad
+
+
+@router.patch("/ads/mine/{ad_id}")
+async def update_my_ad(ad_id: str, payload: OfficeAdIn, user: dict = Depends(get_current_user)):
+    ad = await _own_ad_or_403(ad_id, user)
+    if ad.get("status") == "pending_approval":
+        raise HTTPException(400, "الإعلان قيد الاعتماد — لا يمكن تعديله الآن")
+    _validate(payload)
+    values = payload.model_dump(exclude={"reason", "advertiser_owner_id", "advertiser_org_id"})
+    # A material edit after approval must go back through approval and stop showing.
+    back = ad.get("status") in ("active", "completed")
+    await db.advertisements.update_one({"_id": ad["_id"]}, {"$set": {
+        **values, "updated_at": now_iso(),
+        "status": "draft" if back else ad.get("status"),
+        "approved_by": None if back else ad.get("approved_by")}})
+    await _audit(ad_id, "ad_updated", user, payload.reason.strip(),
+                 before={"status": ad.get("status")},
+                 after={"status": "draft" if back else ad.get("status")})
+    return {"ok": True, "back_to_draft": back,
+            "note": ("تم إيقاف نشر النسخة القديمة وإرجاع الإعلان لمسودة لإعادة الاعتماد"
+                     if back else "تم حفظ المسودة")}
+
+
+class MyStatusIn(BaseModel):
+    status: str                     # pending_approval | draft (cancel) | archived
+    reason: str = Field(min_length=3)
+    package_id: Optional[str] = None
+
+
+@router.post("/ads/mine/{ad_id}/status")
+async def my_ad_status(ad_id: str, payload: MyStatusIn,
+                       user: dict = Depends(get_current_user)):
+    """Advertiser may only submit for approval, cancel back to draft, or archive.
+    Publishing/approval stays exclusively with Meraaj admins."""
+    if payload.status not in ("pending_approval", "draft", "archived"):
+        raise HTTPException(403, "النشر والاعتماد من صلاحية إدارة معراج فقط")
+    ad = await _own_ad_or_403(ad_id, user)
+    if payload.status == "pending_approval":
+        if ad.get("status") not in ("draft", "rejected"):
+            raise HTTPException(400, "لا يمكن الإرسال للاعتماد من الحالة الحالية")
+        if payload.package_id:
+            await db.advertisements.update_one({"_id": ad["_id"]},
+                                              {"$set": {"package_id": payload.package_id}})
+            ad["package_id"] = payload.package_id
+    upd = await _apply_status(ad, payload.status, user, payload.reason.strip())
+    await db.advertisements.update_one({"_id": ad["_id"]}, {"$set": upd})
+    await _audit(ad_id, f"ad_{payload.status}", user, payload.reason.strip(),
+                 before={"status": ad.get("status")}, after={"status": payload.status})
+    fresh = await db.advertisements.find_one({"_id": ad["_id"]})
+    return {"ok": True, "ad": _decorate(serialize(fresh)),
+            "billing": fresh.get("billing") or {}}
+

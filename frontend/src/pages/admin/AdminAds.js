@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { AdPreview } from "@/components/AdSlot";
+import AdminAdPackages from "@/pages/admin/AdminAdPackages";
 import { Megaphone, Plus, Eye, MousePointerClick, CheckCircle2, XCircle, PauseCircle } from "lucide-react";
 
 const EMPTY = {
@@ -32,6 +33,7 @@ export default function AdminAds() {
   const [pv, setPv] = useState("banner");
 
   const load = useCallback(() => {
+    if (tab === "packages") return;
     api.get(`/admin/ads?kind=${tab}`).then((r) => setD(r.data)).catch((e) => toast.error(apiError(e)));
   }, [tab]);
 
@@ -113,16 +115,19 @@ export default function AdminAds() {
       </div>
 
       <div className="flex flex-wrap gap-2 mb-5 items-center">
-        {[["ad", "الإعلانات"], ["promotion", "العروض الترويجية"]].map(([k, l]) => (
+        {[["ad", "الإعلانات"], ["promotion", "العروض الترويجية"], ["packages", "الباقات الإعلانية"]].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} data-testid={`ads-tab-${k}`}
             className={`px-3 h-9 rounded-lg text-xs font-semibold border ${tab === k ? "bg-[#0A2540] text-white border-[#0A2540]" : "bg-white text-[#0A2540] hover:bg-[#F4F6F8]"}`}>{l}</button>
         ))}
+        {tab !== "packages" && (
         <Button size="sm" className="bg-[#D4AF37] text-[#0A2540] hover:bg-[#c39f2f] mr-auto"
           data-testid="ads-new-btn" onClick={() => { setForm(EMPTY); setEditId(null); setOpen(true); }}>
           <Plus className="w-4 h-4" /> {tab === "ad" ? "إعلان جديد" : "عرض جديد"}
         </Button>
+        )}
       </div>
 
+      {tab === "packages" ? <AdminAdPackages /> : (
       <div className="bg-white rounded-2xl border card-shadow table-scroll" data-testid="ads-table">
         <table className="w-full text-xs min-w-[900px]">
           <thead className="bg-[#F4F6F8] text-muted-foreground">
@@ -183,6 +188,7 @@ export default function AdminAds() {
           </tbody>
         </table>
       </div>
+      )}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto" dir="rtl" data-testid="ad-form-dialog">

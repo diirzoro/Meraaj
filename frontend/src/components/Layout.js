@@ -15,6 +15,7 @@ const officeNav = [
   { to: "/sales", label: "مبيعاتي", icon: TicketCheck },
   { to: "/bookings", label: "حجوزاتي (مشتري)", icon: ShoppingBag },
   { to: "/wallet", label: "المحفظة", icon: Wallet },
+  { to: "/my-ads", label: "إعلاناتي وعروضي", icon: Megaphone },
 ];
 
 const individualNav = [
