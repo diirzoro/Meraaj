@@ -11,6 +11,7 @@ from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from pymongo import ReturnDocument
 
 from db import (db, serialize, oid, now_iso, adjust_wallet, log_txn, wallet_available)
 from security import require_admin, get_current_user
@@ -137,9 +138,22 @@ async def hold_for_ad(ad: dict, pkg: dict, actor: dict) -> dict:
     return {"held": price, "currency": ccy, "payer_id": payer_id, "free": False}
 
 
+async def _claim_billing(ad: dict, new_state: str) -> Optional[dict]:
+    """Atomically flip billing.state held → captured/released. The conditional update is the
+    single point of truth: two concurrent requests cannot both win it, so the wallet movement
+    that follows can only ever run once (no double capture / double release)."""
+    return await db.advertisements.find_one_and_update(
+        {"_id": ad["_id"], "billing.state": "held"},
+        {"$set": {"billing.state": new_state, f"billing.{new_state}_at": now_iso(),
+                  "updated_at": now_iso()}},
+        return_document=ReturnDocument.AFTER)
+
+
 async def capture_for_ad(ad: dict, reason: str) -> Optional[dict]:
     b = ad.get("billing") or {}
     if not b.get("held") or b.get("state") != "held":
+        return None
+    if not await _claim_billing(ad, "captured"):
         return None
     price, ccy, payer = b["held"], b["currency"], b["payer_id"]
     await adjust_wallet(payer, ccy, pending=-price, total=-price)
@@ -154,6 +168,8 @@ async def capture_for_ad(ad: dict, reason: str) -> Optional[dict]:
 async def release_for_ad(ad: dict, reason: str) -> Optional[dict]:
     b = ad.get("billing") or {}
     if not b.get("held") or b.get("state") != "held":
+        return None
+    if not await _claim_billing(ad, "released"):
         return None
     price, ccy, payer = b["held"], b["currency"], b["payer_id"]
     await adjust_wallet(payer, ccy, pending=-price, available=price)

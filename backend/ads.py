@@ -10,6 +10,8 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
+from pymongo import ReturnDocument
+from contextlib import asynccontextmanager
 
 from db import db, serialize, oid, now_iso
 from security import require_admin, get_current_user, get_optional_user
@@ -31,6 +33,25 @@ async def _admin_ads_perm(admin: dict, key: str):
     from rbac import has_perm, PERMISSIONS as P
     if not await has_perm(admin, key):
         raise HTTPException(403, f"لا تملك صلاحية: {P.get(key, key)}")
+
+
+@asynccontextmanager
+async def _ad_lock(ad: dict, actor: dict):
+    """Serialises every money-moving operation on ONE ad. The lock is taken with a conditional
+    update that also pins the status we validated, so a concurrent request either waits its turn
+    and re-validates, or is rejected with 409 — never a second wallet movement."""
+    got = await db.advertisements.find_one_and_update(
+        {"_id": ad["_id"], "status": ad.get("status"), "op_lock": None},
+        {"$set": {"op_lock": {"by": actor.get("email"), "at": now_iso()}}},
+        return_document=ReturnDocument.AFTER)
+    if not got:
+        raise HTTPException(409, "هناك عملية جارية على هذا الإعلان أو تغيّرت حالته — "
+                                 "أعد تحميل الصفحة ثم حاول مرة أخرى")
+    try:
+        yield got
+    finally:
+        await db.advertisements.update_one({"_id": ad["_id"]}, {"$set": {"op_lock": None}})
+
 
 AD_TYPES = {
     "paid": "إعلان مدفوع", "free": "إعلان مجاني", "company": "إعلان شركة",
@@ -336,15 +357,17 @@ async def set_status(ad_id: str, payload: StatusIn, admin: dict = Depends(requir
             raise HTTPException(400, "يجب إرسال الإعلان للاعتماد قبل تنشيطه")
         if ad.get("created_by_id") == str(admin["_id"]) and ad.get("source") != "office":
             raise HTTPException(403, "مبدأ الفصل بين المنشئ والمعتمد: يعتمد الإعلان مسؤول آخر")
-    upd = await _apply_status(ad, payload.status, admin, payload.reason.strip())
-    if payload.status == "active":
-        upd["approved_by"] = admin.get("email")
-        upd["approved_at"] = now_iso()
-    if payload.status == "rejected":
-        upd["rejection_reason"] = payload.reason.strip()
-    await db.advertisements.update_one({"_id": ad["_id"]}, {"$set": upd})
-    await _audit(ad_id, f"ad_{payload.status}", admin, payload.reason.strip(),
-                 before={"status": ad.get("status")}, after={"status": payload.status})
+    async with _ad_lock(ad, admin) as locked:
+        ad = locked
+        upd = await _apply_status(ad, payload.status, admin, payload.reason.strip())
+        if payload.status == "active":
+            upd["approved_by"] = admin.get("email")
+            upd["approved_at"] = now_iso()
+        if payload.status == "rejected":
+            upd["rejection_reason"] = payload.reason.strip()
+        await db.advertisements.update_one({"_id": ad["_id"]}, {"$set": upd})
+        await _audit(ad_id, f"ad_{payload.status}", admin, payload.reason.strip(),
+                     before={"status": ad.get("status")}, after={"status": payload.status})
     b = upd.get("billing") or {}
     if payload.status == "active":
         snap = ad.get("package_snapshot") or {}
@@ -374,6 +397,7 @@ async def set_status(ad_id: str, payload: StatusIn, admin: dict = Depends(requir
 
 @router.get("/admin/ads/{ad_id}")
 async def ad_detail(ad_id: str, admin: dict = Depends(require_admin)):
+    await _admin_ads_perm(admin, "ads.view")
     ad = await db.advertisements.find_one({"_id": oid(ad_id)})
     if not ad:
         raise HTTPException(404, "الإعلان غير موجود")
@@ -384,6 +408,7 @@ async def ad_detail(ad_id: str, admin: dict = Depends(require_admin)):
 
 @router.get("/admin/ads-performance")
 async def performance(admin: dict = Depends(require_admin)):
+    await _admin_ads_perm(admin, "ads.view")
     rows = []
     async for a in db.advertisements.find({}):
         v, c = int(a.get("views") or 0), int(a.get("clicks") or 0)
@@ -543,6 +568,7 @@ async def upload_my_ad_image(file: UploadFile = File(...),
 
 @router.post("/admin/ads/upload-image")
 async def upload_ad_image(file: UploadFile = File(...), admin: dict = Depends(require_admin)):
+    await _admin_ads_perm(admin, "ads.manage")
     """Direct banner upload from the admin's device (stored in GridFS). URL stays optional."""
     if (file.content_type or "") not in ("image/png", "image/jpeg", "image/webp", "image/gif"):
         raise HTTPException(400, "نوع الصورة غير مدعوم — استخدم PNG أو JPEG أو WEBP أو GIF")
@@ -695,10 +721,12 @@ async def my_ad_status(ad_id: str, payload: MyStatusIn,
             await db.advertisements.update_one({"_id": ad["_id"]},
                                               {"$set": {"package_id": payload.package_id}})
             ad["package_id"] = payload.package_id
-    upd = await _apply_status(ad, payload.status, user, payload.reason.strip())
-    await db.advertisements.update_one({"_id": ad["_id"]}, {"$set": upd})
-    await _audit(ad_id, f"ad_{payload.status}", user, payload.reason.strip(),
-                 before={"status": ad.get("status")}, after={"status": payload.status})
+    async with _ad_lock(ad, user) as locked:
+        ad = {**locked, "package_id": ad.get("package_id")}
+        upd = await _apply_status(ad, payload.status, user, payload.reason.strip())
+        await db.advertisements.update_one({"_id": ad["_id"]}, {"$set": upd})
+        await _audit(ad_id, f"ad_{payload.status}", user, payload.reason.strip(),
+                     before={"status": ad.get("status")}, after={"status": payload.status})
     fresh = await db.advertisements.find_one({"_id": ad["_id"]})
     b = fresh.get("billing") or {}
     if payload.status == "pending_approval":
@@ -730,9 +758,12 @@ async def request_cancellation(ad_id: str, payload: CancelRequestIn,
                     "requested_at": now_iso(), "previous_status": ad.get("status"),
                     "decided_by": None, "decided_at": None, "decision_reason": None,
                     "refund_amount": None, "refund_currency": None, "refund_txn": None}
-    await db.advertisements.update_one({"_id": ad["_id"]}, {"$set": {
-        "status": "cancellation_requested", "cancellation": cancellation,
-        "updated_at": now_iso()}})
+    res = await db.advertisements.update_one(
+        {"_id": ad["_id"], "status": ad.get("status")},
+        {"$set": {"status": "cancellation_requested", "cancellation": cancellation,
+                  "updated_at": now_iso()}})
+    if res.modified_count != 1:
+        raise HTTPException(409, "تغيّرت حالة الإعلان — أعد تحميل الصفحة ثم حاول مرة أخرى")
     await _audit(ad_id, "ad_cancellation_requested", user, payload.reason.strip(),
                  before={"status": ad.get("status")}, after={"status": "cancellation_requested"})
     await _notify_ad({**ad, "_id": ad["_id"]}, "ad_cancellation_requested",
@@ -780,7 +811,10 @@ async def decide_cancellation(ad_id: str, payload: CancelDecisionIn,
         upd = {"status": c.get("previous_status") or "active", "updated_at": now_iso(),
                "cancellation": {**c, "state": "rejected", "decided_by": admin.get("email"),
                                 "decided_at": now_iso(), "decision_reason": reason}}
-        await db.advertisements.update_one({"_id": ad["_id"]}, {"$set": upd})
+        res = await db.advertisements.update_one(
+            {"_id": ad["_id"], "status": "cancellation_requested"}, {"$set": upd})
+        if res.modified_count != 1:
+            raise HTTPException(409, "تم اتخاذ قرار آخر على هذا الطلب — أعد تحميل الصفحة")
         await _audit(ad_id, "ad_cancellation_rejected", admin, reason,
                      before={"status": "cancellation_requested"},
                      after={"status": upd["status"]})
@@ -792,31 +826,42 @@ async def decide_cancellation(ad_id: str, payload: CancelDecisionIn,
 
     from ads_billing import release_for_ad
     refund = None
+    pre_state = b.get("state")          # state BEFORE the decision decides the policy label
     # POLICY (approved): a still-HELD amount is released in full; an already CAPTURED amount is
     # NEVER refunded by the cancellation path — an exceptional refund must go through a separate
     # administrative refund process (own Maker/Checker), not through an ad status change.
-    if b.get("state") == "captured":
-        refund = None
-    elif b.get("state") == "held":
-        rel = await release_for_ad(ad, f"إلغاء معتمد: {reason}")
-        if rel:
-            b.update(rel)
-            refund = {"refund_amount": b.get("held"), "refund_currency": b.get("currency"),
-                      "refund_txn": "ad_hold_release"}
-    upd = {"status": "cancelled", "billing": b, "updated_at": now_iso(),
-           "cancellation": {**c, "state": "accepted", "decided_by": admin.get("email"),
-                            "decided_at": now_iso(), "decision_reason": reason,
-                            "refund_policy": ("no_automatic_refund_after_final_charge"
-                                              if b.get("state") == "captured"
-                                              else "full_hold_release_before_final_charge"),
-                            **(refund or {"refund_amount": 0, "refund_currency": b.get("currency"),
-                                          "refund_txn": None}),
-                            "captured_not_refunded": b.get("state") == "captured"}}
-    await db.advertisements.update_one({"_id": ad["_id"]}, {"$set": upd})
-    await _audit(ad_id, "ad_cancellation_approved", admin, reason,
-                 before={"status": "cancellation_requested", "billing_state": ad.get("billing", {}).get("state")},
-                 after={"status": "cancelled", "billing_state": b.get("state"),
-                        "refund_amount": (refund or {}).get("refund_amount", 0)})
+    if pre_state == "held":
+        policy = "full_hold_release_before_final_charge"
+    elif pre_state == "captured":
+        policy = "no_automatic_refund_after_final_charge"
+    else:                               # free / released / no billing at all
+        policy = "no_financial_movement"
+    async with _ad_lock(ad, admin):
+        if pre_state == "held":
+            rel = await release_for_ad(ad, f"إلغاء معتمد: {reason}")
+            if rel:
+                b.update(rel)
+                refund = {"refund_amount": b.get("held"), "refund_currency": b.get("currency"),
+                          "refund_txn": "ad_hold_release"}
+            else:                       # a concurrent request already released/captured it
+                fresh = await db.advertisements.find_one({"_id": ad["_id"]})
+                b = dict(fresh.get("billing") or {})
+                policy = "no_financial_movement"
+        upd = {"status": "cancelled", "billing": b, "updated_at": now_iso(),
+               "cancellation": {**c, "state": "accepted", "decided_by": admin.get("email"),
+                                "decided_at": now_iso(), "decision_reason": reason,
+                                "billing_state_before": pre_state,
+                                "refund_policy": policy,
+                                **(refund or {"refund_amount": 0,
+                                              "refund_currency": b.get("currency"),
+                                              "refund_txn": None}),
+                                "captured_not_refunded": pre_state == "captured"}}
+        await db.advertisements.update_one({"_id": ad["_id"]}, {"$set": upd})
+        await _audit(ad_id, "ad_cancellation_approved", admin, reason,
+                     before={"status": "cancellation_requested", "billing_state": pre_state},
+                     after={"status": "cancelled", "billing_state": b.get("state"),
+                            "refund_policy": policy,
+                            "refund_amount": (refund or {}).get("refund_amount", 0)})
     await _notify_ad(ad, "ad_cancellation_approved", "تم اعتماد إلغاء إعلانك",
                      (f"تم إلغاء «{ad.get('title')}» وتوقف ظهوره. السبب: {reason}\n"
                       + (f"تم فكّ حجز المبلغ وإعادته إلى رصيدك: {_money_line(b)}" if refund else
