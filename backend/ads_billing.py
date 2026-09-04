@@ -54,11 +54,15 @@ def snapshot(p: dict) -> dict:
 # ---------------- admin: package management ----------------
 @router.get("/admin/ad-packages")
 async def list_packages(admin: dict = Depends(require_admin)):
+    from ads import _admin_ads_perm
+    await _admin_ads_perm(admin, "ads.view")
     return serialize(await db.ad_packages.find({}).sort("price", 1).to_list(200))
 
 
 @router.post("/admin/ad-packages")
 async def create_package(payload: PackageIn, admin: dict = Depends(require_admin)):
+    from ads import _admin_ads_perm
+    await _admin_ads_perm(admin, "ads.manage")
     if payload.paid and payload.price <= 0:
         raise HTTPException(400, "الباقة المدفوعة تحتاج سعراً أكبر من صفر")
     doc = {**payload.model_dump(exclude={"reason"}),
@@ -74,6 +78,8 @@ async def create_package(payload: PackageIn, admin: dict = Depends(require_admin
 
 @router.patch("/admin/ad-packages/{pid}")
 async def update_package(pid: str, payload: PackageIn, admin: dict = Depends(require_admin)):
+    from ads import _admin_ads_perm
+    await _admin_ads_perm(admin, "ads.manage")
     cur = await db.ad_packages.find_one({"_id": oid(pid)})
     if not cur:
         raise HTTPException(404, "الباقة غير موجودة")
@@ -91,6 +97,9 @@ async def update_package(pid: str, payload: PackageIn, admin: dict = Depends(req
 # ---------------- advertiser-facing catalogue ----------------
 @router.get("/ad-packages")
 async def my_packages(kind: str = "ad", user: dict = Depends(get_current_user)):
+    from rbac import has_perm
+    if not await has_perm(user, "ads.manage"):
+        raise HTTPException(403, "لا تملك صلاحية: إنشاء وإدارة الإعلانات")
     acc = "offices" if user.get("role") in ("office", "staff") else "individuals"
     docs = await db.ad_packages.find({
         "active": True,

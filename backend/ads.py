@@ -16,6 +16,22 @@ from security import require_admin, get_current_user, get_optional_user
 
 router = APIRouter(prefix="/api", tags=["ads"])
 
+
+def ads_perm(key: str):
+    """Real permission gate (not just UI hiding): a revoked `ads.*` makes the API answer 403."""
+    async def dep(user: dict = Depends(get_current_user)) -> dict:
+        from rbac import has_perm, PERMISSIONS as P
+        if not await has_perm(user, key):
+            raise HTTPException(403, f"لا تملك صلاحية: {P.get(key, key)}")
+        return user
+    return dep
+
+
+async def _admin_ads_perm(admin: dict, key: str):
+    from rbac import has_perm, PERMISSIONS as P
+    if not await has_perm(admin, key):
+        raise HTTPException(403, f"لا تملك صلاحية: {P.get(key, key)}")
+
 AD_TYPES = {
     "paid": "إعلان مدفوع", "free": "إعلان مجاني", "company": "إعلان شركة",
     "office": "إعلان مكتب", "partner": "إعلان شريك", "individual": "معلن فرد",
@@ -151,6 +167,7 @@ def _decorate(d: dict) -> dict:
 # ---------------- admin ----------------
 @router.get("/admin/ads/catalog")
 async def catalog(admin: dict = Depends(require_admin)):
+    await _admin_ads_perm(admin, "ads.view")
     return {"advertiser_types": AD_TYPES, "statuses": STATUSES,
             "placements": {k: v["label"] for k, v in PLACEMENTS.items()},
             "placement_meta": PLACEMENTS, "placement_groups": PLACEMENT_GROUPS,
@@ -163,6 +180,7 @@ async def catalog(admin: dict = Depends(require_admin)):
 @router.get("/admin/ads")
 async def list_ads(kind: Optional[str] = None, status: Optional[str] = None,
                    admin: dict = Depends(require_admin)):
+    await _admin_ads_perm(admin, "ads.view")
     f = {}
     if kind:
         f["kind"] = kind
@@ -184,6 +202,7 @@ async def list_ads(kind: Optional[str] = None, status: Optional[str] = None,
 
 @router.post("/admin/ads")
 async def create_ad(payload: AdIn, admin: dict = Depends(require_admin)):
+    await _admin_ads_perm(admin, "ads.manage")
     _validate(payload)
     _require_owner_identity(payload)
     doc = {**payload.model_dump(exclude={"reason"}),
@@ -200,6 +219,7 @@ async def create_ad(payload: AdIn, admin: dict = Depends(require_admin)):
 
 @router.patch("/admin/ads/{ad_id}")
 async def update_ad(ad_id: str, payload: AdIn, admin: dict = Depends(require_admin)):
+    await _admin_ads_perm(admin, "ads.manage")
     _validate(payload)
     cur = await db.advertisements.find_one({"_id": oid(ad_id)})
     if not cur:
@@ -309,6 +329,8 @@ async def set_status(ad_id: str, payload: StatusIn, admin: dict = Depends(requir
     if not ad:
         raise HTTPException(404, "الإعلان غير موجود")
     # Guards run BEFORE any money moves so a rejected transition can never charge a wallet.
+    if payload.status in ("active", "rejected"):
+        await _admin_ads_perm(admin, "ads.approve")
     if payload.status == "active":
         if ad.get("status") not in ("pending_approval", "paused"):
             raise HTTPException(400, "يجب إرسال الإعلان للاعتماد قبل تنشيطه")
@@ -438,6 +460,12 @@ async def public_ads(placement: str = Query("homepage"), limit: int = 6,
     and by the advertiser-owner exclusion rule."""
     if placement not in PLACEMENTS:
         raise HTTPException(400, "مكان عرض غير مدعوم")
+    if user:
+        from rbac import has_perm
+        if not await has_perm(user, "ads.view"):
+            return {"items": [], "placement": placement,
+                    "placement_label": PLACEMENTS[placement]["label"],
+                    "note": "قسم الإعلانات غير متاح لصلاحيات حسابك"}
     docs = await db.advertisements.find(_live_filter(placement)) \
         .sort([("priority", 1), ("created_at", -1)]).to_list(60)
     out = []
@@ -508,7 +536,7 @@ async def _enforce_limits(ad: dict):
 
 @router.post("/ads/upload-image")
 async def upload_my_ad_image(file: UploadFile = File(...),
-                             user: dict = Depends(get_current_user)):
+                             user: dict = Depends(ads_perm("ads.manage"))):
     """Advertiser-side banner upload (same GridFS bucket, same limits)."""
     return await upload_ad_image(file, user)
 
@@ -546,7 +574,7 @@ async def ad_image(file_id: str):
 
 
 @router.get("/ads/mine")
-async def my_promotions(user: dict = Depends(get_current_user)):
+async def my_promotions(user: dict = Depends(ads_perm("ads.view"))):
     """Advertiser workspace: only MY campaigns (never another office's)."""
     me = str(user["_id"])
     org = str(user.get("org_id") or "")
@@ -585,7 +613,7 @@ class OfficeAdIn(AdIn):
 
 
 @router.post("/ads/mine")
-async def create_my_ad(payload: OfficeAdIn, user: dict = Depends(get_current_user)):
+async def create_my_ad(payload: OfficeAdIn, user: dict = Depends(ads_perm("ads.manage"))):
     """An office/individual creates its OWN campaign as a draft. It can never publish it."""
     if user.get("role") not in ("office", "staff", "individual"):
         raise HTTPException(403, "غير مصرح بإنشاء إعلانات")
@@ -626,7 +654,7 @@ async def _own_ad_or_403(ad_id: str, user: dict) -> dict:
 
 
 @router.patch("/ads/mine/{ad_id}")
-async def update_my_ad(ad_id: str, payload: OfficeAdIn, user: dict = Depends(get_current_user)):
+async def update_my_ad(ad_id: str, payload: OfficeAdIn, user: dict = Depends(ads_perm("ads.manage"))):
     ad = await _own_ad_or_403(ad_id, user)
     if ad.get("status") == "pending_approval":
         raise HTTPException(400, "الإعلان قيد الاعتماد — لا يمكن تعديله الآن")
@@ -654,7 +682,7 @@ class MyStatusIn(BaseModel):
 
 @router.post("/ads/mine/{ad_id}/status")
 async def my_ad_status(ad_id: str, payload: MyStatusIn,
-                       user: dict = Depends(get_current_user)):
+                       user: dict = Depends(ads_perm("ads.manage"))):
     """Advertiser may only submit for approval, cancel back to draft, or archive.
     Publishing/approval stays exclusively with Meraaj admins."""
     if payload.status not in ("pending_approval", "draft", "archived"):
@@ -689,7 +717,7 @@ class CancelRequestIn(BaseModel):
 
 @router.post("/ads/mine/{ad_id}/cancellation-request")
 async def request_cancellation(ad_id: str, payload: CancelRequestIn,
-                               user: dict = Depends(get_current_user)):
+                               user: dict = Depends(ads_perm("ads.manage"))):
     """The advertiser ASKS to cancel. Nothing is deleted and no balance moves here —
     an admin decides, and any money movement goes only through the wallet/ledger logic."""
     ad = await _own_ad_or_403(ad_id, user)
@@ -724,6 +752,7 @@ class CancelDecisionIn(BaseModel):
 
 @router.get("/admin/ads-cancellations")
 async def list_cancellations(admin: dict = Depends(require_admin)):
+    await _admin_ads_perm(admin, "ads.view")
     docs = await db.advertisements.find({"status": "cancellation_requested"}) \
         .sort("updated_at", -1).to_list(200)
     return {"items": [_decorate(d) for d in serialize(docs)]}
@@ -737,6 +766,7 @@ async def decide_cancellation(ad_id: str, payload: CancelDecisionIn,
     CAPTURED amount is NOT auto-refunded (refund policy needs a commercial decision)."""
     if payload.decision not in ("accept", "reject"):
         raise HTTPException(400, "القرار غير مدعوم")
+    await _admin_ads_perm(admin, "ads.cancel")
     ad = await db.advertisements.find_one({"_id": oid(ad_id)})
     if not ad:
         raise HTTPException(404, "الإعلان غير موجود")

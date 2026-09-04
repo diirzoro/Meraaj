@@ -140,7 +140,7 @@ export default function AdminRoles() {
                     <td className="px-3 py-2.5 whitespace-nowrap">
                       <button onClick={() => setEdit({ ...u, roles: u.enterprise_roles || [], reason: "" })}
                         data-testid={`edit-roles-${u.id}`} className="text-[#0A2540] underline font-semibold">الأدوار</button>
-                      <button onClick={() => setPerms({ id: u.id, email: u.email, list: u.extra_permissions || [], reason: "" })}
+                      <button onClick={() => setPerms({ id: u.id, email: u.email, list: u.extra_permissions || [], denied: u.denied_permissions || [], reason: "" })}
                         data-testid={`edit-perms-${u.id}`} className="mr-2 text-[#0A2540] underline font-semibold">الصلاحيات</button>
                       <button onClick={() => setEditUser({ id: u.id, email: u.email, owner_name: u.owner_name || "", staff_name: u.staff_name || "", phone: u.phone || "", office_name: u.office_name || "", governorate: u.governorate || "", reason: "" })}
                         data-testid={`edit-user-${u.id}`} className="mr-2 text-[#0A2540] underline">البيانات</button>
@@ -384,6 +384,20 @@ export default function AdminRoles() {
                   </label>
                 ))}
               </div>
+              <div className="text-[11px] text-muted-foreground border-t pt-2">
+                <b>سحب صلاحية (استثناء فردي):</b> السحب يتغلّب على الأدوار والافتراضات — عند سحب
+                «مشاهدة قسم الإعلانات» يختفي القسم من القائمة ويرفض الـAPI الدخول المباشر بـ403.
+              </div>
+              <div className="grid grid-cols-2 gap-1" data-testid="denied-perms-grid">
+                {Object.entries(cat.permissions).map(([k, lab]) => (
+                  <label key={k} className="text-[10px] bg-[#FEF2F2] rounded px-2 py-1 flex items-center gap-1.5" data-testid={`perm-deny-${k}`}>
+                    <input type="checkbox" checked={(perms.denied || []).includes(k)}
+                      onChange={(e) => setPerms({ ...perms, denied: e.target.checked ? [...(perms.denied || []), k] : (perms.denied || []).filter((x) => x !== k) })} />
+                    سحب: {lab}
+                  </label>
+                ))}
+              </div>
+
               <div><Label className="text-[11px]">السبب (إلزامي)</Label>
                 <Textarea rows={2} className="text-xs" value={perms.reason} data-testid="perms-reason"
                   onChange={(e) => setPerms({ ...perms, reason: e.target.value })} /></div>
@@ -391,7 +405,7 @@ export default function AdminRoles() {
                 disabled={busy || perms.reason.trim().length < 3}
                 onClick={() => act(async () => {
                   await api.post(`/admin/rbac/users/${perms.id}/permissions`,
-                    { permissions: perms.list, reason: perms.reason });
+                    { permissions: perms.list, denied: perms.denied || [], reason: perms.reason });
                   setPerms(null);
                 }, "تم حفظ الصلاحيات")}>حفظ</Button>
             </div>

@@ -51,10 +51,12 @@ function Loader() {
   );
 }
 
-function Protected({ role, children }) {
-  const { user, loading } = useAuth();
+function Protected({ role, perm, children }) {
+  const { user, loading, permissions, can } = useAuth();
   if (loading || user === null) return <Loader />;
   if (!user) return <Navigate to="/login" replace />;
+  if (perm && permissions.length === 0) return <Loader />;
+  if (perm && !can(perm)) return <Navigate to={user.role === "super_admin" ? "/admin" : "/dashboard"} replace />;
   if (user.role === "super_admin" && role !== "admin") return <Navigate to="/admin" replace />;
   if (role === "admin" && user.role !== "super_admin") return <Navigate to="/dashboard" replace />;
   if (role === "office" && user.role !== "office") return <Navigate to="/dashboard" replace />;
@@ -94,7 +96,7 @@ function AppRoutes() {
       <Route path="/bookings" element={<Protected role="member"><Bookings /></Protected>} />
       <Route path="/sales" element={<Protected role="office"><Sales /></Protected>} />
       <Route path="/wallet" element={<Protected role="member"><WalletPage /></Protected>} />
-      <Route path="/my-ads" element={<Protected role="member"><MyAds /></Protected>} />
+      <Route path="/my-ads" element={<Protected role="member" perm="ads.view"><MyAds /></Protected>} />
       <Route path="/marketer" element={<Protected role="individual"><Marketer /></Protected>} />
 
       <Route path="/admin" element={<Protected role="admin"><AdminDashboard /></Protected>} />
@@ -119,7 +121,7 @@ function AppRoutes() {
           until every function is manually confirmed as transferred. */}
       <Route path="/admin/offices" element={<Navigate to="/admin/orgs" replace />} />
       <Route path="/admin/cancellations" element={<Protected role="admin"><AdminCancellations /></Protected>} />
-      <Route path="/admin/ads" element={<Protected role="admin"><AdminAds /></Protected>} />
+      <Route path="/admin/ads" element={<Protected role="admin" perm="ads.view"><AdminAds /></Protected>} />
       <Route path="/admin/disputes" element={<Protected role="admin"><AdminDisputes /></Protected>} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
