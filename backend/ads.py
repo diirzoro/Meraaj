@@ -762,7 +762,12 @@ async def decide_cancellation(ad_id: str, payload: CancelDecisionIn,
 
     from ads_billing import release_for_ad
     refund = None
-    if b.get("state") == "held":
+    # POLICY (approved): a still-HELD amount is released in full; an already CAPTURED amount is
+    # NEVER refunded by the cancellation path — an exceptional refund must go through a separate
+    # administrative refund process (own Maker/Checker), not through an ad status change.
+    if b.get("state") == "captured":
+        refund = None
+    elif b.get("state") == "held":
         rel = await release_for_ad(ad, f"إلغاء معتمد: {reason}")
         if rel:
             b.update(rel)
@@ -771,6 +776,9 @@ async def decide_cancellation(ad_id: str, payload: CancelDecisionIn,
     upd = {"status": "cancelled", "billing": b, "updated_at": now_iso(),
            "cancellation": {**c, "state": "accepted", "decided_by": admin.get("email"),
                             "decided_at": now_iso(), "decision_reason": reason,
+                            "refund_policy": ("no_automatic_refund_after_final_charge"
+                                              if b.get("state") == "captured"
+                                              else "full_hold_release_before_final_charge"),
                             **(refund or {"refund_amount": 0, "refund_currency": b.get("currency"),
                                           "refund_txn": None}),
                             "captured_not_refunded": b.get("state") == "captured"}}

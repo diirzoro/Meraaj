@@ -227,3 +227,10 @@
 - تدقيق: ad_pending_approval, ad_active, ad_rejected, ad_cancellation_requested/approved/rejected + حركات المحفظة ad_hold/ad_charge/ad_hold_release.
 - تحقق محدود بـ curl/python: حجز→اعتماد→خصم واحد فقط (تكرار الاعتماد 400 بلا خصم ثانٍ)، منع الاعتماد الذاتي، منع الإرسال عند عدم كفاية الرصيد بلا أي حركة، الرفض يفكّ الحجز، رفض/قبول طلب الإلغاء، وقبول إلغاء إعلان محجوز يُعيد المبلغ كاملاً.
 - سياسة الاسترجاع للإعلان المنشور (Full/Partial/No refund) **معلّقة بانتظار قراركم** — لم يُنفَّذ أي استرجاع تلقائي.
+
+## سياسة الإلغاء والاسترجاع المعتمدة (قرار العميل — 2026-06)
+1. قبل الخصم النهائي (المبلغ Held): اعتماد الإلغاء ⇒ فكّ حجز كامل إلى Available، بلا Refund، مع `ad_hold_release` في السجل المالي و Audit.
+2. بعد الخصم النهائي (`ad_charge`): **No Automatic Refund** — الإعلان يصبح `cancelled` ويتوقف ظهوره فقط، ومسار الإلغاء ممنوع من تعديل الرصيد أو إنشاء Refund (`refund_policy=no_automatic_refund_after_final_charge` محفوظ داخل `cancellation`).
+3. الاسترجاع الاستثنائي: مسار إداري مستقل (لم يُبنَ بعد) وليس عبر تغيير حالة الإعلان. متطلباته عند البناء: مبلغ محدد + سبب إلزامي + ربط بمعرّف الإعلان + Maker/Checker + سقف = المبلغ المخصوم فعلاً + منع التكرار/Double Refund + Ledger/Audit مع before/after + استخدام منطق المحفظة القياسي فقط.
+4. بيانات Preview فقط: `commercial_license` لحسابي seller/buyer — بلا Migration/Seed/Backfill. مبلغ الاختبار 35 ريال على buyer@test.com يبقى مسجّلاً محاسبياً بلا أي تعديل يدوي.
+5. حُذفت سكربتات التحقق الديف-أونلي: `tests/_ad_cycle_check.py`, `tests/_ad_billing_check.py`.
