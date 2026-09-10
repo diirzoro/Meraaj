@@ -15,6 +15,7 @@ env:
   BACKEND_PORT: ${{ vars.TEST_MERAAJ_BACKEND_PORT || '8010' }}
   FRONTEND_PORT: ${{ vars.TEST_MERAAJ_FRONTEND_PORT || '8014' }}
   BACKEND_ENV_FILE: ${{ vars.TEST_MERAAJ_BACKEND_ENV_FILE || '/root/meraaj_backend_env_test' }}
+  LIVE_BACKEND_ENV_FILE: ${{ vars.LIVE_MERAAJ_BACKEND_ENV_FILE || '/root/meraaj_backend_env_live' }}
   NETWORK: ${{ vars.TEST_MERAAJ_NETWORK || 'meraaj_fresh_test_net' }}
 
 jobs:
@@ -78,9 +79,59 @@ jobs:
              BACKEND_PORT='${{ env.BACKEND_PORT }}' \
              FRONTEND_PORT='${{ env.FRONTEND_PORT }}' \
              BACKEND_ENV_FILE='${{ env.BACKEND_ENV_FILE }}' \
+             LIVE_BACKEND_ENV_FILE='${{ env.LIVE_BACKEND_ENV_FILE }}' \
              NETWORK='${{ env.NETWORK }}' \
              SHORT_SHA='${SHORT_SHA}' bash -s" <<'REMOTE'
           set -euo pipefail
+
+          # ===================================================================
+          # DB SAFETY GUARD (fail-closed) - runs BEFORE any container is removed,
+          # created or started. Values are read from the ENV FILES ACTUALLY USED
+          # on this server, never from a file name. Nothing secret is printed:
+          # only a short sha256 fingerprint of the sanitised Mongo target.
+          # ===================================================================
+          echo "--- DB safety guard: Test/Live isolation ---"
+
+          env_value() {   # $1 = env file, $2 = key   (prints ONLY the value, never the file)
+            awk -F'=' -v k="$2" '
+              $1 == k { sub(/^[^=]*=/, ""); gsub(/\r/, ""); gsub(/^["'"'"']|["'"'"']$/, ""); print; exit }
+            ' "$1"
+          }
+
+          db_fingerprint() {  # $1 = MONGO_URL, $2 = DB_NAME  -> credential-free short hash
+            printf '%s|%s' \
+              "$(printf '%s' "$1" | sed -E 's#^(mongodb(\+srv)?://)[^@]*@#\1#')" "$2" \
+              | sha256sum | cut -c1-12
+          }
+
+          test -r "$BACKEND_ENV_FILE"      || { echo "GUARD FAIL: Test backend env file unreadable"; exit 1; }
+          test -r "$LIVE_BACKEND_ENV_FILE" || { echo "GUARD FAIL: Live backend env file unreadable"; exit 1; }
+
+          TEST_DB_NAME="$(env_value "$BACKEND_ENV_FILE" DB_NAME || true)"
+          LIVE_DB_NAME="$(env_value "$LIVE_BACKEND_ENV_FILE" DB_NAME || true)"
+          TEST_MONGO_URL="$(env_value "$BACKEND_ENV_FILE" MONGO_URL || true)"
+          LIVE_MONGO_URL="$(env_value "$LIVE_BACKEND_ENV_FILE" MONGO_URL || true)"
+
+          [ -n "$TEST_DB_NAME" ]   || { echo "GUARD FAIL: DB_NAME missing in Test env"; exit 1; }
+          [ -n "$LIVE_DB_NAME" ]   || { echo "GUARD FAIL: DB_NAME missing in Live env"; exit 1; }
+          [ -n "$TEST_MONGO_URL" ] || { echo "GUARD FAIL: MONGO_URL missing in Test env"; exit 1; }
+          [ -n "$LIVE_MONGO_URL" ] || { echo "GUARD FAIL: MONGO_URL missing in Live env"; exit 1; }
+
+          if [ "$TEST_DB_NAME" != "meraaj_test" ]; then
+            echo "GUARD FAIL: Test DB_NAME must be exactly 'meraaj_test' (got: '$TEST_DB_NAME')"; exit 1
+          fi
+          if [ "$LIVE_DB_NAME" != "meraaj" ]; then
+            echo "GUARD FAIL: Live DB_NAME must be exactly 'meraaj' (got: '$LIVE_DB_NAME')"; exit 1
+          fi
+
+          TEST_FP="$(db_fingerprint "$TEST_MONGO_URL" "$TEST_DB_NAME")"
+          LIVE_FP="$(db_fingerprint "$LIVE_MONGO_URL" "$LIVE_DB_NAME")"
+          echo "  test db target fingerprint: $TEST_FP"
+          echo "  live db target fingerprint: $LIVE_FP"
+          if [ "$TEST_FP" = "$LIVE_FP" ]; then
+            echo "GUARD FAIL: Test and Live point at the SAME Mongo target. Deployment stopped."; exit 1
+          fi
+          echo "DB safety guard OK (test=meraaj_test, live=meraaj, separate targets)."
 
           # --- Load the freshly built images ---
           gunzip -f /tmp/meraaj_backend_test.tar.gz
