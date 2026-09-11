@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import api, { apiError } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 import { PageHeader } from "@/components/Layout";
 import { money, fmtDate } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -33,6 +34,7 @@ export default function AdminAds() {
   const [busy, setBusy] = useState(false);
   const [pv, setPv] = useState("banner");
   const [pkgs, setPkgs] = useState([]);
+  const { can } = useAuth();
 
   const orgRequired = (cat?.org_required_types || ["office", "company", "partner"])
     .includes(form.advertiser_type);
@@ -70,9 +72,13 @@ export default function AdminAds() {
     return m;
   })();
 
-  const save = () => {
+  const save = (publish = false) => {
     if (missing.length) {
       toast.error(`أكمل الحقول الناقصة: ${missing.join(" • ")}`);
+      return;
+    }
+    if (publish && !form.package_id) {
+      toast.error("اختر الباقة الإعلانية قبل النشر المباشر");
       return;
     }
     act(async () => {
@@ -82,10 +88,14 @@ export default function AdminAds() {
         linked_package_id: form.linked_package_id || null,
         linked_office_id: form.linked_office_id || null };
       delete payload.advertiser_label; delete payload.advertiser_org_label;
+      let id = editId;
       if (editId) await api.patch(`/admin/ads/${editId}`, payload);
-      else await api.post("/admin/ads", payload);
+      else id = (await api.post("/admin/ads", payload)).data.id;
+      if (publish) {
+        await api.post(`/admin/ads/${id}/publish`, { status: "active", reason: form.reason });
+      }
       setOpen(false); setForm(EMPTY); setEditId(null);
-    }, editId ? "تم تحديث الإعلان" : "تم إنشاء الإعلان كمسودة");
+    }, publish ? "تم نشر الإعلان وأصبح ظاهراً" : (editId ? "تم التحديث" : "تم الإنشاء كمسودة"));
   };
 
   const uploadImage = async (file) => {
@@ -276,16 +286,23 @@ export default function AdminAds() {
               <AdvertiserPicker form={form} setForm={setForm} orgRequired={orgRequired} />
             </div>
             <F label="الباقة الإعلانية (إلزامية قبل الإرسال للاعتماد)">
-              <select className="h-9 w-full rounded-md border border-input px-2 text-xs bg-white"
-                data-testid="ad-package-select" value={form.package_id || ""}
-                onChange={(e) => setForm({ ...form, package_id: e.target.value })}>
-                <option value="">— اختر الباقة —</option>
-                {pkgs.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} — {p.paid ? `${p.price} ${p.currency}` : "مجانية"} / {p.duration_days} يوم
-                  </option>
-                ))}
-              </select>
+              {pkgs.length === 0 ? (
+                <div className="text-[11px] text-[#B91C1C] bg-[#FEF2F2] rounded-lg px-3 py-2"
+                  data-testid="ad-no-packages">
+                  لا توجد باقات إعلانية نشطة. أضف أو فعّل باقة قبل نشر الإعلان — من تبويب «الباقات الإعلانية».
+                </div>
+              ) : (
+                <select className="h-11 sm:h-9 w-full rounded-md border border-input px-2 text-xs bg-white"
+                  data-testid="ad-package-select" value={form.package_id || ""}
+                  onChange={(e) => setForm({ ...form, package_id: e.target.value })}>
+                  <option value="">— اختر الباقة —</option>
+                  {pkgs.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} — {p.paid ? `${p.price} ${p.currency}` : "مجانية"} / {p.duration_days} يوم
+                    </option>
+                  ))}
+                </select>
+              )}
             </F>
             <F label="مدفوع أم مجاني">
               <select className="h-9 w-full rounded-md border border-input px-2 text-xs bg-white" data-testid="ad-paid"
@@ -396,8 +413,16 @@ export default function AdminAds() {
           <div className="text-[10px] text-muted-foreground">
             يُنشأ العنصر كمسودة ولا يظهر للجمهور إلا بعد إرساله للاعتماد واعتماده من مسؤول آخر.
           </div>
-          <Button className="bg-[#0A2540] hover:bg-[#061A2E] w-full" data-testid="ad-save-btn"
-            disabled={busy} onClick={save}>{busy ? "جارٍ الحفظ..." : "حفظ"}</Button>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Button className="bg-[#0A2540] hover:bg-[#061A2E] flex-1 h-11 sm:h-10" data-testid="ad-save-btn"
+              disabled={busy} onClick={() => save(false)}>{busy ? "جارٍ الحفظ..." : "حفظ كمسودة"}</Button>
+            {can("ads.approve") && (
+              <Button className="bg-[#D4AF37] text-[#0A2540] hover:bg-[#c39f2f] flex-1 h-11 sm:h-10"
+                data-testid="ad-publish-btn" disabled={busy} onClick={() => save(true)}>
+                {busy ? "جارٍ النشر..." : "نشر مباشرة"}
+              </Button>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
 

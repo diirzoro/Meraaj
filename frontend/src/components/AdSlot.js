@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import api from "@/lib/api";
+import { toast } from "sonner";
 import { Megaphone, ArrowLeft } from "lucide-react";
 
 /** Frequency cap: the same campaign is not shown to the same visitor more than
@@ -48,6 +49,12 @@ export const AdSlot = ({ placement = "homepage", limit = 3, variant, className =
   }, [placement, limit]);
 
   const go = (a) => {
+    // Owner interaction is blocked on BOTH sides: the API refuses to count it and returns
+    // no target, and here the CTA never fires.
+    if (a.is_owner) {
+      toast.info(a.owner_note || "هذا إعلانك — لا يمكنك التفاعل مع هذا الإعلان لأنك صاحب الإعلان.");
+      return;
+    }
     api.post(`/ads/${a.id}/click?source=public`).catch(() => {});
     if (a.target_url) window.open(a.target_url, "_blank", "noopener");
   };
@@ -82,8 +89,14 @@ export const AdPreview = ({ ad, variant = "banner" }) => {
 };
 
 const Tag = ({ a }) => (
-  <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#D4AF37] text-[#0A2540] whitespace-nowrap">
-    {a.kind_label || "إعلان"}
+  <span className="flex items-center gap-1.5">
+    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#D4AF37] text-[#0A2540] whitespace-nowrap">
+      {a.kind_label || "إعلان"}
+    </span>
+    {a.is_owner && (
+      <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-white text-[#0A2540] border border-[#D4AF37] whitespace-nowrap"
+        data-testid={`ad-owner-badge-${a.id}`}>إعلانك</span>
+    )}
   </span>
 );
 
