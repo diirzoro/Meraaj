@@ -19,6 +19,7 @@ const EMPTY = {
   placements: ["homepage"], placement_group: null, advertiser_owner_id: "",
   advertiser_org_id: "", priority: 10,
   cta_label: "", linked_package_id: "", linked_office_id: "", reason: "",
+  package_id: "", advertiser_label: "", advertiser_org_label: "",
 };
 
 export default function AdminAds() {
@@ -31,6 +32,12 @@ export default function AdminAds() {
   const [detail, setDetail] = useState(null);
   const [busy, setBusy] = useState(false);
   const [pv, setPv] = useState("banner");
+  const [pkgs, setPkgs] = useState([]);
+
+  const orgRequired = (cat?.org_required_types || ["office", "company", "partner"])
+    .includes(form.advertiser_type);
+  const ownerRequired = (cat?.owner_required_types || ["individual"])
+    .includes(form.advertiser_type);
 
   const load = useCallback(() => {
     if (tab === "packages") return;
@@ -38,6 +45,7 @@ export default function AdminAds() {
   }, [tab]);
 
   useEffect(() => { api.get("/admin/ads/catalog").then((r) => setCat(r.data)); }, []);
+  useEffect(() => { api.get("/admin/ad-packages").then((r) => setPkgs(r.data.filter((p) => p.active))).catch(() => setPkgs([])); }, []);
   useEffect(() => { load(); }, [load]);
 
   const act = async (fn, ok) => {
@@ -51,6 +59,8 @@ export default function AdminAds() {
     const m = [];
     if (!form.title || form.title.trim().length < 3) m.push("العنوان (3 أحرف على الأقل)");
     if (!form.advertiser_name || form.advertiser_name.trim().length < 2) m.push("اسم المعلن");
+    if (orgRequired && !form.advertiser_org_id) m.push("اختيار المعلن من القائمة لربط المؤسسة (مطلوب لهذا النوع)");
+    if (ownerRequired && !form.advertiser_owner_id) m.push("اختيار حساب المعلن من القائمة (مطلوب للمعلن الفرد)");
     if (!form.start_date) m.push("تاريخ البداية");
     if (!form.end_date) m.push("تاريخ النهاية");
     if (form.start_date && form.end_date && form.end_date < form.start_date) m.push("تاريخ النهاية يجب أن يكون بعد البداية");
@@ -68,8 +78,10 @@ export default function AdminAds() {
     act(async () => {
       const payload = { ...form, kind: tab, contract_value: Number(form.contract_value) || 0,
         priority: Number(form.priority) || 10,
+        package_id: form.package_id || null,
         linked_package_id: form.linked_package_id || null,
         linked_office_id: form.linked_office_id || null };
+      delete payload.advertiser_label; delete payload.advertiser_org_label;
       if (editId) await api.patch(`/admin/ads/${editId}`, payload);
       else await api.post("/admin/ads", payload);
       setOpen(false); setForm(EMPTY); setEditId(null);
@@ -90,6 +102,17 @@ export default function AdminAds() {
   };
 
   const setStatus = (id, status, ask) => {
+    if (status === "pending_approval") {
+      const ad = (d.items || []).find((x) => x.id === id);
+      if (ad && !ad.package_id) {
+        toast.error("اختر الباقة الإعلانية من «تعديل» قبل الإرسال للاعتماد");
+        return;
+      }
+      if (ad && ["office", "company", "partner"].includes(ad.advertiser_type) && !ad.advertiser_org_id) {
+        toast.error("المعلن غير مربوط بمؤسسة — افتح «تعديل» واختر المعلن من القائمة");
+        return;
+      }
+    }
     const reason = window.prompt(ask);
     if (!reason || reason.trim().length < 3) return;
     act(() => api.post(`/admin/ads/${id}/status`, { status, reason: reason.trim() }), "تم تحديث الحالة");
@@ -172,7 +195,10 @@ export default function AdminAds() {
                 <td className="px-3 py-2.5 tabular">{a.ctr}%</td>
                 <td className="px-3 py-2.5 whitespace-nowrap space-x-1 space-x-reverse">
                   <button className="text-[#0A2540] underline text-[10px]" data-testid={`ad-edit-${a.id}`}
-                    onClick={() => { setForm({ ...EMPTY, ...a, reason: "" }); setEditId(a.id); setOpen(true); }}>تعديل</button>
+                    onClick={() => { setForm({ ...EMPTY, ...a, reason: "",
+                      advertiser_label: a.advertiser_name || "",
+                      advertiser_org_label: a.advertiser_org_id ? (a.advertiser_name || "") : "" });
+                      setEditId(a.id); setOpen(true); }}>تعديل</button>
                   {a.status === "draft" && (
                     <button className="text-[#A16207] underline text-[10px]" data-testid={`ad-submit-${a.id}`}
                       onClick={() => setStatus(a.id, "pending_approval", "سبب إرسال الإعلان للاعتماد؟")}>إرسال للاعتماد</button>
@@ -246,15 +272,20 @@ export default function AdminAds() {
                 </F>
               </div>
             )}
-            <F label="حساب المعلن (يُستبعد من الجمهور)">
-              <Input className="h-9 text-xs" dir="ltr" data-testid="ad-owner-id"
-                value={form.advertiser_owner_id || ""}
-                onChange={(e) => setForm({ ...form, advertiser_owner_id: e.target.value })} />
-            </F>
-            <F label="مؤسسة المعلن (تُستبعد هي ومستخدموها)">
-              <Input className="h-9 text-xs" dir="ltr" data-testid="ad-owner-org-id"
-                value={form.advertiser_org_id || ""}
-                onChange={(e) => setForm({ ...form, advertiser_org_id: e.target.value })} />
+            <div className="sm:col-span-2">
+              <AdvertiserPicker form={form} setForm={setForm} orgRequired={orgRequired} />
+            </div>
+            <F label="الباقة الإعلانية (إلزامية قبل الإرسال للاعتماد)">
+              <select className="h-9 w-full rounded-md border border-input px-2 text-xs bg-white"
+                data-testid="ad-package-select" value={form.package_id || ""}
+                onChange={(e) => setForm({ ...form, package_id: e.target.value })}>
+                <option value="">— اختر الباقة —</option>
+                {pkgs.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} — {p.paid ? `${p.price} ${p.currency}` : "مجانية"} / {p.duration_days} يوم
+                  </option>
+                ))}
+              </select>
             </F>
             <F label="مدفوع أم مجاني">
               <select className="h-9 w-full rounded-md border border-input px-2 text-xs bg-white" data-testid="ad-paid"
@@ -413,5 +444,99 @@ const Stat = ({ label, v, tid }) => (
 const F = ({ label, children }) => (
   <div><Label className="text-[11px]">{label}</Label>{children}</div>
 );
+
+/** Advertiser picker: search existing accounts, then link the REAL ids automatically.
+ *  No internal id is ever shown to or typed by the admin. */
+const AdvertiserPicker = ({ form, setForm, orgRequired }) => {
+  const [q, setQ] = useState("");
+  const [items, setItems] = useState([]);
+  const [openList, setOpenList] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const search = async (term) => {
+    setLoading(true);
+    try {
+      const r = await api.get(`/admin/ads/advertisers?q=${encodeURIComponent(term)}`);
+      setItems(r.data.items || []);
+      setOpenList(true);
+    } catch (e) { toast.error(apiError(e)); } finally { setLoading(false); }
+  };
+
+  const pick = (it) => {
+    setForm((f) => ({
+      ...f,
+      advertiser_name: it.label,
+      advertiser_type: it.advertiser_type,
+      advertiser_owner_id: it.advertiser_owner_id,
+      advertiser_org_id: it.advertiser_org_id,
+      advertiser_label: it.label,
+      advertiser_org_label: it.org_label || "",
+    }));
+    setOpenList(false);
+  };
+
+  const linked = form.advertiser_owner_id || form.advertiser_org_id;
+  return (
+    <div className="rounded-xl border bg-[#F9FAFB] p-3 space-y-2" data-testid="advertiser-picker">
+      <Label className="text-[11px]">المعلن (اختر من المعلنين الموجودين — يُربط الحساب والمؤسسة تلقائياً)</Label>
+      <div className="flex gap-2">
+        <Input className="h-9 text-xs" placeholder="ابحث بالاسم أو البريد أو السجل التجاري"
+          data-testid="advertiser-search" value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), search(q))} />
+        <Button type="button" size="sm" variant="outline" data-testid="advertiser-search-btn"
+          disabled={loading} onClick={() => search(q)}>{loading ? "..." : "بحث"}</Button>
+        <Button type="button" size="sm" variant="outline" data-testid="advertiser-add-btn"
+          onClick={() => window.open("/admin/orgs", "_blank", "noopener")}>+ إضافة معلن</Button>
+      </div>
+
+      {openList && (
+        <div className="max-h-44 overflow-y-auto rounded-lg border bg-white divide-y" data-testid="advertiser-results">
+          {items.length === 0 && (
+            <div className="px-3 py-2 text-[11px] text-muted-foreground">
+              لا نتائج — استخدم «+ إضافة معلن» لإنشاء الحساب ثم أعد البحث
+            </div>
+          )}
+          {items.map((it) => (
+            <button key={it.id} type="button" onClick={() => pick(it)}
+              data-testid={`advertiser-opt-${it.id}`}
+              className="w-full text-right px-3 py-2 hover:bg-[#F4F6F8]">
+              <span className="block text-[11px] font-semibold text-[#0A2540]">{it.label}</span>
+              <span className="block text-[10px] text-muted-foreground">
+                {it.account_type === "office" ? "مكتب/مؤسسة" : "معلن فرد"}
+                {it.owner_name ? ` • ${it.owner_name}` : ""} • {it.email}
+                {it.verified ? " • موثّق (سجل تجاري)" : " • غير موثّق"}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {linked ? (
+        <div className="flex items-center justify-between rounded-lg bg-white border px-3 py-2"
+          data-testid="advertiser-linked">
+          <span className="text-[11px]">
+            <b className="text-[#0A2540]">{form.advertiser_label || form.advertiser_name}</b>
+            {form.advertiser_org_label && (
+              <span className="text-muted-foreground"> — المؤسسة: {form.advertiser_org_label}</span>
+            )}
+            <span className="block text-[10px] text-[#15803D]">مربوط بالحساب والمؤسسة بشكل صحيح</span>
+          </span>
+          <button type="button" className="text-[10px] underline text-[#B91C1C]"
+            data-testid="advertiser-unlink"
+            onClick={() => setForm((f) => ({ ...f, advertiser_owner_id: "", advertiser_org_id: "",
+              advertiser_label: "", advertiser_org_label: "" }))}>إلغاء الربط</button>
+        </div>
+      ) : (
+        <div className={`rounded-lg px-3 py-2 text-[11px] ${orgRequired ? "bg-[#FEF2F2] text-[#B91C1C]" : "bg-[#F4F6F8] text-muted-foreground"}`}
+          data-testid="advertiser-hint">
+          {orgRequired
+            ? "هذا النوع من الإعلانات يتطلب ربط المعلن بمؤسسة — اختر المعلن من القائمة قبل الحفظ"
+            : "اختياري لهذا النوع: يمكن الحفظ بدون ربط حساب، ويُستخدم الربط لاستبعاد المعلن من جمهور إعلانه"}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const AdsIcons = { Megaphone, CheckCircle2, XCircle, PauseCircle };

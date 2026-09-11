@@ -193,9 +193,47 @@ async def catalog(admin: dict = Depends(require_admin)):
             "placements": {k: v["label"] for k, v in PLACEMENTS.items()},
             "placement_meta": PLACEMENTS, "placement_groups": PLACEMENT_GROUPS,
             "audiences": AUDIENCES, "kinds": KINDS,
+            "org_required_types": ["office", "company", "partner"],
+            "owner_required_types": ["individual"],
+            "package_required_before_approval": True,
             "owner_exclusion": ("صاحب الإعلان لا يرى إعلانه: يُستبعد حساب المعلن ومؤسسته "
                                 "وكل مستخدمي تلك المؤسسة على مستوى الخادم"),
             "maker_checker": "النشر يحتاج اعتماد مستخدم آخر غير من أنشأ الإعلان"}
+
+
+@router.get("/admin/ads/advertisers")
+async def search_advertisers(q: str = Query("", max_length=80), limit: int = 20,
+                             admin: dict = Depends(require_admin)):
+    """Advertiser picker source: existing accounts only, so the UI links REAL ids and the
+    admin never types an internal id. Read-only; no account is created here."""
+    await _admin_ads_perm(admin, "ads.view")
+    f = {"role": {"$in": ["office", "individual"]}}
+    term = (q or "").strip()
+    if term:
+        rx = {"$regex": term, "$options": "i"}
+        f["$or"] = [{"office_name": rx}, {"owner_name": rx}, {"email": rx},
+                    {"commercial_license": rx}, {"phone": rx}]
+    docs = await db.users.find(f).sort("office_name", 1).to_list(min(max(limit, 1), 50))
+    items = []
+    for u in docs:
+        is_office = u.get("role") == "office"
+        name = u.get("office_name") or u.get("owner_name") or u.get("email")
+        items.append({
+            "id": str(u["_id"]),
+            "label": name,
+            "owner_name": u.get("owner_name"),
+            "email": u.get("email"),
+            "account_type": "office" if is_office else "individual",
+            "advertiser_type": "office" if is_office else "individual",
+            # An office account IS its own organisation in Meraaj (orgs are user documents),
+            # so the picker can link both ids without asking the admin for anything.
+            "advertiser_owner_id": str(u["_id"]),
+            "advertiser_org_id": str(u.get("org_id") or u["_id"]) if is_office else "",
+            "org_label": name if is_office else None,
+            "verified": bool(u.get("commercial_license") or u.get("license")),
+            "status": u.get("status") or "active",
+        })
+    return {"items": items, "count": len(items)}
 
 
 @router.get("/admin/ads")
@@ -225,7 +263,7 @@ async def list_ads(kind: Optional[str] = None, status: Optional[str] = None,
 async def create_ad(payload: AdIn, admin: dict = Depends(require_admin)):
     await _admin_ads_perm(admin, "ads.manage")
     _validate(payload)
-    _require_owner_identity(payload)
+    await _require_owner_identity(payload)
     doc = {**payload.model_dump(exclude={"reason"}),
            "status": "draft", "views": 0, "clicks": 0, "source": "admin",
            "billing": {}, "package_snapshot": None,
@@ -242,6 +280,9 @@ async def create_ad(payload: AdIn, admin: dict = Depends(require_admin)):
 async def update_ad(ad_id: str, payload: AdIn, admin: dict = Depends(require_admin)):
     await _admin_ads_perm(admin, "ads.manage")
     _validate(payload)
+    # Same identity rule as creation: an ad can no longer be SAVED in a state that would
+    # only fail later at "submit for approval".
+    await _require_owner_identity(payload)
     cur = await db.advertisements.find_one({"_id": oid(ad_id)})
     if not cur:
         raise HTTPException(404, "الإعلان غير موجود")
@@ -257,13 +298,25 @@ async def update_ad(ad_id: str, payload: AdIn, admin: dict = Depends(require_adm
     return _decorate(serialize(await db.advertisements.find_one({"_id": cur["_id"]})))
 
 
-def _require_owner_identity(p: AdIn):
-    """Owner identity must be explicit BEFORE approval so the exclusion rule can work."""
+async def _require_owner_identity(p: AdIn):
+    """Owner identity must be explicit AND real BEFORE approval so the exclusion rule can work.
+    Ids are verified against the database, so a display name can never pass as an id."""
     if p.advertiser_type == "individual" and not p.advertiser_owner_id:
-        raise HTTPException(400, "المعلن الفرد يتطلب تحديد حساب المعلن (advertiser_owner_id)")
+        raise HTTPException(400, "المعلن الفرد يتطلب تحديد حساب المعلن — اختر المعلن من القائمة")
     if p.advertiser_type in ("office", "company", "partner") and not p.advertiser_org_id:
-        raise HTTPException(400, "المعلن المكتب/الشركة/الشريك يتطلب تحديد مؤسسة المعلن "
-                                 "(advertiser_org_id)")
+        raise HTTPException(400, "المعلن المكتب/الشركة/الشريك يتطلب تحديد مؤسسة المعلن — "
+                                 "اختر المعلن من القائمة ليُربط تلقائياً")
+    for field, val in (("حساب المعلن", p.advertiser_owner_id),
+                       ("مؤسسة المعلن", p.advertiser_org_id)):
+        if not val:
+            continue
+        try:
+            ref = oid(str(val))
+        except Exception:
+            raise HTTPException(400, f"{field} غير صحيح — اختر المعلن من قائمة المعلنين "
+                                     "بدلاً من كتابة الاسم")
+        if not await db.users.find_one({"_id": ref}) and not await db.orgs.find_one({"_id": ref}):
+            raise HTTPException(400, f"{field} غير موجود في النظام — اختر المعلن من القائمة")
 
 
 async def _ready_for_approval(ad: dict):
@@ -355,8 +408,16 @@ async def set_status(ad_id: str, payload: StatusIn, admin: dict = Depends(requir
     if payload.status == "active":
         if ad.get("status") not in ("pending_approval", "paused"):
             raise HTTPException(400, "يجب إرسال الإعلان للاعتماد قبل تنشيطه")
+        # Maker-Checker is required only when the CREATOR does not hold ads.approve
+        # (offices/advertisers). A manager who holds ads.approve may publish their own ad.
         if ad.get("created_by_id") == str(admin["_id"]) and ad.get("source") != "office":
-            raise HTTPException(403, "مبدأ الفصل بين المنشئ والمعتمد: يعتمد الإعلان مسؤول آخر")
+            from rbac import has_perm
+            try:
+                creator = await db.users.find_one({"_id": oid(str(ad.get("created_by_id")))})
+            except Exception:
+                creator = None
+            if not (creator and await has_perm(creator, "ads.approve")):
+                raise HTTPException(403, "مبدأ الفصل بين المنشئ والمعتمد: يعتمد الإعلان مسؤول آخر")
     async with _ad_lock(ad, admin) as locked:
         ad = locked
         upd = await _apply_status(ad, payload.status, admin, payload.reason.strip())
