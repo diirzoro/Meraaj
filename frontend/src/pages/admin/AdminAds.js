@@ -34,6 +34,7 @@ export default function AdminAds() {
   const [busy, setBusy] = useState(false);
   const [pv, setPv] = useState("banner");
   const [pkgs, setPkgs] = useState([]);
+  const [quickPkg, setQuickPkg] = useState(null);
   const { can } = useAuth();
 
   const orgRequired = (cat?.org_required_types || ["office", "company", "partner"])
@@ -102,6 +103,29 @@ export default function AdminAds() {
       }
       setOpen(false); setForm(EMPTY); setEditId(null);
     }, publish ? "تم نشر الإعلان وأصبح ظاهراً" : (editId ? "تم التحديث" : "تم الإنشاء كمسودة"));
+  };
+
+  const saveQuickPackage = () => {
+    const q = quickPkg;
+    if (!q.name || q.name.trim().length < 2) return toast.error("اكتب اسم الباقة");
+    if (q.paid && !(Number(q.price) > 0)) return toast.error("الباقة المدفوعة تحتاج سعراً أكبر من صفر");
+    if (!q.reason || q.reason.trim().length < 3) return toast.error("اكتب سبب الإجراء");
+    setBusy(true);
+    api.post("/admin/ad-packages", {
+      name: q.name.trim(), kind: q.kind, paid: !!q.paid,
+      price: q.paid ? Number(q.price) : 0, currency: q.currency,
+      duration_days: Number(q.duration_days) || 30, max_placements: 3,
+      max_views: null, max_clicks: null, allowed_placements: [], allowed_audiences: ["all"],
+      priority: 10, for_account_type: "all", requires_verified_org: !!q.paid,
+      active: true, reason: q.reason.trim(),
+    }).then(async (r) => {
+      const newId = r.data.id;
+      const list = await api.get("/admin/ad-packages");
+      setPkgs((list.data || []).filter((p) => p.active && (p.kind === tab || p.kind === "both")));
+      setForm((f) => ({ ...f, package_id: newId }));   // ad data stays exactly as typed
+      setQuickPkg(null);
+      toast.success("تمت إضافة الباقة واختيارها لهذا الإعلان");
+    }).catch((e) => toast.error(apiError(e))).finally(() => setBusy(false));
   };
 
   const uploadImage = async (file) => {
@@ -315,25 +339,35 @@ export default function AdminAds() {
             <div className="sm:col-span-2">
               <AdvertiserPicker form={form} setForm={setForm} orgRequired={orgRequired} />
             </div>
-            <F label="الباقة الإعلانية (إلزامية قبل الإرسال للاعتماد)">
-              {pkgs.length === 0 ? (
-                <div className="text-[11px] text-[#B91C1C] bg-[#FEF2F2] rounded-lg px-3 py-2"
-                  data-testid="ad-no-packages">
-                  لا توجد باقات إعلانية نشطة. أضف أو فعّل باقة قبل نشر الإعلان — من تبويب «الباقات الإعلانية».
-                </div>
-              ) : (
-                <select className="h-11 sm:h-9 w-full rounded-md border border-input px-2 text-xs bg-white"
+            <div className="sm:col-span-2">
+              <Label className="text-[11px]">الباقة الإعلانية (إلزامية قبل الإرسال للاعتماد)</Label>
+              <div className="flex gap-2 items-start">
+                <select className="h-11 sm:h-10 flex-1 rounded-md border border-input px-2 text-xs bg-white"
                   data-testid="ad-package-select" value={form.package_id || ""}
                   onChange={(e) => setForm({ ...form, package_id: e.target.value })}>
-                  <option value="">— اختر الباقة —</option>
+                  <option value="">{pkgs.length === 0 ? "— لا توجد باقات نشطة —" : "— اختر الباقة —"}</option>
                   {pkgs.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {p.name} — {p.paid ? `${p.price} ${p.currency}` : "مجانية"} / {p.duration_days} يوم
+                      {`${p.name} — ${p.paid ? `${p.price} ${p.currency === "SAR" ? "ر.س" : "$"}` : "مجانية"} — ${p.duration_days} يوم`}
                     </option>
                   ))}
                 </select>
+                {can("ads.manage") && (
+                  <Button type="button" size="sm" variant="outline" className="h-11 sm:h-10 whitespace-nowrap"
+                    data-testid="ad-add-package-btn"
+                    onClick={() => setQuickPkg({ name: "", kind: tab, paid: true, price: "",
+                      currency: "SAR", duration_days: 30, reason: "" })}>
+                    + إضافة باقة
+                  </Button>
+                )}
+              </div>
+              {pkgs.length === 0 && (
+                <div className="mt-1 text-[11px] text-[#B91C1C] bg-[#FEF2F2] rounded-lg px-3 py-2"
+                  data-testid="ad-no-packages">
+                  لا توجد باقات إعلانية نشطة لهذا النوع. أضف باقة من زر «+ إضافة باقة» أو فعّل باقة من تبويب «الباقات الإعلانية».
+                </div>
               )}
-            </F>
+            </div>
             <F label="مدفوع أم مجاني">
               <select className="h-9 w-full rounded-md border border-input px-2 text-xs bg-white" data-testid="ad-paid"
                 value={form.paid ? "1" : "0"} onChange={(e) => setForm({ ...form, paid: e.target.value === "1" })}>
@@ -453,6 +487,61 @@ export default function AdminAds() {
               </Button>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!quickPkg} onOpenChange={(v) => !v && setQuickPkg(null)}>
+        <DialogContent className="max-w-md" dir="rtl" data-testid="quick-package-dialog">
+          <DialogHeader><DialogTitle className="text-right text-sm">باقة إعلانية جديدة</DialogTitle></DialogHeader>
+          {quickPkg && (
+            <div className="space-y-3 text-xs">
+              <div className="text-[11px] text-muted-foreground">
+                بيانات الإعلان التي كتبتها محفوظة — ستعود إليها بعد الحفظ وستُختار الباقة تلقائياً.
+              </div>
+              <F label="اسم الباقة"><Input className="h-10 text-xs" data-testid="quick-pkg-name"
+                value={quickPkg.name} onChange={(e) => setQuickPkg({ ...quickPkg, name: e.target.value })} /></F>
+              <div className="grid grid-cols-2 gap-3">
+                <F label="النوع">
+                  <select className="h-10 w-full rounded-md border border-input px-2 text-xs bg-white"
+                    data-testid="quick-pkg-kind" value={quickPkg.kind}
+                    onChange={(e) => setQuickPkg({ ...quickPkg, kind: e.target.value })}>
+                    <option value="ad">إعلان</option><option value="promotion">عرض ترويجي</option>
+                    <option value="both">كليهما</option>
+                  </select>
+                </F>
+                <F label="مدفوعة أم مجانية">
+                  <select className="h-10 w-full rounded-md border border-input px-2 text-xs bg-white"
+                    data-testid="quick-pkg-paid" value={quickPkg.paid ? "1" : "0"}
+                    onChange={(e) => setQuickPkg({ ...quickPkg, paid: e.target.value === "1" })}>
+                    <option value="1">مدفوعة</option><option value="0">مجانية</option>
+                  </select>
+                </F>
+                <F label="السعر">
+                  <Input type="number" className="h-10 text-xs" data-testid="quick-pkg-price"
+                    disabled={!quickPkg.paid} value={quickPkg.price}
+                    onChange={(e) => setQuickPkg({ ...quickPkg, price: e.target.value })} />
+                </F>
+                <F label="العملة">
+                  <select className="h-10 w-full rounded-md border border-input px-2 text-xs bg-white"
+                    data-testid="quick-pkg-currency" value={quickPkg.currency}
+                    onChange={(e) => setQuickPkg({ ...quickPkg, currency: e.target.value })}>
+                    <option value="SAR">ريال سعودي</option><option value="USD">دولار أمريكي</option>
+                  </select>
+                </F>
+                <F label="المدة (أيام)">
+                  <Input type="number" className="h-10 text-xs" data-testid="quick-pkg-duration"
+                    value={quickPkg.duration_days}
+                    onChange={(e) => setQuickPkg({ ...quickPkg, duration_days: e.target.value })} />
+                </F>
+                <F label="سبب الإجراء">
+                  <Input className="h-10 text-xs" data-testid="quick-pkg-reason" value={quickPkg.reason}
+                    onChange={(e) => setQuickPkg({ ...quickPkg, reason: e.target.value })} />
+                </F>
+              </div>
+              <Button className="w-full h-11 bg-[#0A2540] hover:bg-[#061A2E]" data-testid="quick-pkg-save"
+                disabled={busy} onClick={saveQuickPackage}>{busy ? "جارٍ الحفظ..." : "حفظ الباقة واختيارها"}</Button>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
