@@ -408,8 +408,16 @@ async def set_status(ad_id: str, payload: StatusIn, admin: dict = Depends(requir
     if payload.status == "active":
         if ad.get("status") not in ("pending_approval", "paused"):
             raise HTTPException(400, "يجب إرسال الإعلان للاعتماد قبل تنشيطه")
+        # Maker-Checker is required only when the CREATOR does not hold ads.approve
+        # (offices/advertisers). A manager who holds ads.approve may publish their own ad.
         if ad.get("created_by_id") == str(admin["_id"]) and ad.get("source") != "office":
-            raise HTTPException(403, "مبدأ الفصل بين المنشئ والمعتمد: يعتمد الإعلان مسؤول آخر")
+            from rbac import has_perm
+            try:
+                creator = await db.users.find_one({"_id": oid(str(ad.get("created_by_id")))})
+            except Exception:
+                creator = None
+            if not (creator and await has_perm(creator, "ads.approve")):
+                raise HTTPException(403, "مبدأ الفصل بين المنشئ والمعتمد: يعتمد الإعلان مسؤول آخر")
     async with _ad_lock(ad, admin) as locked:
         ad = locked
         upd = await _apply_status(ad, payload.status, admin, payload.reason.strip())
