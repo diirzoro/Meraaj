@@ -15,13 +15,14 @@ env:
   BACKEND_PORT: ${{ vars.TEST_MERAAJ_BACKEND_PORT || '8010' }}
   FRONTEND_PORT: ${{ vars.TEST_MERAAJ_FRONTEND_PORT || '8014' }}
   BACKEND_ENV_FILE: ${{ vars.TEST_MERAAJ_BACKEND_ENV_FILE || '/root/meraaj_backend_env_test' }}
+  LIVE_BACKEND_ENV_FILE: ${{ vars.LIVE_MERAAJ_BACKEND_ENV_FILE || '/root/meraaj_backend_env_live' }}
   NETWORK: ${{ vars.TEST_MERAAJ_NETWORK || 'meraaj_fresh_test_net' }}
 
 jobs:
   deploy-test:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-
+    # Job-level guard: ONLY a real push to main (i.e. after an actual merge) may deploy Test
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     steps:
       - name: Guard - only push to main may deploy Test
         run: |
@@ -46,33 +47,31 @@ jobs:
       - name: Build backend & frontend images
         run: |
           SHORT_SHA="${{ steps.sha.outputs.short_sha }}"
-          docker build -f Dockerfile.backend -t "meraaj_backend:test-${SHORT_SHA}" .
+          docker build -f Dockerfile.backend  -t "meraaj_backend:test-${SHORT_SHA}"  .
           docker build -f Dockerfile.frontend -t "meraaj_frontend:test-${SHORT_SHA}" .
 
       - name: Export images as gzip tarballs
         run: |
           SHORT_SHA="${{ steps.sha.outputs.short_sha }}"
-          docker save "meraaj_backend:test-${SHORT_SHA}" | gzip > meraaj_backend_test.tar.gz
+          docker save "meraaj_backend:test-${SHORT_SHA}"  | gzip > meraaj_backend_test.tar.gz
           docker save "meraaj_frontend:test-${SHORT_SHA}" | gzip > meraaj_frontend_test.tar.gz
 
-      - name: Setup SSH key
+      - name: Setup SSH key (native, no third-party actions)
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.TEST_SERVER_SSH_KEY_B64 }}" | base64 -d > ~/.ssh/meraaj_test_key
           chmod 600 ~/.ssh/meraaj_test_key
           ssh-keyscan -H "${{ vars.TEST_SERVER_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
 
-      - name: Copy images to test server
+      - name: Copy images to test server (SCP)
         run: |
           scp -i ~/.ssh/meraaj_test_key -o StrictHostKeyChecking=no \
-            meraaj_backend_test.tar.gz \
-            meraaj_frontend_test.tar.gz \
+            meraaj_backend_test.tar.gz meraaj_frontend_test.tar.gz \
             "${{ vars.TEST_SERVER_USER }}@${{ vars.TEST_SERVER_HOST }}:/tmp/"
 
-      - name: Deploy on test server
+      - name: Deploy on test server (SSH)
         run: |
           SHORT_SHA="${{ steps.sha.outputs.short_sha }}"
-
           ssh -i ~/.ssh/meraaj_test_key -o StrictHostKeyChecking=no \
             "${{ vars.TEST_SERVER_USER }}@${{ vars.TEST_SERVER_HOST }}" \
             "BACKEND_CONTAINER='${{ env.BACKEND_CONTAINER }}' \
@@ -80,25 +79,75 @@ jobs:
              BACKEND_PORT='${{ env.BACKEND_PORT }}' \
              FRONTEND_PORT='${{ env.FRONTEND_PORT }}' \
              BACKEND_ENV_FILE='${{ env.BACKEND_ENV_FILE }}' \
+             LIVE_BACKEND_ENV_FILE='${{ env.LIVE_BACKEND_ENV_FILE }}' \
              NETWORK='${{ env.NETWORK }}' \
              SHORT_SHA='${SHORT_SHA}' bash -s" <<'REMOTE'
-
           set -euo pipefail
 
+          # ===================================================================
+          # DB SAFETY GUARD (fail-closed) - runs BEFORE any container is removed,
+          # created or started. Values are read from the ENV FILES ACTUALLY USED
+          # on this server, never from a file name. Nothing secret is printed:
+          # only a short sha256 fingerprint of the sanitised Mongo target.
+          # ===================================================================
+          echo "--- DB safety guard: Test/Live isolation ---"
+
+          env_value() {   # $1 = env file, $2 = key   (prints ONLY the value, never the file)
+            awk -F'=' -v k="$2" '
+              $1 == k { sub(/^[^=]*=/, ""); gsub(/\r/, ""); gsub(/^["'"'"']|["'"'"']$/, ""); print; exit }
+            ' "$1"
+          }
+
+          db_fingerprint() {  # $1 = MONGO_URL, $2 = DB_NAME  -> credential-free short hash
+            printf '%s|%s' \
+              "$(printf '%s' "$1" | sed -E 's#^(mongodb(\+srv)?://)[^@]*@#\1#')" "$2" \
+              | sha256sum | cut -c1-12
+          }
+
+          test -r "$BACKEND_ENV_FILE"      || { echo "GUARD FAIL: Test backend env file unreadable"; exit 1; }
+          test -r "$LIVE_BACKEND_ENV_FILE" || { echo "GUARD FAIL: Live backend env file unreadable"; exit 1; }
+
+          TEST_DB_NAME="$(env_value "$BACKEND_ENV_FILE" DB_NAME || true)"
+          LIVE_DB_NAME="$(env_value "$LIVE_BACKEND_ENV_FILE" DB_NAME || true)"
+          TEST_MONGO_URL="$(env_value "$BACKEND_ENV_FILE" MONGO_URL || true)"
+          LIVE_MONGO_URL="$(env_value "$LIVE_BACKEND_ENV_FILE" MONGO_URL || true)"
+
+          [ -n "$TEST_DB_NAME" ]   || { echo "GUARD FAIL: DB_NAME missing in Test env"; exit 1; }
+          [ -n "$LIVE_DB_NAME" ]   || { echo "GUARD FAIL: DB_NAME missing in Live env"; exit 1; }
+          [ -n "$TEST_MONGO_URL" ] || { echo "GUARD FAIL: MONGO_URL missing in Test env"; exit 1; }
+          [ -n "$LIVE_MONGO_URL" ] || { echo "GUARD FAIL: MONGO_URL missing in Live env"; exit 1; }
+
+          if [ "$TEST_DB_NAME" != "meraaj_test" ]; then
+            echo "GUARD FAIL: Test DB_NAME must be exactly 'meraaj_test' (got: '$TEST_DB_NAME')"; exit 1
+          fi
+          if [ "$LIVE_DB_NAME" != "meraaj" ]; then
+            echo "GUARD FAIL: Live DB_NAME must be exactly 'meraaj' (got: '$LIVE_DB_NAME')"; exit 1
+          fi
+
+          TEST_FP="$(db_fingerprint "$TEST_MONGO_URL" "$TEST_DB_NAME")"
+          LIVE_FP="$(db_fingerprint "$LIVE_MONGO_URL" "$LIVE_DB_NAME")"
+          echo "  test db target fingerprint: $TEST_FP"
+          echo "  live db target fingerprint: $LIVE_FP"
+          if [ "$TEST_FP" = "$LIVE_FP" ]; then
+            echo "GUARD FAIL: Test and Live point at the SAME Mongo target. Deployment stopped."; exit 1
+          fi
+          echo "DB safety guard OK (test=meraaj_test, live=meraaj, separate targets)."
+
+          # --- Load the freshly built images ---
           gunzip -f /tmp/meraaj_backend_test.tar.gz
           gunzip -f /tmp/meraaj_frontend_test.tar.gz
-
           docker load -i /tmp/meraaj_backend_test.tar
           docker load -i /tmp/meraaj_frontend_test.tar
 
-          docker network inspect "$NETWORK" >/dev/null 2>&1 || \
-            docker network create "$NETWORK"
+          # --- Ensure ONLY the test network exists (never touch live networks) ---
+          docker network inspect "$NETWORK" >/dev/null 2>&1 || docker network create "$NETWORK"
 
-          docker rm -f "$BACKEND_CONTAINER" >/dev/null 2>&1 || true
+          # --- Remove ONLY the old test containers (by fixed name) ---
+          docker rm -f "$BACKEND_CONTAINER"  >/dev/null 2>&1 || true
           docker rm -f "$FRONTEND_CONTAINER" >/dev/null 2>&1 || true
 
-          docker run -d \
-            --name "$BACKEND_CONTAINER" \
+          # --- Backend: same env file, 8010:8000, test network, alias backend ---
+          docker run -d --name "$BACKEND_CONTAINER" \
             --restart unless-stopped \
             --env-file "$BACKEND_ENV_FILE" \
             --network "$NETWORK" \
@@ -106,43 +155,56 @@ jobs:
             -p "${BACKEND_PORT}:8000" \
             "meraaj_backend:test-${SHORT_SHA}"
 
-          docker run -d \
-            --name "$FRONTEND_CONTAINER" \
+          # --- Frontend: 8014:80, test network ---
+          docker run -d --name "$FRONTEND_CONTAINER" \
             --restart unless-stopped \
             --network "$NETWORK" \
             -p "${FRONTEND_PORT}:80" \
             "meraaj_frontend:test-${SHORT_SHA}"
 
+          # --- Health checks ---
           sleep 8
 
-          BE_CODE="$(curl -s -o /dev/null -w '%{http_code}' \
-            "http://127.0.0.1:${BACKEND_PORT}/docs" || echo 000)"
-
-          echo "Backend health code: $BE_CODE"
-
+          # Backend: service is considered UP on 200 OR 404 (real endpoint, not a hard 404 failure)
+          BE_CODE="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${BACKEND_PORT}/docs" || echo 000)"
+          if [ "$BE_CODE" = "000" ]; then
+            BE_CODE="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${BACKEND_PORT}/openapi.json" || echo 000)"
+          fi
+          echo "backend health code: $BE_CODE"
           case "$BE_CODE" in
-            200|404)
-              echo "Backend OK"
-              ;;
-            *)
-              docker logs --tail 80 "$BACKEND_CONTAINER" || true
-              exit 1
-              ;;
+            200|404) echo "backend OK ($BE_CODE)";;
+            *) echo "backend FAILED ($BE_CODE)"; docker logs --tail 80 "$BACKEND_CONTAINER" || true; exit 1;;
           esac
 
-          FE_CODE="$(curl -s -o /dev/null -w '%{http_code}' \
-            "http://127.0.0.1:${FRONTEND_PORT}/" || echo 000)"
-
-          echo "Frontend health code: $FE_CODE"
-
+          # Frontend: must be HTTP 200 on 127.0.0.1:8014
+          FE_CODE="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${FRONTEND_PORT}/" || echo 000)"
+          echo "frontend health code: $FE_CODE"
           if [ "$FE_CODE" != "200" ]; then
-            docker logs --tail 80 "$FRONTEND_CONTAINER" || true
-            exit 1
+            echo "frontend FAILED ($FE_CODE)"; docker logs --tail 80 "$FRONTEND_CONTAINER" || true; exit 1
           fi
 
-          echo "Meraaj Test deployment completed successfully: test-${SHORT_SHA}"
+          # Public: must be HTTP 200 on the Test domain (end-to-end DNS/nginx/SSL), with retry
+          echo "--- public health check: https://meraaj-test.targetmediagrp.com/ ---"
+          PUB_CODE=000
+          for i in $(seq 1 20); do
+            PUB_CODE="$(curl -s -o /dev/null -w '%{http_code}' https://meraaj-test.targetmediagrp.com/ || echo 000)"
+            if [ "$PUB_CODE" = "200" ]; then echo "public OK (200, attempt $i)"; break; fi
+            echo "... public -> $PUB_CODE (attempt $i/20)"; sleep 2
+          done
+          if [ "$PUB_CODE" != "200" ]; then
+            echo "public FAILED ($PUB_CODE)"; exit 1
+          fi
 
-          rm -f /tmp/meraaj_backend_test.tar
-          rm -f /tmp/meraaj_frontend_test.tar
+          # --- Cleanup transferred tarballs ---
+          rm -f /tmp/meraaj_backend_test.tar /tmp/meraaj_frontend_test.tar
 
+          # --- Prune old test images, keep ONLY the current SHORT_SHA ---
+          for img in meraaj_backend meraaj_frontend; do
+            docker images "$img" --format '{{.Repository}}:{{.Tag}}' \
+              | grep -E "^${img}:test-" \
+              | grep -v "^${img}:test-${SHORT_SHA}$" \
+              | xargs -r docker rmi -f || true
+          done
+
+          echo "Meraaj test deploy finished: test-${SHORT_SHA}"
           REMOTE

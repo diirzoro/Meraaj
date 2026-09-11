@@ -4,6 +4,7 @@ import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { PageHeader } from "@/components/Layout";
 import { AdSlot } from "@/components/AdSlot";
+import { AdTicker, AdEntryPopup } from "@/components/AdTicker";
 import { money } from "@/lib/format";
 import StatusBadge from "@/components/StatusBadge";
 import { Wallet, Clock, CheckCircle2, Store, Package, ShoppingBag, ArrowLeft } from "lucide-react";
@@ -59,6 +60,8 @@ export default function Dashboard() {
       <PageHeader title={`أهلاً، ${user?.office_name}`}
         subtitle={isIndividual ? "احجز رحلتك بأمان وتابع حجوزاتك" : "نظرة عامة على محفظتك ونشاطك في السوق"} />
 
+      <AdTicker placement="dashboard" limit={8} className="mb-4" />
+      <AdEntryPopup placement="dashboard" policy="session" />
       <AdSlot placement="dashboard" limit={2} variant="card" className="mb-6" />
 
       <div className="grid md:grid-cols-2 gap-5 mb-8">
