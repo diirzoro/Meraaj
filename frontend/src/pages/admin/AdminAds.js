@@ -47,7 +47,13 @@ export default function AdminAds() {
   }, [tab]);
 
   useEffect(() => { api.get("/admin/ads/catalog").then((r) => setCat(r.data)); }, []);
-  useEffect(() => { api.get("/admin/ad-packages").then((r) => setPkgs(r.data.filter((p) => p.active))).catch(() => setPkgs([])); }, []);
+  const loadPkgs = useCallback(() => {
+    api.get("/admin/ad-packages")
+      .then((r) => setPkgs((r.data || []).filter((p) => p.active
+        && (p.kind === tab || p.kind === "both"))))
+      .catch(() => setPkgs([]));
+  }, [tab]);
+  useEffect(() => { loadPkgs(); }, [loadPkgs]);
   useEffect(() => { load(); }, [load]);
 
   const act = async (fn, ok) => {
@@ -135,6 +141,22 @@ export default function AdminAds() {
       decision === "accept" ? "تم اعتماد الإلغاء" : "تم رفض طلب الإلغاء");
   };
 
+  const directCancel = (a) => {
+    const reason = window.prompt(`إلغاء «${a.title}» مباشرة — اكتب سبب الإلغاء (إلزامي):`);
+    if (!reason || reason.trim().length < 3) return;
+    if (!window.confirm("تأكيد الإلغاء المباشر؟ سيتوقف ظهور الإعلان فوراً، ويُعاد المبلغ المحجوز إن لم يكن قد خُصم نهائياً.")) return;
+    act(() => api.post(`/admin/ads/${a.id}/cancel`, { status: "cancelled", reason: reason.trim() }),
+      "تم إلغاء الإعلان مباشرة");
+  };
+
+  const removeAd = (a) => {
+    if (!window.confirm(`حذف «${a.title}» نهائياً؟ الحذف متاح فقط للمسودة التي لا أثر مالي لها — وإلا استخدم الإلغاء.`)) return;
+    const reason = window.prompt("سبب الحذف (يُسجَّل في التدقيق):");
+    if (!reason || reason.trim().length < 3) return;
+    act(() => api.delete(`/admin/ads/${a.id}?reason=${encodeURIComponent(reason.trim())}`),
+      "تم حذف المسودة");
+  };
+
   const togglePlacement = (p) => setForm((f) => ({
     ...f, placement_group: null,
     placements: f.placements.includes(p)
@@ -161,7 +183,7 @@ export default function AdminAds() {
         ))}
         {tab !== "packages" && (
         <Button size="sm" className="bg-[#D4AF37] text-[#0A2540] hover:bg-[#c39f2f] mr-auto"
-          data-testid="ads-new-btn" onClick={() => { setForm(EMPTY); setEditId(null); setOpen(true); }}>
+          data-testid="ads-new-btn" onClick={() => { setForm(EMPTY); setEditId(null); loadPkgs(); setOpen(true); }}>
           <Plus className="w-4 h-4" /> {tab === "ad" ? "إعلان جديد" : "عرض جديد"}
         </Button>
         )}
@@ -208,7 +230,7 @@ export default function AdminAds() {
                     onClick={() => { setForm({ ...EMPTY, ...a, reason: "",
                       advertiser_label: a.advertiser_name || "",
                       advertiser_org_label: a.advertiser_org_id ? (a.advertiser_name || "") : "" });
-                      setEditId(a.id); setOpen(true); }}>تعديل</button>
+                      setEditId(a.id); loadPkgs(); setOpen(true); }}>تعديل</button>
                   {a.status === "draft" && (
                     <button className="text-[#A16207] underline text-[10px]" data-testid={`ad-submit-${a.id}`}
                       onClick={() => setStatus(a.id, "pending_approval", "سبب إرسال الإعلان للاعتماد؟")}>إرسال للاعتماد</button>
@@ -232,6 +254,14 @@ export default function AdminAds() {
                       <button className="text-[#B91C1C] underline text-[10px]" data-testid={`ad-cancel-reject-${a.id}`}
                         onClick={() => decideCancel(a.id, "reject")}>رفض الإلغاء</button>
                     </>
+                  )}
+                  {can("ads.cancel") && ["active", "paused", "pending_approval"].includes(a.status) && (
+                    <button className="text-[#B91C1C] underline text-[10px]" data-testid={`ad-direct-cancel-${a.id}`}
+                      onClick={() => directCancel(a)}>إلغاء مباشرة</button>
+                  )}
+                  {can("ads.manage") && ["draft", "rejected"].includes(a.status) && (
+                    <button className="text-[#B91C1C] underline text-[10px]" data-testid={`ad-delete-${a.id}`}
+                      onClick={() => removeAd(a)}>حذف</button>
                   )}
                   <button className="text-muted-foreground underline text-[10px]" data-testid={`ad-detail-${a.id}`}
                     onClick={async () => {

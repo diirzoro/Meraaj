@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import api, { apiError } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 import { money } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +22,7 @@ export default function AdminAdPackages() {
   const [editId, setEditId] = useState(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const { can } = useAuth();
 
   const load = useCallback(() => {
     api.get("/admin/ad-packages").then((r) => setItems(r.data)).catch((e) => toast.error(apiError(e)));
@@ -62,13 +64,23 @@ export default function AdminAdPackages() {
       p.active ? "تم تعطيل الباقة" : "تم تفعيل الباقة");
   };
 
+  const remove = (p) => {
+    if (!window.confirm(`حذف باقة «${p.name}» نهائياً؟ الحذف متاح فقط للباقة التي لم تُستخدم في أي إعلان أو حركة مالية.`)) return;
+    const reason = window.prompt("سبب الحذف (يُسجَّل في التدقيق):");
+    if (!reason || reason.trim().length < 3) return;
+    act(() => api.delete(`/admin/ad-packages/${p.id}?reason=${encodeURIComponent(reason.trim())}`),
+      "تم حذف الباقة");
+  };
+
   return (
     <>
       <div className="flex justify-end mb-3">
+        {can("ads.manage") && (
         <Button size="sm" className="bg-[#D4AF37] text-[#0A2540] hover:bg-[#c39f2f]" data-testid="pkg-new-btn"
           onClick={() => { setForm(EMPTY); setEditId(null); setOpen(true); }}>
           <Plus className="w-4 h-4" /> باقة إعلانية جديدة
         </Button>
+        )}
       </div>
 
       <div className="bg-white rounded-2xl border card-shadow table-scroll" data-testid="pkg-table">
@@ -101,10 +113,18 @@ export default function AdminAdPackages() {
                   </span>
                 </td>
                 <td className="px-3 py-2.5 whitespace-nowrap space-x-2 space-x-reverse">
+                  {can("ads.manage") ? (
+                    <>
                   <button className="text-[#0A2540] underline text-[10px]" data-testid={`pkg-edit-${p.id}`}
                     onClick={() => { setForm({ ...EMPTY, ...p, max_views: p.max_views ?? "", max_clicks: p.max_clicks ?? "", reason: "" }); setEditId(p.id); setOpen(true); }}>تعديل</button>
                   <button className="text-[#A16207] underline text-[10px]" data-testid={`pkg-toggle-${p.id}`}
                     onClick={() => toggle(p)}>{p.active ? "تعطيل" : "تفعيل"}</button>
+                  <button className="text-[#B91C1C] underline text-[10px]" data-testid={`pkg-delete-${p.id}`}
+                    onClick={() => remove(p)}>حذف</button>
+                    </>
+                  ) : (
+                    <span className="text-[10px] text-muted-foreground">للعرض فقط</span>
+                  )}
                 </td>
               </tr>
             ))}
