@@ -558,17 +558,23 @@ async def public_ads(placement: str = Query("homepage"), limit: int = 6,
     for d in docs:
         if not _audience_matches(d, user):
             continue
-        if await _owner_excluded(d, user):
-            continue
+        # The advertiser DOES see its own live campaign (so it can verify placement), but the
+        # payload is flagged: the UI shows an "إعلانك" badge and the backend refuses to count
+        # any view/click coming from the owner, so CTR and billing stay untouched.
+        is_owner = await _owner_excluded(d, user)
         out.append({"id": str(d["_id"]), "kind": d.get("kind"), "title": d.get("title"),
                     "description_ar": d.get("description_ar"),
-                    "image_url": d.get("image_url"), "target_url": d.get("target_url"),
+                    "image_url": d.get("image_url"),
+                    "target_url": None if is_owner else d.get("target_url"),
                     "cta_label": d.get("cta_label") or "التفاصيل",
                     "advertiser_name": d.get("advertiser_name"),
                     "end_date": d.get("end_date"),
                     "kind_label": KINDS.get(d.get("kind"), "إعلان"),
                     "paid": bool(d.get("paid")),
-                    "linked_package_id": d.get("linked_package_id")})
+                    "is_owner": is_owner,
+                    "owner_note": ("هذا إعلانك — لا يمكنك التفاعل مع هذا الإعلان لأنك صاحب الإعلان."
+                                   if is_owner else None),
+                    "linked_package_id": None if is_owner else d.get("linked_package_id")})
         if len(out) >= min(limit, 20):
             break
     return {"items": out, "placement": placement,
@@ -576,11 +582,15 @@ async def public_ads(placement: str = Query("homepage"), limit: int = 6,
 
 
 @router.post("/ads/{ad_id}/view")
-async def count_view(ad_id: str, source: str = "public"):
+async def count_view(ad_id: str, source: str = "public",
+                     user: Optional[dict] = Depends(get_optional_user)):
     """Only public/user-facing impressions are counted (server-authoritative), and the
     campaign stops itself when the package view/click limit is reached."""
     if source != "public":
         return {"ok": True, "counted": False, "reason": "عرض إداري لا يُحتسب"}
+    target = await db.advertisements.find_one({"_id": oid(ad_id)})
+    if target and await _owner_excluded(target, user):
+        return {"ok": True, "counted": False, "reason": "مشاهدة صاحب الإعلان لا تُحتسب"}
     ad = await db.advertisements.find_one_and_update(
         {"_id": oid(ad_id), "status": "active"}, {"$inc": {"views": 1}},
         return_document=True)
@@ -590,9 +600,14 @@ async def count_view(ad_id: str, source: str = "public"):
 
 
 @router.post("/ads/{ad_id}/click")
-async def count_click(ad_id: str, source: str = "public"):
+async def count_click(ad_id: str, source: str = "public",
+                      user: Optional[dict] = Depends(get_optional_user)):
     if source != "public":
         return {"ok": True, "counted": False, "reason": "نقرة إدارية لا تُحتسب"}
+    target = await db.advertisements.find_one({"_id": oid(ad_id)})
+    if target and await _owner_excluded(target, user):
+        return {"ok": True, "counted": False,
+                "reason": "هذا إعلانك — لا يمكنك التفاعل مع هذا الإعلان لأنك صاحب الإعلان."}
     ad = await db.advertisements.find_one_and_update(
         {"_id": oid(ad_id), "status": "active"}, {"$inc": {"clicks": 1}},
         return_document=True)
@@ -848,6 +863,47 @@ async def list_cancellations(admin: dict = Depends(require_admin)):
     docs = await db.advertisements.find({"status": "cancellation_requested"}) \
         .sort("updated_at", -1).to_list(200)
     return {"items": [_decorate(d) for d in serialize(docs)]}
+
+
+@router.post("/admin/ads/{ad_id}/publish")
+async def publish_now(ad_id: str, payload: StatusIn, admin: dict = Depends(require_admin)):
+    """One-step publish for a manager holding ads.approve. It does NOT bypass any safeguard:
+    the normal submit transition (package, verified org, balance check, single HOLD) runs first,
+    then the normal activation (single CAPTURE) — just without the extra UI round-trips."""
+    await _admin_ads_perm(admin, "ads.manage")
+    await _admin_ads_perm(admin, "ads.approve")
+    ad = await db.advertisements.find_one({"_id": oid(ad_id)})
+    if not ad:
+        raise HTTPException(404, "الإعلان غير موجود")
+    if ad.get("status") not in ("draft", "rejected", "pending_approval", "paused"):
+        raise HTTPException(400, "النشر المباشر متاح للمسودة أو المرفوض أو قيد الاعتماد أو الموقوف")
+    reason = payload.reason.strip()
+    async with _ad_lock(ad, admin) as locked:
+        ad = locked
+        before = ad.get("status")
+        if ad.get("status") in ("draft", "rejected"):
+            upd = await _apply_status(ad, "pending_approval", admin, reason)
+            await db.advertisements.update_one({"_id": ad["_id"]}, {"$set": upd})
+            await _audit(ad_id, "ad_pending_approval", admin, reason,
+                         before={"status": before}, after={"status": "pending_approval"})
+            ad = await db.advertisements.find_one({"_id": ad["_id"]})
+        upd = await _apply_status(ad, "active", admin, reason)
+        upd["approved_by"] = admin.get("email")
+        upd["approved_at"] = now_iso()
+        upd["published_directly"] = True
+        await db.advertisements.update_one({"_id": ad["_id"]}, {"$set": upd})
+        await _audit(ad_id, "ad_active", admin, f"نشر مباشر: {reason}",
+                     before={"status": ad.get("status")}, after={"status": "active"})
+    fresh = await db.advertisements.find_one({"_id": oid(ad_id)})
+    b = fresh.get("billing") or {}
+    await _notify_ad(fresh, "ad_approved", "تم اعتماد إعلانك ونشره",
+                     (f"تم نشر «{fresh.get('title')}».\n"
+                      f"الباقة: {b.get('package_name') or '—'}\n"
+                      f"قيمة الباقة: {_money_line(b)}"),
+                     meta={"amount": b.get("held"), "currency": b.get("currency"),
+                           "billing_state": b.get("state")})
+    return {"ok": True, "status": "active", "billing": b,
+            "ad": _decorate(serialize(fresh))}
 
 
 @router.post("/admin/ads/{ad_id}/cancellation")

@@ -194,7 +194,9 @@ export default function MyAds() {
           </div>
           <div className="space-y-2">
             {pkgs.items.length === 0 && (
-              <div className="text-[11px] text-[#A16207]" data-testid="myad-nopkg">لا توجد باقات مفعّلة لهذا النوع — راجع إدارة معراج</div>
+              <div className="text-[11px] text-[#B91C1C] bg-[#FEF2F2] rounded-lg px-3 py-2" data-testid="myad-nopkg">
+                لا توجد باقات إعلانية نشطة. أضف أو فعّل باقة قبل نشر الإعلان — راجع إدارة معراج.
+              </div>
             )}
             {pkgs.items.map((p) => {
               const ok = affordable(p);

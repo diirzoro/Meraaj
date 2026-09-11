@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "@/lib/api";
 import { Megaphone, X, ArrowLeft, Pause, Play } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 
@@ -53,6 +54,10 @@ const AdDetails = ({ ad, onClose }) => {
   const navigate = useNavigate();
   if (!ad) return null;
   const go = () => {
+    if (ad.is_owner) {
+      toast.info(ad.owner_note || "هذا إعلانك — لا يمكنك التفاعل مع هذا الإعلان لأنك صاحب الإعلان.");
+      return;
+    }
     api.post(`/ads/${ad.id}/click?source=public`).catch(() => {});
     onClose();
     if (ad.target_url) window.open(ad.target_url, "_blank", "noopener");
@@ -69,6 +74,10 @@ const AdDetails = ({ ad, onClose }) => {
             <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#D4AF37] text-[#0A2540]">
               {ad.kind_label || "إعلان"}
             </span>
+            {ad.is_owner && (
+              <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-white text-[#0A2540] border border-[#D4AF37]"
+                data-testid="ad-details-owner-badge">إعلانك</span>
+            )}
             <span className="text-[10px] text-muted-foreground">{ad.advertiser_name}</span>
             {ad.end_date && (
               <span className="text-[10px] text-muted-foreground">ينتهي {ad.end_date}</span>
@@ -80,11 +89,15 @@ const AdDetails = ({ ad, onClose }) => {
           )}
           <div className="flex gap-2 pt-1">
             {(ad.target_url || ad.linked_package_id) && (
-              <Button className="flex-1 bg-[#0A2540] hover:bg-[#061A2E]" data-testid="ad-details-cta" onClick={go}>
+              <Button className="flex-1 h-11 bg-[#0A2540] hover:bg-[#061A2E]" data-testid="ad-details-cta" onClick={go}>
                 {ad.cta_label || "التفاصيل"} <ArrowLeft className="w-4 h-4" />
               </Button>
             )}
-            <Button variant="outline" className="flex-1" data-testid="ad-details-close" onClick={onClose}>
+            {ad.is_owner && (
+              <Button className="flex-1 h-11 bg-[#0A2540]/10 text-[#0A2540] hover:bg-[#0A2540]/20"
+                data-testid="ad-details-owner-blocked" onClick={go}>هذا إعلانك</Button>
+            )}
+            <Button variant="outline" className="flex-1 h-11" data-testid="ad-details-close" onClick={onClose}>
               إغلاق
             </Button>
           </div>
@@ -109,7 +122,6 @@ export const AdTicker = ({ placement = "dashboard", limit = 8, className = "" })
   }, [ads]);
 
   const openAd = useCallback((a) => { setPaused(true); setOpen(a); }, []);
-
   if (!ads.length || hidden) return null;
   const loop = [...ads, ...ads];   // duplicated once for a seamless RTL loop
 

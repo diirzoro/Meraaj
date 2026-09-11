@@ -134,3 +134,34 @@ body.cap-native [contenteditable="true"] {
 @media (prefers-reduced-motion: reduce) {
     .ad-ticker-track { animation: none; }
 }
+
+/* --- Touch & small-screen ergonomics (no redesign, sizing only) --- */
+@media (hover: none) and (pointer: coarse) {
+    /* Comfortable finger targets for the compact admin/table actions */
+    button, [role="button"], a.btn, select, summary {
+        min-height: 40px;
+    }
+    table button, table a, .touch-inline {
+        min-height: 32px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        display: inline-block;
+    }
+    /* Nothing important may depend on hover only */
+    .group:hover .group-hover\:opacity-100 { opacity: 1; }
+    input, select, textarea { font-size: 16px; }   /* stops iOS zoom-on-focus */
+}
+
+/* Dialogs must always stay inside the viewport and scroll internally on phones */
+@media (max-width: 640px) {
+    [role="dialog"] {
+        max-width: calc(100vw - 1.5rem) !important;
+        max-height: 88vh !important;
+        overflow-y: auto;
+    }
+}
+
+/* Wide tables: keep a visible scroll affordance on touch devices */
+.table-scroll { scrollbar-width: thin; }
+.table-scroll::-webkit-scrollbar { height: 6px; }
+.table-scroll::-webkit-scrollbar-thumb { background: #C9D2DC; border-radius: 999px; }
