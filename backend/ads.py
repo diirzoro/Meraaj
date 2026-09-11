@@ -857,6 +857,30 @@ class CancelDecisionIn(BaseModel):
     reason: str = Field(min_length=3)
 
 
+@router.get("/admin/ads-revenue")
+async def ads_revenue(admin: dict = Depends(require_admin)):
+    """Phase 1 reporting: ads/promotions revenue read straight out of `platform_revenue`
+    (the same collection the platform-revenue figures already use)."""
+    await _admin_ads_perm(admin, "ads.view")
+    rows = await db.platform_revenue.aggregate([
+        {"$match": {"source": "ads"}},
+        {"$group": {"_id": {"kind": "$meta.kind", "currency": "$currency"},
+                    "total": {"$sum": "$amount"}, "count": {"$sum": 1}}},
+    ]).to_list(50)
+    out = {"ads": {}, "promotions": {}, "all": {}}
+    for r in rows:
+        kind = (r["_id"].get("kind") or "ad")
+        ccy = r["_id"].get("currency") or "SAR"
+        bucket = "promotions" if kind == "promotion" else "ads"
+        out[bucket][ccy] = round(out[bucket].get(ccy, 0) + r["total"], 2)
+        out["all"][ccy] = round(out["all"].get(ccy, 0) + r["total"], 2)
+    latest = await db.platform_revenue.find({"source": "ads"}) \
+        .sort("created_at", -1).to_list(20)
+    return {"totals": out, "items": serialize(latest),
+            "labels": {"ads": "إيرادات الإعلانات", "promotions": "إيرادات العروض الترويجية",
+                       "all": "الإجمالي"}}
+
+
 @router.get("/admin/ads-cancellations")
 async def list_cancellations(admin: dict = Depends(require_admin)):
     await _admin_ads_perm(admin, "ads.view")

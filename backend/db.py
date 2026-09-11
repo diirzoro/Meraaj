@@ -135,14 +135,27 @@ def marketer_pct() -> float:
     return float(os.environ.get("MARKETER_COMMISSION_PCT", "0.20"))
 
 
-async def log_platform_revenue(amount: float, description: str, ref: str = None, currency: str = "USD"):
-    await db.platform_revenue.insert_one({
+async def log_platform_revenue(amount: float, description: str, ref: str = None,
+                               currency: str = "USD", meta: dict = None, key: str = None,
+                               source: str = None):
+    """`key` makes the posting idempotent: the same key can never create a second revenue row
+    (a retry after an error re-uses the existing row instead of double-counting)."""
+    doc = {
         "amount": amount,
         "currency": "SAR" if currency == "SAR" else "USD",
         "description": description,
         "ref": ref,
         "created_at": now_iso(),
-    })
+    }
+    if meta:
+        doc["meta"] = meta
+    if source:
+        doc["source"] = source
+    if key:
+        doc["key"] = key
+        await db.platform_revenue.update_one({"key": key}, {"$setOnInsert": doc}, upsert=True)
+        return
+    await db.platform_revenue.insert_one(doc)
 
 
 

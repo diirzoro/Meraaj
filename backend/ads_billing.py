@@ -13,7 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from pymongo import ReturnDocument
 
-from db import (db, serialize, oid, now_iso, adjust_wallet, log_txn, wallet_available)
+from db import (db, serialize, oid, now_iso, adjust_wallet, log_txn, wallet_available,
+                log_platform_revenue)
 from security import require_admin, get_current_user
 
 router = APIRouter(prefix="/api", tags=["ads-billing"])
@@ -162,6 +163,21 @@ async def capture_for_ad(ad: dict, reason: str) -> Optional[dict]:
                   ref=str(ad["_id"]), currency=ccy,
                   meta={"advertisement_id": str(ad["_id"]), "package_id": b.get("package_id"),
                         "reason": reason, "status": "captured"})
+    # Phase 1 revenue recognition: only a SUCCESSFUL capture of a PAID package posts revenue,
+    # exactly once (idempotency key = the ad itself). Free packages post nothing.
+    if price > 0:
+        kind = ad.get("kind") or "ad"
+        label = "إيراد عرض ترويجي" if kind == "promotion" else "إيراد إعلان"
+        await log_platform_revenue(
+            price, f"{label}: {ad.get('title') or ''} — باقة {b.get('package_name')}",
+            ref=str(ad["_id"]), currency=ccy, source="ads",
+            key=f"ad_capture:{ad['_id']}",
+            meta={"advertisement_id": str(ad["_id"]), "package_id": b.get("package_id"),
+                  "package_name": b.get("package_name"), "payer_id": str(payer),
+                  "advertiser_id": str(ad.get("advertiser_owner_id") or ""),
+                  "advertiser_org_id": str(ad.get("advertiser_org_id") or ""),
+                  "advertiser_name": ad.get("advertiser_name"),
+                  "kind": kind, "title": ad.get("title"), "reason": reason})
     return {"state": "captured", "captured_at": now_iso()}
 
 
