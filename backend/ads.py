@@ -829,7 +829,8 @@ async def request_cancellation(ad_id: str, payload: CancelRequestIn,
         raise HTTPException(400, "طلب الإلغاء متاح للإعلان النشط أو الموقوف أو قيد الاعتماد فقط")
     if ad.get("status") == "cancellation_requested":
         raise HTTPException(400, "يوجد طلب إلغاء قيد المراجعة بالفعل")
-    cancellation = {"state": "requested", "reason": payload.reason.strip(),
+    cancellation = {"state": "requested", "source": "advertiser_request",
+                    "reason": payload.reason.strip(),
                     "requested_by": user.get("email"), "requested_by_id": str(user["_id"]),
                     "requested_at": now_iso(), "previous_status": ad.get("status"),
                     "decided_by": None, "decided_at": None, "decision_reason": None,
@@ -855,6 +856,95 @@ async def request_cancellation(ad_id: str, payload: CancelRequestIn,
 class CancelDecisionIn(BaseModel):
     decision: str                      # accept | reject
     reason: str = Field(min_length=3)
+
+
+@router.delete("/admin/ads/{ad_id}")
+async def delete_ad(ad_id: str, reason: str = "", admin: dict = Depends(require_admin)):
+    """DELETE is only for a truly untouched draft. Anything with money, revenue, traffic or a
+    publish history is kept forever and must be cancelled/archived instead."""
+    await _admin_ads_perm(admin, "ads.manage")
+    ad = await db.advertisements.find_one({"_id": oid(ad_id)})
+    if not ad:
+        raise HTTPException(404, "الإعلان غير موجود")
+    b = ad.get("billing") or {}
+    blockers = []
+    if ad.get("status") not in ("draft", "rejected"):
+        blockers.append("الإعلان خارج حالة المسودة")
+    if b.get("state") in ("held", "captured", "released"):
+        blockers.append("للإعلان أثر مالي (حجز أو خصم أو فكّ حجز)")
+    if int(ad.get("views") or 0) or int(ad.get("clicks") or 0):
+        blockers.append("للإعلان مشاهدات أو نقرات مسجّلة")
+    if ad.get("approved_at") or ad.get("published_directly"):
+        blockers.append("الإعلان سُبق نشره")
+    if await db.transactions.count_documents({"ref": ad_id}):
+        blockers.append("للإعلان حركات في الدفتر المالي")
+    if await db.platform_revenue.count_documents({"ref": ad_id}):
+        blockers.append("للإعلان إيراد مسجّل")
+    if blockers:
+        raise HTTPException(400, "لا يمكن حذف هذا الإعلان نهائياً لأن له أثراً يجب الاحتفاظ به: "
+                                 + " • ".join(blockers) + ". استخدم الإلغاء أو الأرشفة.")
+    await db.advertisements.delete_one({"_id": ad["_id"]})
+    await _audit(ad_id, "ad_deleted", admin, (reason or "").strip() or "حذف مسودة غير مستخدمة",
+                 before={"status": ad.get("status"), "title": ad.get("title"),
+                         "advertiser_name": ad.get("advertiser_name")}, after=None)
+    return {"ok": True, "deleted": True}
+
+
+@router.post("/admin/ads/{ad_id}/cancel")
+async def direct_cancel(ad_id: str, payload: StatusIn, admin: dict = Depends(require_admin)):
+    """Direct admin cancellation (no second approver). Financial policy is untouched:
+    a still-HELD amount is released once; a CAPTURED amount is never auto-refunded/reversed."""
+    await _admin_ads_perm(admin, "ads.cancel")
+    ad = await db.advertisements.find_one({"_id": oid(ad_id)})
+    if not ad:
+        raise HTTPException(404, "الإعلان غير موجود")
+    if ad.get("status") in ("cancelled", "archived"):
+        raise HTTPException(400, "الإعلان ملغى بالفعل")
+    reason = payload.reason.strip()
+    b = dict(ad.get("billing") or {})
+    pre_state = b.get("state")
+    policy = ("full_hold_release_before_final_charge" if pre_state == "held"
+              else "no_automatic_refund_after_final_charge" if pre_state == "captured"
+              else "no_financial_movement")
+    refund = None
+    from ads_billing import release_for_ad
+    async with _ad_lock(ad, admin):
+        if pre_state == "held":
+            rel = await release_for_ad(ad, f"إلغاء مباشر من الإدارة: {reason}")
+            if rel:
+                b.update(rel)
+                refund = {"refund_amount": b.get("held"), "refund_currency": b.get("currency"),
+                          "refund_txn": "ad_hold_release"}
+            else:
+                policy = "no_financial_movement"
+        upd = {"status": "cancelled", "billing": b, "updated_at": now_iso(),
+               "cancellation": {"state": "accepted", "source": "direct_admin",
+                                "reason": reason, "decision_reason": reason,
+                                "requested_by": admin.get("email"),
+                                "requested_by_id": str(admin["_id"]),
+                                "requested_at": now_iso(),
+                                "previous_status": ad.get("status"),
+                                "decided_by": admin.get("email"), "decided_at": now_iso(),
+                                "billing_state_before": pre_state, "refund_policy": policy,
+                                **(refund or {"refund_amount": 0,
+                                              "refund_currency": b.get("currency"),
+                                              "refund_txn": None}),
+                                "captured_not_refunded": pre_state == "captured"}}
+        await db.advertisements.update_one({"_id": ad["_id"]}, {"$set": upd})
+        await _audit(ad_id, "ad_cancelled_direct", admin, reason,
+                     before={"status": ad.get("status"), "billing_state": pre_state},
+                     after={"status": "cancelled", "billing_state": b.get("state"),
+                            "source": "direct_admin", "refund_policy": policy,
+                            "refund_amount": (refund or {}).get("refund_amount", 0)})
+    await _notify_ad(ad, "ad_cancellation_approved", "تم إلغاء إعلانك من الإدارة",
+                     (f"تم إلغاء «{ad.get('title')}» وتوقف ظهوره. السبب: {reason}\n"
+                      + (f"تم فكّ حجز المبلغ وإعادته إلى رصيدك: {_money_line(b)}" if refund else
+                         ("المبلغ كان قد خُصم نهائياً؛ أي استرجاع يتطلب قراراً إدارياً مستقلاً."
+                          if pre_state == "captured" else "لا يوجد مبلغ مرتبط بهذا الإعلان."))),
+                     meta={"reason": reason, "source": "direct_admin",
+                           "refund_amount": (refund or {}).get("refund_amount", 0)})
+    return {"ok": True, "status": "cancelled", "refund_policy": policy,
+            "refund": refund or {"refund_amount": 0}}
 
 
 @router.get("/admin/ads-revenue")

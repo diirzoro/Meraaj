@@ -97,6 +97,34 @@ async def update_package(pid: str, payload: PackageIn, admin: dict = Depends(req
 
 
 # ---------------- advertiser-facing catalogue ----------------
+@router.delete("/admin/ad-packages/{pid}")
+async def delete_package(pid: str, reason: str = "", admin: dict = Depends(require_admin)):
+    """Hard delete ONLY when the package was never used. Anything with ads, wallet movements or
+    revenue behind it is kept and must be disabled instead, so history stays intact."""
+    from ads import _admin_ads_perm
+    await _admin_ads_perm(admin, "ads.manage")
+    pkg = await db.ad_packages.find_one({"_id": oid(pid)})
+    if not pkg:
+        raise HTTPException(404, "الباقة غير موجودة")
+    used_ads = await db.advertisements.count_documents(
+        {"$or": [{"package_id": pid}, {"billing.package_id": pid}]})
+    used_txn = await db.transactions.count_documents({"meta.package_id": pid})
+    used_rev = await db.platform_revenue.count_documents({"meta.package_id": pid})
+    if used_ads or used_txn or used_rev:
+        raise HTTPException(400, "لا يمكن حذف هذه الباقة نهائياً لأنها مستخدمة في إعلانات أو "
+                                 "عمليات سابقة. يمكنك تعطيلها.")
+    await db.ad_packages.delete_one({"_id": oid(pid)})
+    await db.audit_log.insert_one({
+        "entity": "ad_package", "entity_id": pid, "action": "ad_package_deleted",
+        "actor": admin.get("email"), "actor_id": str(admin["_id"]),
+        "reason": (reason or "").strip() or "حذف باقة غير مستخدمة",
+        "before": {"name": pkg.get("name"), "price": pkg.get("price"),
+                   "currency": pkg.get("currency"), "kind": pkg.get("kind"),
+                   "active": pkg.get("active")},
+        "after": None, "at": now_iso()})
+    return {"ok": True, "deleted": True}
+
+
 @router.get("/ad-packages")
 async def my_packages(kind: str = "ad", user: dict = Depends(get_current_user)):
     from rbac import has_perm
