@@ -20,6 +20,7 @@ env:
   LIVE_BACKEND_PORT: ${{ vars.LIVE_MERAAJ_BACKEND_PORT || '8000' }}
   LIVE_FRONTEND_PORT: ${{ vars.LIVE_MERAAJ_FRONTEND_PORT || '8004' }}
   LIVE_BACKEND_ENV_FILE: ${{ vars.LIVE_MERAAJ_BACKEND_ENV_FILE || '/root/meraaj_backend_env_live' }}
+  TEST_BACKEND_ENV_FILE: ${{ vars.TEST_MERAAJ_BACKEND_ENV_FILE || '/root/meraaj_backend_env_test' }}
   TEST_BACKEND_PORT: '8010'
   TEST_FRONTEND_PORT: '8014'
   PUBLIC_URL: 'https://meraaj.targetmediagrp.com/'
@@ -63,6 +64,7 @@ jobs:
              LIVE_BACKEND_PORT='${{ env.LIVE_BACKEND_PORT }}' \
              LIVE_FRONTEND_PORT='${{ env.LIVE_FRONTEND_PORT }}' \
              LIVE_BACKEND_ENV_FILE='${{ env.LIVE_BACKEND_ENV_FILE }}' \
+             TEST_BACKEND_ENV_FILE='${{ env.TEST_BACKEND_ENV_FILE }}' \
              TEST_BACKEND_PORT='${{ env.TEST_BACKEND_PORT }}' \
              TEST_FRONTEND_PORT='${{ env.TEST_FRONTEND_PORT }}' \
              PUBLIC_URL='${{ env.PUBLIC_URL }}' \
@@ -89,6 +91,56 @@ jobs:
             echo "  FAIL $url never returned $expect"
             return 1
           }
+
+          # ===================================================================
+          # STEP 0 - DB SAFETY GUARD (fail-closed) - BEFORE anything Live is touched
+          # Reads the ENV FILES ACTUALLY USED on this server (not file names).
+          # Prints no MONGO_URL, no credentials, no secrets - only short hashes.
+          # ===================================================================
+          echo "--- Step 0: DB safety guard (Test/Live isolation) ---"
+
+          env_value() {   # $1 = env file, $2 = key   (prints ONLY the value)
+            awk -F'=' -v k="$2" '
+              $1 == k { sub(/^[^=]*=/, ""); gsub(/\r/, ""); gsub(/^["'"'"']|["'"'"']$/, ""); print; exit }
+            ' "$1"
+          }
+
+          db_fingerprint() {  # credential-free short hash of the Mongo target
+            printf '%s|%s' \
+              "$(printf '%s' "$1" | sed -E 's#^(mongodb(\+srv)?://)[^@]*@#\1#')" "$2" \
+              | sha256sum | cut -c1-12
+          }
+
+          test -r "$TEST_BACKEND_ENV_FILE" || { echo "GUARD FAIL: Test backend env file unreadable. PROMOTION STOPPED (Live untouched)."; exit 1; }
+          test -r "$LIVE_BACKEND_ENV_FILE" || { echo "GUARD FAIL: Live backend env file unreadable. PROMOTION STOPPED (Live untouched)."; exit 1; }
+
+          TEST_DB_NAME="$(env_value "$TEST_BACKEND_ENV_FILE" DB_NAME || true)"
+          LIVE_DB_NAME="$(env_value "$LIVE_BACKEND_ENV_FILE" DB_NAME || true)"
+          TEST_MONGO_URL="$(env_value "$TEST_BACKEND_ENV_FILE" MONGO_URL || true)"
+          LIVE_MONGO_URL="$(env_value "$LIVE_BACKEND_ENV_FILE" MONGO_URL || true)"
+
+          for pair in "TEST_DB_NAME:$TEST_DB_NAME" "LIVE_DB_NAME:$LIVE_DB_NAME" \
+                      "TEST_MONGO_URL:$TEST_MONGO_URL" "LIVE_MONGO_URL:$LIVE_MONGO_URL"; do
+            if [ -z "${pair#*:}" ]; then
+              echo "GUARD FAIL: ${pair%%:*} missing/unreadable. PROMOTION STOPPED (Live untouched)."; exit 1
+            fi
+          done
+
+          if [ "$TEST_DB_NAME" != "meraaj_test" ]; then
+            echo "GUARD FAIL: Test DB_NAME must be exactly 'meraaj_test' (got: '$TEST_DB_NAME'). PROMOTION STOPPED (Live untouched)."; exit 1
+          fi
+          if [ "$LIVE_DB_NAME" != "meraaj" ]; then
+            echo "GUARD FAIL: Live DB_NAME must be exactly 'meraaj' (got: '$LIVE_DB_NAME'). PROMOTION STOPPED (Live untouched)."; exit 1
+          fi
+
+          TEST_FP="$(db_fingerprint "$TEST_MONGO_URL" "$TEST_DB_NAME")"
+          LIVE_FP="$(db_fingerprint "$LIVE_MONGO_URL" "$LIVE_DB_NAME")"
+          echo "  test db target fingerprint: $TEST_FP"
+          echo "  live db target fingerprint: $LIVE_FP"
+          if [ "$TEST_FP" = "$LIVE_FP" ]; then
+            echo "GUARD FAIL: Test and Live point at the SAME Mongo target. PROMOTION STOPPED (Live untouched)."; exit 1
+          fi
+          echo "DB safety guard OK (test=meraaj_test, live=meraaj, separate targets)."
 
           # ===================================================================
           # STEP 1 - Verify TEST is healthy BEFORE touching Live

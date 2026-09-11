@@ -118,3 +118,19 @@ body.cap-native [contenteditable="true"] {
     user-select: text;
 }
 
+
+/* Ads ticker — RTL news-style marquee (content flows right → left start point) */
+@keyframes ad-ticker-scroll {
+    from { transform: translateX(0); }
+    to   { transform: translateX(50%); }
+}
+.ad-ticker-track {
+    animation-name: ad-ticker-scroll;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+    will-change: transform;
+}
+.ad-ticker-track:hover { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) {
+    .ad-ticker-track { animation: none; }
+}
