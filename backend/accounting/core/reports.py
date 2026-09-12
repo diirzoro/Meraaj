@@ -28,6 +28,7 @@ from .ledger import normal_balance, signed_movement
 from .money import ZERO, as_str, normalise
 from .roles import RETAINED_EARNINGS
 from .types import AccountType
+from .year_state import YEAR_CLOSE_SOURCE_TYPE
 
 CURRENT_PERIOD_RESULT = "current_period_result"
 
@@ -70,13 +71,15 @@ class ReportingService:
         return None, available
 
     async def _movements(self, entity_id: str, currency: Optional[str],
-                         from_date=None, to_date=None) -> dict:
+                         from_date=None, to_date=None,
+                         exclude_source_types=None) -> dict:
         """`{account_code: {debit, credit}}` for the LEAF postings only (a group account can
         never be posted to, so every row returned here is a real posting account)."""
         if not currency:
             return {}
-        return await self._journal.sum_by_account(entity_id, currency,
-                                                  from_date=from_date, to_date=to_date)
+        return await self._journal.sum_by_account(
+            entity_id, currency, from_date=from_date, to_date=to_date,
+            exclude_source_types=exclude_source_types)
 
     async def _chart_index(self, entity_id: str) -> tuple:
         accounts = await self._accounts.list_all(entity_id, include_inactive=True)
@@ -202,12 +205,20 @@ class ReportingService:
     # --------------------------------------------------------- income statement
     async def income_statement(self, entity_id: str, currency: Optional[str] = None,
                                from_date=None, to_date=None,
-                               include_zero: bool = False) -> dict:
+                               include_zero: bool = False,
+                               exclude_closing: bool = True) -> dict:
+        """PHASE 9 COMPATIBILITY: a year-close journal zeroes the result accounts inside the
+        book, which would make a HISTORICAL income statement read as zero. Performance
+        reporting therefore EXCLUDES `year_close` journals by default — the closing entries
+        still exist in the book and in the trial balance, they are simply not performance.
+        """
         entity_id = self._entity(entity_id)
         self._range(from_date, to_date)
         currency, available = await self._resolve_currency(entity_id, currency)
         accounts, by_code = await self._chart_index(entity_id)
-        movements = await self._movements(entity_id, currency, from_date, to_date)
+        movements = await self._movements(
+            entity_id, currency, from_date, to_date,
+            exclude_source_types=(YEAR_CLOSE_SOURCE_TYPE,) if exclude_closing else None)
         totals = self._rollup(by_code, movements)
 
         def section(acc_type: str) -> list:
@@ -234,6 +245,8 @@ class ReportingService:
             "expenses": {"total": as_str(normalise(expense)),
                          "rows": section(AccountType.EXPENSE.value)},
             "net_result": as_str(normalise(net)),
+            "excludes_closing_journals": bool(exclude_closing),
+            "closing_source_type": YEAR_CLOSE_SOURCE_TYPE,
             "result_kind": "profit" if net > ZERO else ("loss" if net < ZERO
                                                         else "breakeven"),
             "note": "نتيجة الفترة مشتقة من الحركات ولم تُقفل في حقوق الملكية بعد "
@@ -312,6 +325,9 @@ class ReportingService:
             "total_liabilities_and_equity": as_str(normalise(liabilities + equity_total)),
             "difference": as_str(normalise(difference)),
             "equation": "الأصول = الالتزامات + حقوق الملكية + نتيجة الفترة غير المقفلة",
+            "closing_awareness": "الميزانية تقرأ الكتاب كاملاً بما فيه قيود الإقفال: "
+                                 "بعد الإقفال تصبح نتيجة الإيرادات/المصروفات صفراً "
+                                 "وتظهر النتيجة داخل الأرباح المحتجزة — فلا احتساب مزدوج",
             "equation_holds": difference == ZERO,
             "derived": True, "stored_balances": False,
         }

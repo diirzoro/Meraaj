@@ -87,7 +87,12 @@ class JournalPostingService:
 
     async def post(self, entity_id: str, draft: JournalEntryDraft,
                    source_key: Optional[str] = None,
-                   by: Optional[str] = None) -> dict:
+                   by: Optional[str] = None,
+                   metadata: Optional[dict] = None) -> dict:
+        """`metadata` (Phase 10 COMPATIBILITY FIX, minimal): NON-FINANCIAL context stored
+        alongside the entry — currently the FX rate snapshot, so a historical FX figure is
+        reproducible from the journal itself. It is EXCLUDED from the fingerprint (it is
+        not financial identity) and it can never add, change or balance a line."""
         # 1) CENTRAL VALIDATION — the same assert_valid() as the dry-run. No second
         #    validator exists, and there is no way to reach persistence without it.
         journal = await self._validator.assert_valid(entity_id, draft)
@@ -135,6 +140,7 @@ class JournalPostingService:
             "source_id": journal.source_id,
             "source_key": source_key,          # absent-as-None: excluded from the index
             "fingerprint": fingerprint,
+            "metadata": dict(metadata) if metadata else None,
             "reversal_of": None,
             "reversed_by_entry": None,
             "created_at": now,
@@ -214,6 +220,7 @@ class JournalPostingService:
             "source_id": doc.get("source_id"),
             "source_key": doc.get("source_key"),
             "fingerprint": doc.get("fingerprint"),
+            "metadata": doc.get("metadata"),
             "reversal_of": doc.get("reversal_of"),
             "reversed_by_entry": doc.get("reversed_by_entry"),
             "created_at": doc["created_at"].isoformat()

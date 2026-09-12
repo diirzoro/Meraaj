@@ -93,12 +93,17 @@ class ValidatedJournal:
 class JournalValidator:
     def __init__(self, resolver: PostingAccountResolver, currency_policy: CurrencyPolicy,
                  period_guard: Optional[PeriodGuard] = None,
-                 scale: int = DEFAULT_SCALE):
+                 scale: int = DEFAULT_SCALE, currency_gate=None):
         self.resolver = resolver
         self.currency = currency_policy
-        # Phase 3 ships the open guard; the closing phase injects the real one and every
-        # journal is covered at once, with no route to update.
+        # Phase 9 COMPATIBILITY FIX (minimal): the guard is now the REAL one, injected by
+        # the adapter. Nothing in this file changed except that it is no longer open.
         self.period = period_guard or NULL_PERIOD_GUARD
+        # Phase 10 COMPATIBILITY FIX (minimal): an OPTIONAL async gate that consults the
+        # per-entity currency configuration (configured + allowed + active). When absent,
+        # the static injected policy remains the only authority, so Phases 1-8 behave
+        # exactly as before.
+        self.currency_gate = currency_gate
         self.scale = scale
 
     # ------------------------------------------------------------------ public
@@ -152,12 +157,17 @@ class JournalValidator:
             normalise(total_credit, self.scale)
         self._check_balanced(total_debit, total_credit, journal_currency)
 
+        # Entity currency policy (Phase 10): configured + allowed + active.
+        if self.currency_gate is not None:
+            await self.currency_gate.assert_allowed(entity_id, journal_currency)
+
         # The period gate lives HERE, not in a business route.
         await self.period.assert_open(entity_id, date)
 
         warnings = []
         if not self.period.enforced:
-            warnings.append("period_guard_not_enforced: no closing mechanism exists yet")
+            warnings.append("period_guard_not_enforced: no period is defined for this "
+                            "entity, so no date is locked")
         return ValidatedJournal(
             entity_id=entity_id, date=date, description=draft.description.strip(),
             currency=journal_currency, source_type=draft.source_type,

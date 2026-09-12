@@ -28,6 +28,11 @@ REVENUES = "revenues"
 OPERATING_REVENUE_GROUP = "operating_revenue_group"
 SERVICE_REVENUE = "service_revenue"
 FX_RESULT = "fx_result"
+#: Phase 10 vocabulary. The FX engine resolves FX_GAIN → FX_RESULT and FX_LOSS →
+#: FX_ADJUSTMENT when a chart profile does not define the dedicated roles, so no account
+#: NUMBER is ever hardcoded in the Core.
+FX_GAIN = "fx_gain"
+FX_LOSS = "fx_loss"
 CANCELLATION_FEE_REVENUE = "cancellation_fee_revenue"
 
 EXPENSES = "expenses"

@@ -10,7 +10,8 @@ from .chart import ChartOfAccounts
 from .money import (DEFAULT_SCALE, BALANCE_TOLERANCE, ZERO, to_amount, as_str,
                     normalise)
 from .currency import CurrencyPolicy
-from .periods import PeriodGuard, NullPeriodGuard, NULL_PERIOD_GUARD
+from .periods import (PeriodGuard, NullPeriodGuard, NULL_PERIOD_GUARD,
+                      DatabasePeriodGuard, PERIOD_OPEN, PERIOD_CLOSED)
 from .journal import (JournalStatus, JournalLineInput, JournalEntryDraft,
                       ALLOWED_TRANSITIONS, IMMUTABLE_STATUSES,
                       JOURNAL_DOCUMENT_CONTRACT)
@@ -28,6 +29,20 @@ from .journal_reversal import JournalReversalService, REVERSAL_SOURCE_TYPE
 from .opening_balances import (OpeningBalanceService, OpeningBalanceRequest,
                                OpeningLineInput, OPENING_SOURCE_TYPE)
 from .reports import ReportingService, CURRENT_PERIOD_RESULT
+# period & year closing (Phase 9)
+from .fiscal_year import (FiscalYearPolicy, PERIOD_MONTH, PERIOD_QUARTER,
+                          FISCAL_YEAR_LABEL_RULE)
+from .period_store import PeriodStore
+from .period_service import PeriodService
+from .year_state import (YEAR_CLOSE_SOURCE_TYPE, YEAR_STATES, YEAR_STATE_COMPLETED)
+from .year_close import YearCloseService, year_close_source_key
+# multi-currency & FX (Phase 10)
+from .currency_settings import (CurrencySettingsStore, EntityCurrencyService,
+                                RATE_SCALE)
+from .fx_rates import (FXRateStore, FXRateService, RATE_DIRECTION,
+                       RATE_SELECTION_POLICY, quantise_rate)
+from .fx_engine import (FXConversionService, FXResultService, FX_SOURCE_TYPE,
+                        CALC_SCALE, SUPPORTED_EFFECTS, DEFERRED_EFFECTS)
 
 __all__ = [
     # chart of accounts (Phases 1-2)
@@ -54,4 +69,14 @@ __all__ = [
     "OPENING_SOURCE_TYPE",
     # core reports (Phase 8)
     "ReportingService", "CURRENT_PERIOD_RESULT",
+    # period & year closing (Phase 9)
+    "DatabasePeriodGuard", "PERIOD_OPEN", "PERIOD_CLOSED", "FiscalYearPolicy",
+    "PERIOD_MONTH", "PERIOD_QUARTER", "FISCAL_YEAR_LABEL_RULE", "PeriodStore",
+    "PeriodService", "YEAR_CLOSE_SOURCE_TYPE", "YEAR_STATES", "YEAR_STATE_COMPLETED",
+    "YearCloseService", "year_close_source_key",
+    # multi-currency & FX (Phase 10)
+    "CurrencySettingsStore", "EntityCurrencyService", "RATE_SCALE", "FXRateStore",
+    "FXRateService", "RATE_DIRECTION", "RATE_SELECTION_POLICY", "quantise_rate",
+    "FXConversionService", "FXResultService", "FX_SOURCE_TYPE", "CALC_SCALE",
+    "SUPPORTED_EFFECTS", "DEFERRED_EFFECTS",
 ]

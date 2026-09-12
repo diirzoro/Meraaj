@@ -245,9 +245,14 @@ class JournalStore:
         return sorted([r["_id"] for r in rows if r["_id"]])
 
     async def sum_by_account(self, entity_id: str, currency: str,
-                             from_date=None, to_date=None) -> dict:
+                             from_date=None, to_date=None,
+                             exclude_source_types=None) -> dict:
         from decimal import Decimal as D
         match = {"entity_id": entity_id, "status": {"$in": list(EFFECTIVE_STATUSES)}}
+        if exclude_source_types:
+            # Phase 9/10 compatibility: performance reports must be able to exclude
+            # closing journals without losing them from the book itself.
+            match["source_type"] = {"$nin": list(exclude_source_types)}
         date_q = {}
         if from_date:
             date_q["$gte"] = from_date
@@ -268,6 +273,94 @@ class JournalStore:
                            "credit": D(self.from_db_amount(r.get("credit") or 0)),
                            "count": int(r.get("count") or 0)}
                 for r in rows if r["_id"]}
+
+    # ------------------------------------------------- closing support (Phase 9)
+    async def count_any(self, entity_id: str) -> int:
+        return await self.entries.count_documents({"entity_id": entity_id})
+
+    async def sum_totals(self, entity_id: str, currency: str,
+                         from_date=None, to_date=None) -> dict:
+        """Whole-book debit/credit totals for ONE currency — the trial-balance identity
+        used by the close preflight and by post-close verification."""
+        from decimal import Decimal as D
+        match = {"entity_id": entity_id, "status": {"$in": list(EFFECTIVE_STATUSES)}}
+        date_q = {}
+        if from_date:
+            date_q["$gte"] = from_date
+        if to_date:
+            date_q["$lte"] = to_date
+        if date_q:
+            match["date"] = date_q
+        rows = await self.entries.aggregate([
+            {"$match": match}, {"$unwind": "$lines"},
+            {"$match": {"lines.currency": currency}},
+            {"$group": {"_id": None, "debit": {"$sum": "$lines.debit"},
+                        "credit": {"$sum": "$lines.credit"},
+                        "count": {"$sum": 1}}},
+        ]).to_list(length=1)
+        if not rows:
+            return {"debit": D("0"), "credit": D("0"), "count": 0}
+        r = rows[0]
+        return {"debit": D(self.from_db_amount(r.get("debit") or 0)),
+                "credit": D(self.from_db_amount(r.get("credit") or 0)),
+                "count": int(r.get("count") or 0)}
+
+    async def audit_integrity(self, entity_id: str, from_date=None,
+                              to_date=None) -> dict:
+        """Structural audit of the journals inside a date window. READ-ONLY: it reports,
+        it never repairs — a financial record is not silently rewritten."""
+        match = {"entity_id": entity_id, "status": {"$in": list(EFFECTIVE_STATUSES)}}
+        date_q = {}
+        if from_date:
+            date_q["$gte"] = from_date
+        if to_date:
+            date_q["$lte"] = to_date
+        if date_q:
+            match["date"] = date_q
+        rows = await self.entries.aggregate([
+            {"$match": match},
+            {"$project": {
+                "_id": 0, "entry_no": 1, "id": 1, "currency": 1, "status": 1,
+                "reversed_by_entry": 1, "reversal_claim": 1,
+                "line_count": {"$size": {"$ifNull": ["$lines", []]}},
+                "line_debit": {"$sum": "$lines.debit"},
+                "line_credit": {"$sum": "$lines.credit"},
+                "total_debit": 1, "total_credit": 1, "date": 1}},
+        ]).to_list(length=None)
+        malformed, unbalanced, claims, currencies = [], [], [], set()
+        for r in rows:
+            if r.get("currency"):
+                currencies.add(r["currency"])
+            debit = r.get("line_debit") or 0
+            credit = r.get("line_credit") or 0
+            debit = debit.to_decimal() if hasattr(debit, "to_decimal") else debit
+            credit = credit.to_decimal() if hasattr(credit, "to_decimal") else credit
+            total_d = r.get("total_debit")
+            total_c = r.get("total_credit")
+            total_d = total_d.to_decimal() if hasattr(total_d, "to_decimal") else total_d
+            total_c = total_c.to_decimal() if hasattr(total_c, "to_decimal") else total_c
+            if (r.get("line_count") or 0) < 2 or not r.get("currency") \
+                    or not r.get("date") or total_d != debit or total_c != credit:
+                malformed.append(r.get("entry_no"))
+            elif debit != credit:
+                unbalanced.append(r.get("entry_no"))
+            if r.get("reversal_claim"):
+                claims.append(r.get("entry_no"))
+        reversed_ids = [r["id"] for r in rows if r.get("status") == "reversed"]
+        orphans = []
+        if reversed_ids:
+            mirrors = await self.entries.distinct(
+                "reversal_of", {"entity_id": entity_id,
+                                "reversal_of": {"$in": reversed_ids}})
+            missing = set(reversed_ids) - set(mirrors)
+            orphans = [r.get("entry_no") for r in rows if r["id"] in missing]
+        return {"total": len(rows), "currencies": sorted(currencies),
+                "malformed": len(malformed), "malformed_sample": malformed[:5],
+                "unbalanced": len(unbalanced), "unbalanced_sample": unbalanced[:5],
+                "pending_reversal_claims": len(claims),
+                "pending_reversal_claims_sample": claims[:5],
+                "reversed_without_mirror": len(orphans),
+                "reversed_without_mirror_sample": orphans[:5]}
 
     # ------------------------------------------------- reversal ops (Phase 6)
     async def claim_for_reversal(self, entity_id: str, original_id: str,

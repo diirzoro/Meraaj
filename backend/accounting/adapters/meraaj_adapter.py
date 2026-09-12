@@ -26,10 +26,13 @@ from security import get_current_user
 
 from ..core import AccountStore, ChartOfAccounts
 from ..core import (CurrencyPolicy, JournalValidator, PostingAccountResolver,
-                    NULL_PERIOD_GUARD, JournalStore, JournalUsageProbe,
+                    JournalStore, JournalUsageProbe,
                     JournalPostingService, GeneralLedgerService,
                     JournalReversalService, OpeningBalanceService,
-                    ReportingService)
+                    ReportingService, PeriodStore, PeriodService,
+                    DatabasePeriodGuard, YearCloseService, CurrencySettingsStore,
+                    EntityCurrencyService, FXRateStore, FXRateService,
+                    FXConversionService, FXResultService)
 from ..core.template import TemplateAccount as T
 from ..core.types import AccountType as AT, AccountOrigin as AO
 from ..core.roles import (CLIENT_WALLET_LIABILITY, ADS_REVENUE,
@@ -74,18 +77,61 @@ _ALLOWED_CURRENCIES = [c for c in os.environ.get("ACCOUNTING_CURRENCIES", "SAR,U
 _currency_policy = CurrencyPolicy(allowed=_ALLOWED_CURRENCIES,
                                   base=os.environ.get("ACCOUNTING_BASE_CURRENCY") or None,
                                   allow_multi_currency=False)
-# Period guard: the open (non-enforcing) guard until the period-closing phase injects a real
-# one. Wiring it here means every journal is covered the moment that phase lands.
+# Period guard: the REAL database-backed guard (Phase 9). Injecting it here means every
+# posting path — journal, reversal, opening, year-close — is covered at once, with no
+# route-level check anywhere.
+_period_store = PeriodStore(db, collection_prefix="accounting_")
+_period_guard = DatabasePeriodGuard(_period_store)
+# Currency configuration (Phase 10): the per-entity policy that decides configured /
+# allowed / active. The static env-driven policy below remains the fallback for an entity
+# that has no configuration yet, so Phases 1-8 behave unchanged.
+_currency_settings_store = CurrencySettingsStore(db, collection_prefix="accounting_")
+_entity_currencies = EntityCurrencyService(_currency_settings_store, _journal_store)
 _journal_validator = JournalValidator(PostingAccountResolver(_store), _currency_policy,
-                                      period_guard=NULL_PERIOD_GUARD)
+                                      period_guard=_period_guard,
+                                      currency_gate=_entity_currencies)
 # The ONE write gateway for accounting truth. The journal store is deliberately not
 # exported: nothing outside this service may write a journal.
 _posting_service = JournalPostingService(_journal_validator, _journal_store)
 _ledger_service = GeneralLedgerService(_journal_store, _store)
-_reversal_service = JournalReversalService(_journal_store, _store, NULL_PERIOD_GUARD)
+_reversal_service = JournalReversalService(_journal_store, _store, _period_guard)
 _opening_service = OpeningBalanceService(_posting_service, _journal_store, _chart)
 # Phase 8 — reports are pure read models over the same two sources.
 _reporting_service = ReportingService(_journal_store, _store)
+# Phase 9 — periods, fiscal year and year closing.
+_period_service = PeriodService(_period_store, _journal_store, _store)
+_year_close_service = YearCloseService(_posting_service, _journal_store, _store,
+                                       _period_store, _period_service)
+# Phase 10 — FX rates, conversion and the realized FX result engine.
+_fx_rate_store = FXRateStore(db, collection_prefix="accounting_")
+_fx_rate_service = FXRateService(_fx_rate_store, _entity_currencies)
+_fx_conversion = FXConversionService(_fx_rate_service, _entity_currencies)
+_fx_result_service = FXResultService(_posting_service, _fx_conversion, _store,
+                                     _entity_currencies)
+
+
+def period_service() -> PeriodService:
+    return _period_service
+
+
+def year_close_service() -> YearCloseService:
+    return _year_close_service
+
+
+def entity_currencies() -> EntityCurrencyService:
+    return _entity_currencies
+
+
+def fx_rate_service() -> FXRateService:
+    return _fx_rate_service
+
+
+def fx_conversion_service() -> FXConversionService:
+    return _fx_conversion
+
+
+def fx_result_service() -> FXResultService:
+    return _fx_result_service
 
 
 def ledger_service() -> GeneralLedgerService:
@@ -127,6 +173,9 @@ def currency_policy() -> CurrencyPolicy:
 async def ensure_accounting_indexes() -> dict:
     result = await _store.ensure_indexes()
     result["journal_indexes"] = await _journal_store.ensure_indexes()
+    result["period_indexes"] = await _period_store.ensure_indexes()
+    result["currency_indexes"] = await _currency_settings_store.ensure_indexes()
+    result["fx_rate_indexes"] = await _fx_rate_store.ensure_indexes()
     return result
 
 
