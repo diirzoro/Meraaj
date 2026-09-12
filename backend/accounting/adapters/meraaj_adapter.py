@@ -1,0 +1,97 @@
+"""Meraaj adapter — the ONLY layer that knows both the Accounting Core and Meraaj.
+
+It supplies what the Core refuses to know:
+  • which database and collections to use          (injected Motor handle from Meraaj)
+  • how a Meraaj request maps to an accounting ENTITY
+  • how a Meraaj user maps to a permission decision
+  • which chart profile this project seeds
+
+PORT note — tenant isolation: Rahaal resolved `tenant_id` from the session and scoped every
+query with it. The Core keeps that exact rule but under a neutral name (`entity_id`), and
+this adapter is the place where `entity_id` is derived. Nothing inside the Core mentions
+`org_id`, offices, or Meraaj.
+
+OPEN DECISION (deliberately not decided here): whether Meraaj keeps ONE platform ledger or
+one ledger per office. Phase 1 therefore uses a single explicit platform entity key, and a
+super-admin may address any other entity key explicitly. No accounting behaviour depends on
+that choice yet, so the decision stays fully reversible until the journal phase.
+"""
+import os
+from typing import Optional
+
+from fastapi import Depends, HTTPException
+
+from db import db
+from security import get_current_user
+
+from ..core import AccountStore, ChartOfAccounts
+from ..core.template import TemplateAccount as T
+from ..core.types import AccountType as AT, AccountOrigin as AO
+from ..core.roles import (CLIENT_WALLET_LIABILITY, ADS_REVENUE,
+                          PLATFORM_COMMISSION_REVENUE, REFUNDS_AND_REVERSALS)
+from ..templates import STANDARD_COA
+
+PLATFORM_ENTITY = os.environ.get("ACCOUNTING_PLATFORM_ENTITY", "meraaj-platform")
+
+# Meraaj chart profile = the ported standard chart + the accounts this platform needs.
+# These rows are DATA ONLY: no wallet, ads, commission or booking logic is implied here,
+# and nothing in the Core or in Meraaj posts to them in Phase 1.
+MERAAJ_EXTRA_ACCOUNTS = [
+    T("2102", "Client wallet liabilities", "التزامات محافظ العملاء", AT.LIABILITY,
+      "21", True, AO.STANDARD, CLIENT_WALLET_LIABILITY, accepts_children=True),
+    T("4106", "Advertising and promotion revenue", "إيرادات الإعلانات والعروض الترويجية",
+      AT.REVENUE, "41", True, AO.STANDARD, ADS_REVENUE, accepts_children=True),
+    T("4107", "Platform commission revenue", "إيرادات عمولات المنصة", AT.REVENUE,
+      "41", True, AO.STANDARD, PLATFORM_COMMISSION_REVENUE, accepts_children=True),
+    T("5102", "Refunds and reversals", "مردودات واستردادات", AT.EXPENSE,
+      "51", False, AO.STANDARD, REFUNDS_AND_REVERSALS),
+]
+
+MERAAJ_COA = STANDARD_COA.extend(
+    key="meraaj_v1",
+    title="دليل حسابات معراج (قياسي مستخرج من Rahaal + حسابات المنصة)",
+    extra=MERAAJ_EXTRA_ACCOUNTS,
+)
+
+_store = AccountStore(db, collection_prefix="accounting_")
+_chart = ChartOfAccounts(_store, MERAAJ_COA)
+
+
+def store() -> AccountStore:
+    return _store
+
+
+def chart() -> ChartOfAccounts:
+    return _chart
+
+
+async def ensure_accounting_indexes() -> dict:
+    return await _store.ensure_indexes()
+
+
+def actor_label(user: dict) -> str:
+    return user.get("email") or str(user.get("_id") or "system")
+
+
+async def resolve_entity(user: dict, requested: Optional[str] = None) -> str:
+    """Map a Meraaj request onto exactly one accounting entity.
+
+    A non-super-admin can never address an entity other than the platform entity, so a
+    crafted `entity_id` query parameter cannot read another entity's chart.
+    """
+    if requested and str(requested).strip():
+        requested = str(requested).strip()
+        if user.get("role") != "super_admin" and requested != PLATFORM_ENTITY:
+            raise HTTPException(403, "لا تملك صلاحية الوصول إلى جهة محاسبية أخرى")
+        return requested
+    return PLATFORM_ENTITY
+
+
+def accounting_perm(key: str):
+    """Real permission gate (not UI hiding): a revoked `accounting.*` returns 403."""
+    async def dep(user: dict = Depends(get_current_user)) -> dict:
+        from rbac import has_perm, PERMISSIONS as P
+        if not await has_perm(user, key):
+            raise HTTPException(403, f"لا تملك صلاحية: {P.get(key, key)}")
+        return user
+    return dep

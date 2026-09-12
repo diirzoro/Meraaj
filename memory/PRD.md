@@ -234,3 +234,25 @@
 3. الاسترجاع الاستثنائي: مسار إداري مستقل (لم يُبنَ بعد) وليس عبر تغيير حالة الإعلان. متطلباته عند البناء: مبلغ محدد + سبب إلزامي + ربط بمعرّف الإعلان + Maker/Checker + سقف = المبلغ المخصوم فعلاً + منع التكرار/Double Refund + Ledger/Audit مع before/after + استخدام منطق المحفظة القياسي فقط.
 4. بيانات Preview فقط: `commercial_license` لحسابي seller/buyer — بلا Migration/Seed/Backfill. مبلغ الاختبار 35 ريال على buyer@test.com يبقى مسجّلاً محاسبياً بلا أي تعديل يدوي.
 5. حُذفت سكربتات التحقق الديف-أونلي: `tests/_ad_cycle_check.py`, `tests/_ad_billing_check.py`.
+
+## Accounting Module — PHASE 1 (Chart of Accounts Foundation) — 2026-09-12
+منهجية معتمدة: EXTRACT → PORT → ADAPT → HARDEN → PACKAGE من Rahaal كـReference Implementation (وليس إعادة بناء).
+
+### ما نُفِّذ (Backend فقط)
+- حزمة مستقلة `/app/backend/accounting/` بثلاث طبقات: `core/` (نقي، صفر استيراد من معراج) + `templates/` (بيانات) + `adapters/` (يعرف معراج) + `api.py`.
+- Account Model كامل: id(uuid)، entity_id، code، name/name_ar، type، parent(code)، level، is_group/is_parent، origin(system|standard|custom)، role، is_active، next_child_seq، notes، created_at/by، updated_at/by.
+- توليد أكواد ذرّي منقول من `generateSubAccountCode` (‏$inc على next_child_seq + collision-skip + سقوف 9/99/999 + معاينة غير مدمّرة).
+- القالب: `STANDARD_COA` (منقول من COA_TEMPLATE v2 بلا حسابات السفر) + `MERAAJ_COA` (يضيف 2102 التزامات محافظ، 4106 إيرادات إعلانات، 4107 عمولات المنصة، 5102 مردودات) = 29 حساباً، coa_version=2.
+- `seed_template` (منقول من seedCoaTemplate + stampVersion، idempotent، والوسم بعد التحقق فقط)، `audit_chart` (منقول من auditTenant — الجزء البنيوي)، `validate_chart` (منقول من validateTenant — الجزء البنيوي).
+- حراسات منقولة من route.js: parent موجود/ليس L4/يجب أن يكون Group/نوع مطابق للأب، كود يدوي أرقام+بادئة+طول+فريد، منع تعديل الكود، منع حذف حساب له أبناء أو مستخدم في قيود (عبر usage hook).
+- HARDEN: حماية كل حسابات القالب (STANDARD) لا 3103 فقط؛ منع تغيير type/parent/is_group للحسابات المحمية أو التي لها أبناء/قيود؛ توحيد `is_active` (بدل inactive/is_active المتعارضين)؛ تفعيل/تعطيل جديد (NEW CORE REQUIREMENT).
+- Collections جديدة: `accounting_accounts`, `accounting_entity_settings`. فهارس: uniq(entity_id,code)، uniq(entity_id,id)، (entity_id,parent,code)، uniq(entity_id) للإعدادات بنمط Rahaal الآمن.
+- صلاحيتان جديدتان في rbac: `accounting.accounts.view` / `accounting.accounts.manage` (accountant + finance_manager: view+manage، auditor: view).
+- مسارات `/api/accounting/*` (meta, accounts CRUD, tree, next-code, chart/seed|audit|validate).
+
+### لم يُنفَّذ عمداً (مراحل لاحقة)
+Journal، Posting، Ledger، Reversal، Opening Balances، Closing، Reports، Currency Engine، Account Linking، وأي ربط بـWallet/Ads/Commissions/Withdrawals، وأي Frontend.
+
+### قرارات مفتوحة تنتظر العميل
+1. الكيان المحاسبي: دفتر واحد للمنصة أم دفتر لكل مكتب (حالياً entity واحد `meraaj-platform` قابل للتغيير).
+2. العملة الأساس للمحاسبة في معراج.

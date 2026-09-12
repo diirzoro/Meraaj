@@ -29,6 +29,10 @@ PERMISSIONS = {
     "backup.restore": "الاستعادة من نسخة",
     "ads.view": "مشاهدة قسم الإعلانات", "ads.manage": "إنشاء وإدارة الإعلانات",
     "ads.approve": "اعتماد/رفض الإعلانات", "ads.cancel": "قرار طلبات إلغاء الإعلانات",
+    # Accounting module — Phase 1 introduces the chart-of-accounts permissions only.
+    # Journal/posting/reversal/period permissions arrive with their own phases.
+    "accounting.accounts.view": "عرض دليل الحسابات",
+    "accounting.accounts.manage": "إدارة دليل الحسابات",
 }
 
 # Advertiser accounts (office/individual OWNERS) hold the advertiser-side ads permissions by
@@ -48,16 +52,19 @@ ROLES = {
     "finance_manager": {"label": "Finance Manager", "ar": "المدير المالي",
                         "perms": ["orders.view", "funds.release", "withdrawals.approve",
                                   "commissions.edit", "credit.edit", "reports.view", "data.export",
-                                  "audit.view"]},
+                                  "audit.view", "accounting.accounts.view",
+                                  "accounting.accounts.manage"]},
     "accountant": {"label": "Accountant", "ar": "محاسب",
-                   "perms": ["orders.view", "reports.view", "data.export"]},
+                   "perms": ["orders.view", "reports.view", "data.export",
+                             "accounting.accounts.view", "accounting.accounts.manage"]},
     "compliance_officer": {"label": "Compliance Officer", "ar": "مسؤول الالتزام",
                            "perms": ["orders.view", "audit.view", "documents.passport_view",
                                      "reports.view", "orgs.manage"]},
     "customer_support": {"label": "Customer Support", "ar": "خدمة العملاء",
                          "perms": ["orders.view", "documents.upload"]},
     "auditor": {"label": "Auditor (read only)", "ar": "مدقّق — قراءة فقط",
-                "perms": ["orders.view", "audit.view", "reports.view", "ads.view"]},
+                "perms": ["orders.view", "audit.view", "reports.view", "ads.view",
+                          "accounting.accounts.view"]},
     "seller_admin": {"label": "Seller Admin", "ar": "مدير حساب بائع",
                      "perms": ["orders.view", "orders.decide", "prices.edit", "documents.upload",
                                "ads.view", "ads.manage"]},
