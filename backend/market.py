@@ -906,9 +906,11 @@ async def cancel_request(booking_id: str, payload: Optional[Dict] = Body(default
         refund = round(b["amount_charged"] - admin_fee, 2)
         await adjust_wallet(oid(b["seller_id"]), cur, pending=-b["net_cost_total"], total=-b["net_cost_total"])
         if admin_fee:
-            await log_platform_revenue(admin_fee, f"رسوم إلغاء إدارية: {b['package_title']}", booking_id, currency=cur)
+            await log_platform_revenue(admin_fee, f"رسوم إلغاء إدارية: {b['package_title']}", booking_id, currency=cur,
+                                       key=f"cancel_blue_admin_fee:{booking_id}")
         if b.get("buyer_type") != "individual" and b.get("platform_fee"):
-            await log_platform_revenue(-b["platform_fee"], f"عكس عمولة منصة (إلغاء): {b['package_title']}", booking_id, currency=cur)
+            await log_platform_revenue(-b["platform_fee"], f"عكس عمولة منصة (إلغاء): {b['package_title']}", booking_id, currency=cur,
+                                       key=f"cancel_blue_fee_reversal:{booking_id}")
         if b.get("buyer_type") == "individual":
             if b.get("marketer_id") and b.get("marketer_commission"):
                 await adjust_wallet(oid(b["marketer_id"]), cur,
@@ -916,7 +918,8 @@ async def cancel_request(booking_id: str, payload: Optional[Dict] = Body(default
                 await log_txn(b["marketer_id"], "marketer_commission_reversal", -b["marketer_commission"],
                               f"عكس عمولة تسويق (إلغاء): {b['package_title']}", booking_id, currency=cur)
             if b.get("platform_profit"):
-                await log_platform_revenue(-b["platform_profit"], f"عكس أرباح إلغاء: {b['package_title']}", booking_id, currency=cur)
+                await log_platform_revenue(-b["platform_profit"], f"عكس أرباح إلغاء: {b['package_title']}", booking_id, currency=cur,
+                                          key=f"cancel_blue_profit_reversal:{booking_id}")
         await adjust_wallet(user["_id"], cur, available=refund, total=refund)
         await db.packages.update_one({"_id": oid(b["package_id"])}, {"$inc": {"available_seats": b["seats"]}})
         await db.trip_passports.delete_many({"booking_id": booking_id})
@@ -992,9 +995,11 @@ async def cancel_accept(booking_id: str, user: dict = Depends(require_buyer)):
                                    "package_title": b.get("package_title"),
                                    "reason": "إلغاء بعد التأشيرات (تسوية)"})
     if b.get("platform_fee"):
-        await log_platform_revenue(-b["platform_fee"], f"عكس عمولة منصة (إلغاء أصفر): {b['package_title']}", booking_id, currency=cur)
+        await log_platform_revenue(-b["platform_fee"], f"عكس عمولة منصة (إلغاء أصفر): {b['package_title']}", booking_id, currency=cur,
+                                   key=f"cancel_yellow_fee_reversal:{booking_id}")
     if platform_cut:
-        await log_platform_revenue(platform_cut, f"رسوم تشغيلية إلغاء: {b['package_title']}", booking_id, currency=cur)
+        await log_platform_revenue(platform_cut, f"رسوم تشغيلية إلغاء: {b['package_title']}", booking_id, currency=cur,
+                                   key=f"cancel_yellow_platform_cut:{booking_id}")
     if b.get("rahal_ref"):
         await notify_rahal("meraaj.booking.cancelled", {}, envelope={
             "id": str(uuid.uuid4()),

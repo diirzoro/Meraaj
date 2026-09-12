@@ -235,16 +235,15 @@ def actor_label(user: dict) -> str:
 
 
 async def resolve_entity(user: dict, requested: Optional[str] = None) -> str:
-    """Map a Meraaj request onto exactly one accounting entity.
+    """Meraaj V1 exposes exactly ONE accounting entity: the central platform ledger.
 
-    A non-super-admin can never address an entity other than the platform entity, so a
-    crafted `entity_id` query parameter cannot read another entity's chart.
+    Batch 2 policy: NO user — not even a super admin — may address another accounting
+    entity through the Meraaj API, so a crafted `entity_id` cannot reach another ledger.
+    The Generic Core stays multi-entity capable; this adapter simply refuses to expose it.
     """
-    if requested and str(requested).strip():
-        requested = str(requested).strip()
-        if user.get("role") != "super_admin" and requested != PLATFORM_ENTITY:
-            raise HTTPException(403, "لا تملك صلاحية الوصول إلى جهة محاسبية أخرى")
-        return requested
+    if requested and str(requested).strip() and str(requested).strip() != PLATFORM_ENTITY:
+        raise HTTPException(
+            403, "معراج يعمل بدفتر محاسبي مركزي واحد — لا يمكن اختيار جهة محاسبية أخرى")
     return PLATFORM_ENTITY
 
 

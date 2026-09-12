@@ -25,6 +25,8 @@ from .core import (AccountCreate, AccountUpdate, AccountingError, IMMUTABLE_FIEL
                    MIN_LINES, DEFAULT_SCALE, BALANCE_TOLERANCE, as_str,
                    format_entry_no, MANUAL_SOURCE_TYPES, OpeningBalanceRequest,
                    ACCOUNTING_DATE_POLICY, SOURCE_KEY_CONTRACT, REPORT_LIMITS)
+from .scope import (AccountScope, account_scope, assert_accounts_allowed,
+                    scoped_accounts, scoped_tree)
 from datetime import datetime
 
 router = APIRouter(prefix="/api/accounting", tags=["accounting"])
@@ -32,7 +34,35 @@ router = APIRouter(prefix="/api/accounting", tags=["accounting"])
 VIEW = "accounting.accounts.view"
 MANAGE = "accounting.accounts.manage"
 LINKS_MANAGE = "accounting.links.manage"
+LINKS_VIEW = "accounting.links.view"
 RECONCILIATION_VIEW = "accounting.reconciliation.view"
+JOURNALS_VIEW = "accounting.journals.view"
+JOURNALS_CREATE = "accounting.journals.create"
+JOURNALS_POST = "accounting.journals.post"
+JOURNALS_REVERSE = "accounting.journals.reverse"
+LEDGER_VIEW = "accounting.ledger.view"
+STATEMENT_VIEW = "accounting.statement.view"
+REPORTS_VIEW = "accounting.reports.view"
+PERIODS_VIEW = "accounting.periods.view"
+PERIODS_MANAGE = "accounting.periods.manage"
+PERIODS_CLOSE = "accounting.periods.close"
+PERIODS_REOPEN = "accounting.periods.reopen"
+YEAR_CLOSE = "accounting.year.close"
+YEAR_REOPEN = "accounting.year.reopen"
+CURRENCY_VIEW = "accounting.currency.view"
+CURRENCY_MANAGE = "accounting.currency.manage"
+SELF_AUDIT_RUN = "accounting.selfaudit.run"
+
+
+def _require_full_reports(scope: AccountScope) -> None:
+    """A partial (account-scoped) view must NEVER be presented as a full company report.
+    Full financial statements therefore require an UNRESTRICTED account scope in addition
+    to the Full Financial Reports permission."""
+    if not scope.unrestricted:
+        raise AccountingError(
+            "SCOPED_USER_CANNOT_READ_FULL_REPORT",
+            "نطاقك مقصور على حسابات محددة — التقارير المالية الكاملة غير متاحة لك؛ "
+            "استخدم الأستاذ أو كشف الحساب للحسابات المسموح بها", 403)
 
 
 def install_error_handler(app) -> None:
@@ -174,7 +204,8 @@ async def meta(user: dict = Depends(accounting_perm(VIEW))):
 
 @router.post("/journal/validate")
 async def validate_journal(payload: JournalEntryDraft, entity_id: Optional[str] = None,
-                           user: dict = Depends(accounting_perm(VIEW))):
+                           user: dict = Depends(accounting_perm(JOURNALS_CREATE)),
+                           scope: AccountScope = Depends(account_scope())):
     """DRY-RUN ONLY — runs the central journal validator and returns its verdict.
 
     Nothing is stored, numbered, posted or reversed: `persisted:false, posted:false`. This
@@ -182,13 +213,15 @@ async def validate_journal(payload: JournalEntryDraft, entity_id: Optional[str] 
     cannot pass here can never become posted.
     """
     eid = await resolve_entity(user, entity_id)
+    await assert_accounts_allowed(scope, eid, [l.account_code for l in payload.lines])
     return await journal_validator().validate(eid, payload)
 
 
 @router.post("/journal/post")
 async def post_journal(payload: JournalEntryDraft, entity_id: Optional[str] = None,
                        source_key: Optional[str] = Query(default=None, max_length=200),
-                       user: dict = Depends(accounting_perm(MANAGE))):
+                       user: dict = Depends(accounting_perm(JOURNALS_POST)),
+                       scope: AccountScope = Depends(account_scope())):
     """The ONLY way a journal can be written.
 
     API → Adapter → JournalPostingService → JournalValidator → JournalStore.
@@ -196,15 +229,20 @@ async def post_journal(payload: JournalEntryDraft, entity_id: Optional[str] = No
     delegates. There is no update or delete counterpart — a posted entry is immutable.
     """
     eid = await resolve_entity(user, entity_id)
+    await assert_accounts_allowed(scope, eid, [l.account_code for l in payload.lines])
     return await posting_service().post(eid, payload, source_key=source_key,
-                                        by=actor_label(user))
+                                        by=actor_label(user),
+                                        metadata={"actor": {
+                                            "accounting_actor_id": str(user["_id"]),
+                                            "accounting_actor": actor_label(user),
+                                            "actor_kind": "human"}})
 
 
 @router.get("/journal/entries")
 async def list_journal(entity_id: Optional[str] = None,
                        limit: int = Query(default=50, ge=1, le=200),
                        source_type: Optional[str] = None,
-                       user: dict = Depends(accounting_perm(VIEW))):
+                       user: dict = Depends(accounting_perm(JOURNALS_VIEW))):
     eid = await resolve_entity(user, entity_id)
     return {"entity_id": eid,
             "items": await posting_service().list_entries(eid, limit, source_type)}
@@ -212,14 +250,14 @@ async def list_journal(entity_id: Optional[str] = None,
 
 @router.get("/journal/by-source-key/{source_key}")
 async def journal_by_source_key(source_key: str, entity_id: Optional[str] = None,
-                                user: dict = Depends(accounting_perm(VIEW))):
+                                user: dict = Depends(accounting_perm(JOURNALS_VIEW))):
     eid = await resolve_entity(user, entity_id)
     return await posting_service().get_by_source_key(eid, source_key)
 
 
 @router.get("/journal/entries/{entry_id}")
 async def get_journal(entry_id: str, entity_id: Optional[str] = None,
-                      user: dict = Depends(accounting_perm(VIEW))):
+                      user: dict = Depends(accounting_perm(JOURNALS_VIEW))):
     eid = await resolve_entity(user, entity_id)
     return await posting_service().get(eid, entry_id)
 
@@ -232,9 +270,11 @@ async def account_ledger(account_code: str, entity_id: Optional[str] = None,
                          to_date: Optional[datetime] = None,
                          page: int = Query(default=1, ge=1),
                          page_size: int = Query(default=50, ge=1, le=200),
-                         user: dict = Depends(accounting_perm(VIEW))):
+                         user: dict = Depends(accounting_perm(LEDGER_VIEW)),
+                         scope: AccountScope = Depends(account_scope())):
     """Derived read model over POSTED journals. Nothing is stored or cached."""
     eid = await resolve_entity(user, entity_id)
+    await assert_accounts_allowed(scope, eid, [account_code])
     return await ledger_service().account_ledger(
         eid, account_code, currency=currency, from_date=from_date, to_date=to_date,
         page=page, page_size=page_size)
@@ -248,7 +288,7 @@ async def reverse_journal(entry_id: str, reason: str = Query(..., min_length=3,
                           source_key: Optional[str] = Query(default=None,
                                                             max_length=200),
                           date: Optional[datetime] = None,
-                          user: dict = Depends(accounting_perm(MANAGE))):
+                          user: dict = Depends(accounting_perm(JOURNALS_REVERSE))):
     """Creates a mirror entry. The original is never edited or deleted — only its
     reversal metadata is claimed, atomically, by this service."""
     eid = await resolve_entity(user, entity_id)
@@ -275,8 +315,10 @@ async def trial_balance(entity_id: Optional[str] = None,
                         from_date: Optional[datetime] = None,
                         to_date: Optional[datetime] = None,
                         include_zero: bool = False, include_groups: bool = True,
-                        user: dict = Depends(accounting_perm(VIEW))):
+                        user: dict = Depends(accounting_perm(REPORTS_VIEW)),
+                        scope: AccountScope = Depends(account_scope())):
     """Derived from journal entries at read time — nothing is stored or cached."""
+    _require_full_reports(scope)
     eid = await resolve_entity(user, entity_id)
     return await reporting_service().trial_balance(
         eid, currency=currency, from_date=from_date, to_date=to_date,
@@ -290,9 +332,11 @@ async def income_statement(entity_id: Optional[str] = None,
                            to_date: Optional[datetime] = None,
                            include_zero: bool = False,
                            exclude_closing: bool = True,
-                           user: dict = Depends(accounting_perm(VIEW))):
+                           user: dict = Depends(accounting_perm(REPORTS_VIEW)),
+                           scope: AccountScope = Depends(account_scope())):
     """`exclude_closing=true` (default) keeps a HISTORICAL income statement meaningful
     after a year close — the closing entries stay in the book, not in performance."""
+    _require_full_reports(scope)
     eid = await resolve_entity(user, entity_id)
     return await reporting_service().income_statement(
         eid, currency=currency, from_date=from_date, to_date=to_date,
@@ -305,7 +349,7 @@ async def balance_sheet(entity_id: Optional[str] = None,
                         as_of: Optional[datetime] = None,
                         from_date: Optional[datetime] = None,
                         include_zero: bool = False,
-                        user: dict = Depends(accounting_perm(VIEW))):
+                        user: dict = Depends(accounting_perm(REPORTS_VIEW))):
     eid = await resolve_entity(user, entity_id)
     return await reporting_service().balance_sheet(
         eid, currency=currency, as_of=as_of, from_date=from_date,
@@ -316,14 +360,14 @@ async def balance_sheet(entity_id: Optional[str] = None,
 @router.get("/periods")
 async def list_periods(entity_id: Optional[str] = None,
                        fiscal_year: Optional[int] = None,
-                       user: dict = Depends(accounting_perm(VIEW))):
+                       user: dict = Depends(accounting_perm(PERIODS_VIEW))):
     eid = await resolve_entity(user, entity_id)
     return await period_service().list_periods(eid, fiscal_year)
 
 
 @router.get("/periods/for-date")
 async def period_for_date(date: datetime, entity_id: Optional[str] = None,
-                          user: dict = Depends(accounting_perm(VIEW))):
+                          user: dict = Depends(accounting_perm(PERIODS_VIEW))):
     eid = await resolve_entity(user, entity_id)
     return await period_service().period_for_date(eid, date)
 
@@ -333,7 +377,7 @@ async def configure_fiscal(start_month: int = Query(..., ge=1, le=12),
                            start_day: int = Query(1, ge=1, le=28),
                            period_length: str = Query("month"),
                            entity_id: Optional[str] = None,
-                           user: dict = Depends(accounting_perm(MANAGE))):
+                           user: dict = Depends(accounting_perm(PERIODS_MANAGE))):
     """The fiscal year is CONFIGURABLE — never hardcoded January–December."""
     eid = await resolve_entity(user, entity_id)
     return await period_service().configure_fiscal(
@@ -343,7 +387,7 @@ async def configure_fiscal(start_month: int = Query(..., ge=1, le=12),
 @router.post("/periods/generate")
 async def generate_periods(fiscal_year: int = Query(..., ge=1970, le=2999),
                            entity_id: Optional[str] = None,
-                           user: dict = Depends(accounting_perm(MANAGE))):
+                           user: dict = Depends(accounting_perm(PERIODS_MANAGE))):
     eid = await resolve_entity(user, entity_id)
     return await period_service().generate_year(eid, fiscal_year,
                                                 by=actor_label(user))
@@ -351,7 +395,7 @@ async def generate_periods(fiscal_year: int = Query(..., ge=1970, le=2999),
 
 @router.get("/periods/{period_id}/close-preflight")
 async def period_close_preflight(period_id: str, entity_id: Optional[str] = None,
-                                 user: dict = Depends(accounting_perm(VIEW))):
+                                 user: dict = Depends(accounting_perm(PERIODS_VIEW))):
     """READ-ONLY. Any critical inconsistency blocks the close before it is attempted."""
     eid = await resolve_entity(user, entity_id)
     return await period_service().close_preflight(eid, period_id)
@@ -362,7 +406,7 @@ async def close_period(period_id: str,
                        reason: str = Query(..., min_length=3, max_length=500),
                        force_sequence: bool = False,
                        entity_id: Optional[str] = None,
-                       user: dict = Depends(accounting_perm(MANAGE))):
+                       user: dict = Depends(accounting_perm(PERIODS_CLOSE))):
     """Close = LOCK accounting dates. No journal is rewritten, deleted or re-valued."""
     eid = await resolve_entity(user, entity_id)
     return await period_service().close(eid, period_id, reason=reason,
@@ -374,7 +418,7 @@ async def close_period(period_id: str,
 async def reopen_period(period_id: str,
                         reason: str = Query(..., min_length=3, max_length=500),
                         entity_id: Optional[str] = None,
-                        user: dict = Depends(accounting_perm(MANAGE))):
+                        user: dict = Depends(accounting_perm(PERIODS_REOPEN))):
     """The close record is never erased — reopen is appended to the period history."""
     eid = await resolve_entity(user, entity_id)
     return await period_service().reopen(eid, period_id, reason=reason,
@@ -383,7 +427,7 @@ async def reopen_period(period_id: str,
 
 @router.get("/year-close/{fiscal_year}")
 async def year_close_status(fiscal_year: int, entity_id: Optional[str] = None,
-                            user: dict = Depends(accounting_perm(VIEW))):
+                            user: dict = Depends(accounting_perm(PERIODS_VIEW))):
     eid = await resolve_entity(user, entity_id)
     return await year_close_service().status(eid, fiscal_year)
 
@@ -393,7 +437,7 @@ async def close_year(fiscal_year: int,
                      currency: str = Query(..., min_length=2, max_length=8),
                      reason: Optional[str] = Query(default=None, max_length=500),
                      entity_id: Optional[str] = None,
-                     user: dict = Depends(accounting_perm(MANAGE))):
+                     user: dict = Depends(accounting_perm(YEAR_CLOSE))):
     """ONE currency per call — currencies close independently and are never mixed."""
     eid = await resolve_entity(user, entity_id)
     return await year_close_service().close_year(eid, fiscal_year, currency,
@@ -405,7 +449,7 @@ async def reopen_year(fiscal_year: int,
                       currency: str = Query(..., min_length=2, max_length=8),
                       reason: str = Query(..., min_length=3, max_length=500),
                       entity_id: Optional[str] = None,
-                      user: dict = Depends(accounting_perm(MANAGE))):
+                      user: dict = Depends(accounting_perm(YEAR_REOPEN))):
     """CONTROLLED YEAR REOPEN (OPEN-017): the closing journal is REVERSED through the
     reversal engine — never deleted, never edited — then the periods are unlocked and the
     operation state moves to REOPENED. One currency per call."""
@@ -426,7 +470,7 @@ async def reopen_year(fiscal_year: int,
 
 @router.get("/self-audit")
 async def self_audit(entity_id: Optional[str] = None,
-                     user: dict = Depends(accounting_perm(MANAGE))):
+                     user: dict = Depends(accounting_perm(SELF_AUDIT_RUN))):
     """READ-ONLY accounting diagnostic, scoped to ONE entity. It DETECTS and never
     REPAIRS: no journal, account, period, currency, rate or balance is written, and no
     auto-fix exists. Every finding carries a severity and a recommended human action."""
@@ -437,7 +481,7 @@ async def self_audit(entity_id: Optional[str] = None,
 # --------------------------------------- currencies & FX engine (Phase 10)
 @router.get("/currencies")
 async def currency_settings(entity_id: Optional[str] = None,
-                            user: dict = Depends(accounting_perm(VIEW))):
+                            user: dict = Depends(accounting_perm(CURRENCY_VIEW))):
     eid = await resolve_entity(user, entity_id)
     return await entity_currencies().describe(eid)
 
@@ -447,7 +491,7 @@ async def configure_currencies(base_currency: str = Query(..., min_length=2,
                                                           max_length=8),
                                currencies: str = Query(..., min_length=2),
                                entity_id: Optional[str] = None,
-                               user: dict = Depends(accounting_perm(MANAGE))):
+                               user: dict = Depends(accounting_perm(CURRENCY_MANAGE))):
     """Base currency becomes EXPLICIT here — it is never inferred from the first journal."""
     eid = await resolve_entity(user, entity_id)
     codes = [c for c in currencies.split(",") if c.strip()]
@@ -458,7 +502,7 @@ async def configure_currencies(base_currency: str = Query(..., min_length=2,
 @router.post("/currencies/{currency}/active")
 async def set_currency_active(currency: str, active: bool = Query(...),
                              entity_id: Optional[str] = None,
-                             user: dict = Depends(accounting_perm(MANAGE))):
+                             user: dict = Depends(accounting_perm(CURRENCY_MANAGE))):
     """Deactivation blocks NEW postings only — the history stays readable and reportable."""
     eid = await resolve_entity(user, entity_id)
     return await entity_currencies().set_active(eid, currency, active,
@@ -470,7 +514,7 @@ async def list_fx_rates(entity_id: Optional[str] = None,
                         from_currency: Optional[str] = None,
                         to_currency: Optional[str] = None,
                         limit: int = Query(default=100, ge=1, le=500),
-                        user: dict = Depends(accounting_perm(VIEW))):
+                        user: dict = Depends(accounting_perm(CURRENCY_VIEW))):
     eid = await resolve_entity(user, entity_id)
     return await fx_rate_service().list_rates(eid, from_currency, to_currency, limit)
 
@@ -482,7 +526,7 @@ async def add_fx_rate(from_currency: str = Query(..., min_length=2, max_length=8
                       to_currency: Optional[str] = Query(default=None, max_length=8),
                       source: Optional[str] = Query(default=None, max_length=64),
                       entity_id: Optional[str] = None,
-                      user: dict = Depends(accounting_perm(MANAGE))):
+                      user: dict = Depends(accounting_perm(CURRENCY_MANAGE))):
     """`rate` is a STRING on purpose: no float ever enters the FX engine."""
     eid = await resolve_entity(user, entity_id)
     return await fx_rate_service().add_rate(eid, from_currency, rate, effective_date,
@@ -496,7 +540,7 @@ async def fx_convert(amount: str = Query(..., min_length=1),
                      to_currency: Optional[str] = Query(default=None, max_length=8),
                      date: Optional[datetime] = None,
                      entity_id: Optional[str] = None,
-                     user: dict = Depends(accounting_perm(VIEW))):
+                     user: dict = Depends(accounting_perm(CURRENCY_VIEW))):
     """Read-only conversion. Returns the rate it used, so the figure is reproducible."""
     eid = await resolve_entity(user, entity_id)
     return await fx_conversion_service().convert(eid, amount, from_currency,
@@ -512,7 +556,7 @@ async def post_fx_difference(account_code: str = Query(..., min_length=1),
                                                                 max_length=500),
                              date: Optional[datetime] = None,
                              entity_id: Optional[str] = None,
-                             user: dict = Depends(accounting_perm(MANAGE))):
+                             user: dict = Depends(accounting_perm(JOURNALS_POST))):
     """A realized FX difference becomes a BALANCED JOURNAL through the single write
     gateway (`amount > 0` = gain, `amount < 0` = loss). No account balance is mutated."""
     eid = await resolve_entity(user, entity_id)
@@ -532,7 +576,7 @@ async def integration_event_map(user: dict = Depends(accounting_perm(VIEW))):
 
 @router.get("/integration/account-links")
 async def list_account_links(entity_id: Optional[str] = None,
-                             user: dict = Depends(accounting_perm(VIEW))):
+                             user: dict = Depends(accounting_perm(LINKS_VIEW))):
     eid = await resolve_entity(user, entity_id)
     return await account_links().describe(eid)
 
@@ -587,17 +631,20 @@ async def integration_failures(limit: int = Query(default=100, ge=1, le=500),
 # ------------------------------------------------------------------ read paths
 @router.get("/accounts")
 async def list_accounts(entity_id: Optional[str] = None, include_inactive: bool = True,
-                        user: dict = Depends(accounting_perm(VIEW))):
+                        user: dict = Depends(accounting_perm(VIEW)),
+                        scope: AccountScope = Depends(account_scope())):
     eid = await resolve_entity(user, entity_id)
-    return {"entity_id": eid,
-            "items": await chart().list_accounts(eid, include_inactive)}
+    return {"entity_id": eid, "account_scope": scope.public(),
+            "items": await scoped_accounts(scope, eid, include_inactive)}
 
 
 @router.get("/accounts/tree")
 async def accounts_tree(entity_id: Optional[str] = None, include_inactive: bool = True,
-                        user: dict = Depends(accounting_perm(VIEW))):
+                        user: dict = Depends(accounting_perm(VIEW)),
+                        scope: AccountScope = Depends(account_scope())):
     eid = await resolve_entity(user, entity_id)
-    return {"entity_id": eid, "roots": await chart().build_tree(eid, include_inactive)}
+    return {"entity_id": eid, "account_scope": scope.public(),
+            "roots": await scoped_tree(scope, eid, include_inactive)}
 
 
 @router.get("/accounts/next-code")
@@ -609,8 +656,10 @@ async def next_code(parent: str = Query(..., min_length=1), entity_id: Optional[
 
 @router.get("/accounts/by-code/{code}")
 async def account_by_code(code: str, entity_id: Optional[str] = None,
-                          user: dict = Depends(accounting_perm(VIEW))):
+                          user: dict = Depends(accounting_perm(VIEW)),
+                          scope: AccountScope = Depends(account_scope())):
     eid = await resolve_entity(user, entity_id)
+    await assert_accounts_allowed(scope, eid, [code])
     return await chart().find_by_code(eid, code)
 
 
@@ -652,35 +701,50 @@ async def create_account(payload: AccountCreate, entity_id: Optional[str] = None
 
 @router.get("/accounts/{account_id}")
 async def get_account(account_id: str, entity_id: Optional[str] = None,
-                      user: dict = Depends(accounting_perm(VIEW))):
+                      user: dict = Depends(accounting_perm(VIEW)),
+                      scope: AccountScope = Depends(account_scope())):
     eid = await resolve_entity(user, entity_id)
-    return await chart().get_account(eid, account_id)
+    acc = await chart().get_account(eid, account_id)
+    await assert_accounts_allowed(scope, eid, [acc["code"]])
+    return acc
 
 
 @router.patch("/accounts/{account_id}")
 async def update_account(account_id: str, payload: AccountUpdate,
                          entity_id: Optional[str] = None,
-                         user: dict = Depends(accounting_perm(MANAGE))):
+                         user: dict = Depends(accounting_perm(MANAGE)),
+                         scope: AccountScope = Depends(account_scope())):
     eid = await resolve_entity(user, entity_id)
+    await assert_accounts_allowed(
+        scope, eid, [(await chart().get_account(eid, account_id))["code"]])
     return await chart().update_account(eid, account_id, payload, by=actor_label(user))
 
 
 @router.post("/accounts/{account_id}/deactivate")
 async def deactivate_account(account_id: str, entity_id: Optional[str] = None,
-                             user: dict = Depends(accounting_perm(MANAGE))):
+                             user: dict = Depends(accounting_perm(MANAGE)),
+                             scope: AccountScope = Depends(account_scope())):
     eid = await resolve_entity(user, entity_id)
+    await assert_accounts_allowed(
+        scope, eid, [(await chart().get_account(eid, account_id))["code"]])
     return await chart().set_active(eid, account_id, False, by=actor_label(user))
 
 
 @router.post("/accounts/{account_id}/activate")
 async def activate_account(account_id: str, entity_id: Optional[str] = None,
-                           user: dict = Depends(accounting_perm(MANAGE))):
+                           user: dict = Depends(accounting_perm(MANAGE)),
+                           scope: AccountScope = Depends(account_scope())):
     eid = await resolve_entity(user, entity_id)
+    await assert_accounts_allowed(
+        scope, eid, [(await chart().get_account(eid, account_id))["code"]])
     return await chart().set_active(eid, account_id, True, by=actor_label(user))
 
 
 @router.delete("/accounts/{account_id}")
 async def delete_account(account_id: str, entity_id: Optional[str] = None,
-                         user: dict = Depends(accounting_perm(MANAGE))):
+                         user: dict = Depends(accounting_perm(MANAGE)),
+                         scope: AccountScope = Depends(account_scope())):
     eid = await resolve_entity(user, entity_id)
+    await assert_accounts_allowed(
+        scope, eid, [(await chart().get_account(eid, account_id))["code"]])
     return await chart().delete_account(eid, account_id, by=actor_label(user))

@@ -42,6 +42,17 @@ import AdminCancellations from "@/pages/admin/AdminCancellations";
 import MyAds from "@/pages/MyAds";
 import AdminAds from "@/pages/admin/AdminAds";
 import AdminDisputes from "@/pages/admin/AdminDisputes";
+import AccChart from "@/pages/accounting/AccChart";
+import AccVouchers from "@/pages/accounting/AccVouchers";
+import AccJournals from "@/pages/accounting/AccJournals";
+import AccLedger from "@/pages/accounting/AccLedger";
+import AccPeriods from "@/pages/accounting/AccPeriods";
+import AccCurrencies from "@/pages/accounting/AccCurrencies";
+import AccReports from "@/pages/accounting/AccReports";
+import AccLinks from "@/pages/accounting/AccLinks";
+import AccReconciliation from "@/pages/accounting/AccReconciliation";
+import AccSelfAudit from "@/pages/accounting/AccSelfAudit";
+import OfficeStatement from "@/pages/OfficeStatement";
 
 function Loader() {
   return (
@@ -57,6 +68,9 @@ function Protected({ role, perm, children }) {
   if (!user) return <Navigate to="/login" replace />;
   if (perm && permissions.length === 0) return <Loader />;
   if (perm && !can(perm)) return <Navigate to={user.role === "super_admin" ? "/admin" : "/dashboard"} replace />;
+  // `role` omitted => permission-only route: any authenticated role holding the permission
+  // may open it (accounting employees are office/staff accounts, not super admins).
+  if (!role) return <Layout>{children}</Layout>;
   if (user.role === "super_admin" && role !== "admin") return <Navigate to="/admin" replace />;
   if (role === "admin" && user.role !== "super_admin") return <Navigate to="/dashboard" replace />;
   if (role === "office" && user.role !== "office") return <Navigate to="/dashboard" replace />;
@@ -123,6 +137,19 @@ function AppRoutes() {
       <Route path="/admin/cancellations" element={<Protected role="admin"><AdminCancellations /></Protected>} />
       <Route path="/admin/ads" element={<Protected role="admin" perm="ads.view"><AdminAds /></Protected>} />
       <Route path="/admin/disputes" element={<Protected role="admin"><AdminDisputes /></Protected>} />
+
+      {/* ---- الحسابات (permission-only routes: enforced again in the backend) ---- */}
+      <Route path="/accounting/chart" element={<Protected perm="accounting.accounts.view"><AccChart /></Protected>} />
+      <Route path="/accounting/vouchers" element={<Protected perm="accounting.vouchers.view"><AccVouchers /></Protected>} />
+      <Route path="/accounting/journals" element={<Protected perm="accounting.journals.view"><AccJournals /></Protected>} />
+      <Route path="/accounting/ledger" element={<Protected perm="accounting.ledger.view"><AccLedger /></Protected>} />
+      <Route path="/accounting/periods" element={<Protected perm="accounting.periods.view"><AccPeriods /></Protected>} />
+      <Route path="/accounting/currencies" element={<Protected perm="accounting.currency.view"><AccCurrencies /></Protected>} />
+      <Route path="/accounting/links" element={<Protected perm="accounting.links.view"><AccLinks /></Protected>} />
+      <Route path="/accounting/reports" element={<Protected perm="accounting.reports.view"><AccReports /></Protected>} />
+      <Route path="/accounting/reconciliation" element={<Protected perm="accounting.reconciliation.view"><AccReconciliation /></Protected>} />
+      <Route path="/accounting/self-audit" element={<Protected perm="accounting.selfaudit.run"><AccSelfAudit /></Protected>} />
+      <Route path="/office-statement" element={<Protected><OfficeStatement /></Protected>} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

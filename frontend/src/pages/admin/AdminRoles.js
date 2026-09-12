@@ -28,6 +28,8 @@ export default function AdminRoles() {
   const [editUser, setEditUser] = useState(null);
   const [pwd, setPwd] = useState(null);
   const [newUser, setNewUser] = useState(null);
+  const [scope, setScope] = useState(null);
+  const [accounts, setAccounts] = useState([]);
   const [offices, setOffices] = useState([]);
   const [dual, setDual] = useState({});
   const [twofa, setTwofa] = useState(null);
@@ -45,6 +47,8 @@ export default function AdminRoles() {
     api.get("/admin/sessions?active_only=false&limit=100").then((r) => setSessions(r.data));
     api.get("/admin/login-history").then((r) => setHistory(r.data));
     api.get("/admin/approvals").then((r) => setApprovals(r.data));
+    api.get("/accounting/accounts?include_inactive=true")
+      .then((r) => setAccounts(r.data.items || [])).catch(() => setAccounts([]));
   }, [q, filter]);
   useEffect(() => { load(); }, [load]);
 
@@ -142,6 +146,8 @@ export default function AdminRoles() {
                         data-testid={`edit-roles-${u.id}`} className="text-[#0A2540] underline font-semibold">الأدوار</button>
                       <button onClick={() => setPerms({ id: u.id, email: u.email, list: u.extra_permissions || [], denied: u.denied_permissions || [], reason: "" })}
                         data-testid={`edit-perms-${u.id}`} className="mr-2 text-[#0A2540] underline font-semibold">الصلاحيات</button>
+                      <button onClick={() => setScope({ id: u.id, email: u.email, mode: u.account_scope?.mode || "all_accounts", codes: u.account_scope?.codes || [], reason: "" })}
+                        data-testid={`edit-scope-${u.id}`} className="mr-2 text-[#0A2540] underline font-semibold">نطاق الحسابات</button>
                       <button onClick={() => setEditUser({ id: u.id, email: u.email, owner_name: u.owner_name || "", staff_name: u.staff_name || "", phone: u.phone || "", office_name: u.office_name || "", governorate: u.governorate || "", reason: "" })}
                         data-testid={`edit-user-${u.id}`} className="mr-2 text-[#0A2540] underline">البيانات</button>
                       <button onClick={() => setPwd({ id: u.id, email: u.email, new_password: "", reason: "" })}
@@ -412,6 +418,62 @@ export default function AdminRoles() {
           )}
         </DialogContent>
       </Dialog>
+
+      <Dialog open={!!scope} onOpenChange={(o) => !o && setScope(null)}>
+        <DialogContent dir="rtl" className="max-w-md max-h-[85vh] overflow-y-auto" data-testid="scope-dialog">
+          <DialogHeader><DialogTitle>نطاق الحسابات المحاسبية — {scope?.email}</DialogTitle></DialogHeader>
+          {scope && (
+            <div className="space-y-3">
+              <div className="text-[11px] text-muted-foreground">
+                الصلاحية تحدّد <b>هل يدخل الميزة؟</b> والنطاق يحدّد <b>أي حسابات يرى داخلها</b>.
+                النطاق يُطبَّق في الخادم: تمرير رقم حساب يدوياً لا يوسّعه. نطاق الحسابات
+                منفصل تماماً عن نطاق المكاتب التجارية.
+              </div>
+              <div className="space-y-1">
+                {(cat.account_scope_modes || []).map((m) => (
+                  <label key={m.mode} className="flex items-center gap-2 text-xs bg-[#F4F6F8] rounded px-2 py-1.5"
+                         data-testid={`scope-mode-${m.mode}`}>
+                    <input type="radio" name="scope-mode" checked={scope.mode === m.mode}
+                           onChange={() => setScope({ ...scope, mode: m.mode })} />
+                    {m.label_ar}
+                  </label>
+                ))}
+              </div>
+              {scope.mode !== "all_accounts" && (
+                <div className="max-h-52 overflow-y-auto border rounded p-2 space-y-1" data-testid="scope-accounts-list">
+                  {accounts.map((a) => (
+                    <label key={a.code} className="flex items-center gap-2 text-[10px]" data-testid={`scope-account-${a.code}`}>
+                      <input type="checkbox" checked={scope.codes.includes(a.code)}
+                             onChange={(e) => setScope({ ...scope, codes: e.target.checked
+                               ? [...scope.codes, a.code] : scope.codes.filter((x) => x !== a.code) })} />
+                      <span className="font-mono">{a.code}</span> {a.name_ar || a.name}
+                      {a.is_group && <span className="text-muted-foreground">(مجموعة)</span>}
+                    </label>
+                  ))}
+                </div>
+              )}
+              <div><Label className="text-[11px]">السبب (إلزامي)</Label>
+                <Textarea rows={2} className="text-xs" value={scope.reason} data-testid="scope-reason"
+                  onChange={(e) => setScope({ ...scope, reason: e.target.value })} /></div>
+              <div className="flex gap-2">
+                <Button className="flex-1 bg-[#0A2540] hover:bg-[#061A2E]" data-testid="save-scope-btn"
+                  disabled={busy || scope.reason.trim().length < 3}
+                  onClick={() => act(async () => {
+                    await api.post(`/admin/rbac/users/${scope.id}/account-scope`,
+                      { mode: scope.mode, codes: scope.codes, reason: scope.reason });
+                    setScope(null);
+                  }, "تم حفظ نطاق الحسابات")}>حفظ</Button>
+                <Button variant="outline" data-testid="clear-scope-btn" disabled={busy}
+                  onClick={() => act(async () => {
+                    await api.delete(`/admin/rbac/users/${scope.id}/account-scope?reason=${encodeURIComponent(scope.reason || "إزالة النطاق")}`);
+                    setScope(null);
+                  }, "تمت إزالة النطاق")}>إزالة النطاق</Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
 
       <Dialog open={!!pwd} onOpenChange={(o) => !o && setPwd(null)}>
         <DialogContent dir="rtl" className="max-w-md max-h-[85vh] overflow-y-auto" data-testid="pwd-dialog">

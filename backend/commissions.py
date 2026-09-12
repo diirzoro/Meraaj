@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from db import (db, serialize, oid, now_iso, platform_pct, adjust_wallet, log_txn,
                 log_platform_revenue, audit, wallet_available, CurrencyField)
 from security import require_admin
+from accounting.booking_events import emit_commission_adjustment
 
 router = APIRouter(prefix="/api/admin", tags=["admin-commissions"])
 
@@ -239,7 +240,9 @@ async def override_commission(booking_id: str, payload: OverrideIn, admin: dict 
     await log_txn(b["buyer_id"], "commission_adjustment", -delta,
                   f"تعديل عمولة المنصة: {b['package_title']}", booking_id, currency=cur)
     await log_platform_revenue(delta, f"تعديل يدوي لعمولة المنصة: {b['package_title']}",
-                               booking_id, currency=cur)
+                               booking_id, currency=cur,
+                               key=f"commission_override:{booking_id}:{new_fee}")
+    await emit_commission_adjustment(b, booking_id, delta, admin)
     await db.bookings.update_one({"_id": b["_id"]}, {"$set": {
         "platform_fee": new_fee,
         "amount_charged": round(float(b.get("amount_charged") or 0) + delta, 2),

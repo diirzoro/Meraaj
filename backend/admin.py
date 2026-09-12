@@ -8,6 +8,7 @@ from market import _room_customer_price, _room_num
 from integration import notify_rahal
 from accounting.business_events import (emit_b2b_transfer, emit_wallet_topup,
                                         emit_wallet_withdrawal)
+from accounting.booking_events import emit_dispute_refund, emit_dispute_release
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -220,10 +221,19 @@ async def resolve_dispute(booking_id: str, payload: dict, admin: dict = Depends(
         await adjust_wallet(oid(b["buyer_id"]), cur, available=refund, total=refund)
         await db.packages.update_one({"_id": oid(b["package_id"])}, {"$inc": {"available_seats": b["seats"]}})
         await log_txn(b["buyer_id"], "dispute_refund", refund, f"استرداد نزاع: {b['package_title']}", booking_id, currency=cur)
+        await emit_dispute_refund(b, booking_id, refund,
+                                  {"_id": b["buyer_id"], "office_name": b.get("buyer_office_name")},
+                                  admin)
         new_status = "cancelled"
     elif resolution == "release_seller":
         await adjust_wallet(oid(b["seller_id"]), cur, pending=-net, available=(net - fee), total=-fee)
         await log_txn(b["seller_id"], "dispute_release", net - fee, f"فك نزاع لصالح البائع: {b['package_title']}", booking_id, currency=cur)
+        if fee:
+            await log_platform_revenue(fee, f"عمولة منصة (حسم نزاع): {b['package_title']}", booking_id,
+                                       currency=cur, key=f"dispute_release_fee:{booking_id}")
+        await emit_dispute_release(b, booking_id,
+                                   {"_id": b["seller_id"], "office_name": b.get("seller_office_name")},
+                                   admin)
         new_status = "green"
     else:
         raise HTTPException(400, "قرار غير صالح")
@@ -297,13 +307,15 @@ async def decide_cancellation(booking_id: str, payload: CancellationDecisionInpu
         # 1) Reverse effects recognized at approval, then 2) redistribute the held amount.
         await adjust_wallet(oid(claimed["seller_id"]), cur, pending=-net_total, total=-net_total)
         if claimed.get("buyer_type") == "office" and claimed.get("platform_fee"):
-            await log_platform_revenue(-claimed["platform_fee"], f"عكس عمولة منصة (إلغاء نهائي): {claimed.get('package_title','')}", booking_id, currency=cur)
+            await log_platform_revenue(-claimed["platform_fee"], f"عكس عمولة منصة (إلغاء نهائي): {claimed.get('package_title','')}", booking_id, currency=cur,
+                                       key=f"cancel_final_fee_reversal:{booking_id}")
         if claimed.get("buyer_type") != "office":
             if claimed.get("marketer_id") and claimed.get("marketer_commission"):
                 await adjust_wallet(oid(claimed["marketer_id"]), cur, pending=-claimed["marketer_commission"], total=-claimed["marketer_commission"])
                 await log_txn(claimed["marketer_id"], "marketer_commission_reversal", -claimed["marketer_commission"], f"عكس عمولة تسويق (إلغاء نهائي): {claimed.get('package_title','')}", booking_id, currency=cur)
             if claimed.get("platform_profit"):
-                await log_platform_revenue(-claimed["platform_profit"], f"عكس أرباح (إلغاء نهائي): {claimed.get('package_title','')}", booking_id, currency=cur)
+                await log_platform_revenue(-claimed["platform_profit"], f"عكس أرباح (إلغاء نهائي): {claimed.get('package_title','')}", booking_id, currency=cur,
+                                          key=f"cancel_final_profit_reversal:{booking_id}")
         if refund_amount:
             await adjust_wallet(oid(claimed["buyer_id"]), cur, available=refund_amount, total=refund_amount)
             await log_txn(claimed["buyer_id"], "cancel_refund", refund_amount, f"استرداد إلغاء نهائي: {claimed.get('package_title','')}", booking_id, currency=cur)
@@ -311,7 +323,8 @@ async def decide_cancellation(booking_id: str, payload: CancellationDecisionInpu
             await adjust_wallet(oid(claimed["seller_id"]), cur, available=seller_compensation, total=seller_compensation)
             await log_txn(claimed["seller_id"], "seller_compensation", seller_compensation, f"تعويض البائع (إلغاء): {claimed.get('package_title','')}", booking_id, currency=cur)
         if platform_adjustment:
-            await log_platform_revenue(platform_adjustment, f"تسوية المنصة (إلغاء نهائي): {claimed.get('package_title','')}", booking_id, currency=cur)
+            await log_platform_revenue(platform_adjustment, f"تسوية المنصة (إلغاء نهائي): {claimed.get('package_title','')}", booking_id, currency=cur,
+                                       key=f"cancel_final_platform_adjustment:{booking_id}")
         await db.packages.update_one({"_id": oid(claimed["package_id"])}, {"$inc": {"available_seats": claimed.get("seats", 0)}})
         await db.trip_passports.delete_many({"booking_id": booking_id})
 

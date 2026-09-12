@@ -134,6 +134,83 @@ async def emit_cancel_yellow(booking: dict, booking_id: str, deduction: float,
                       "released_deferred": deferred})
 
 
+async def emit_dispute_refund(booking: dict, booking_id: str, refund: float,
+                              buyer: dict, admin: dict = None) -> dict:
+    """Dispute resolved FOR THE BUYER: the seller payable and the deferred platform share
+    are released and the buyer's wallet liability is restored. No revenue is earned."""
+    net = _round(booking.get("net_cost_total"))
+    charged = _round(booking.get("amount_charged"))
+    deferred = _round(charged - net)
+    refund = _round(refund)
+    lines = [(K.SELLER_PAYABLE, "debit", net)]
+    if deferred > 0:
+        lines.append((K.DEFERRED_PLATFORM_REVENUE, "debit", deferred))
+    lines.append((K.OFFICE_WALLET_LIABILITY, "credit", refund))
+    residual = _round(net + max(deferred, 0) - refund)
+    if residual > 0:
+        lines.append((K.SELLER_PAYABLE, "credit", residual))
+    elif residual < 0:
+        lines.append((K.SELLER_PAYABLE, "debit", -residual))
+    return await accounting_bridge().post_event(
+        "dispute_refund", event_id=booking_id,
+        currency=booking.get("currency", "USD"), amount=refund, lines=lines,
+        business_actor=actor_from_user(buyer),
+        accounting_actor=actor_from_user(admin) if admin else SYSTEM,
+        description=f"حسم نزاع لصالح المشتري: {booking.get('package_title', '')}",
+        business_ref={"refund": refund, "released_deferred": deferred,
+                      "resolution": "refund_buyer"})
+
+
+async def emit_dispute_release(booking: dict, booking_id: str, seller: dict,
+                               admin: dict = None) -> dict:
+    """Dispute resolved FOR THE SELLER: the same earning point as a settlement — the
+    deferred share becomes revenue and the seller-side fee is recognised."""
+    net = _round(booking.get("net_cost_total"))
+    fee = _round(booking.get("platform_fee"))
+    charged = _round(booking.get("amount_charged"))
+    deferred = _round(charged - net)
+    marketer = _round(booking.get("marketer_commission"))
+    lines = [(K.SELLER_PAYABLE, "debit", net),
+             (K.OFFICE_WALLET_LIABILITY, "credit", _round(net - fee))]
+    if fee > 0:
+        lines.append((K.COMMISSION_REVENUE, "credit", fee))
+    if deferred > 0:
+        lines.append((K.DEFERRED_PLATFORM_REVENUE, "debit", deferred))
+        platform_share = _round(deferred - marketer)
+        if platform_share > 0:
+            lines.append((K.COMMISSION_REVENUE, "credit", platform_share))
+        if marketer > 0:
+            lines.append((K.OFFICE_WALLET_LIABILITY, "credit", marketer))
+    return await accounting_bridge().post_event(
+        "dispute_release", event_id=booking_id,
+        currency=booking.get("currency", "USD"), amount=net, lines=lines,
+        business_actor=actor_from_user(seller),
+        accounting_actor=actor_from_user(admin) if admin else SYSTEM,
+        description=f"حسم نزاع لصالح البائع: {booking.get('package_title', '')}",
+        business_ref={"platform_fee": fee, "recognized_deferred": deferred,
+                      "marketer_commission": marketer, "resolution": "release_seller"})
+
+
+async def emit_commission_adjustment(booking: dict, booking_id: str, delta: float,
+                                     admin: dict) -> dict:
+    """Manual commission override BEFORE settlement: the difference moves between the
+    buyer's wallet liability and the DEFERRED platform share — never revenue (PD-1)."""
+    delta = _round(delta)
+    if delta > 0:
+        lines = [(K.OFFICE_WALLET_LIABILITY, "debit", delta),
+                 (K.DEFERRED_PLATFORM_REVENUE, "credit", delta)]
+    else:
+        lines = [(K.DEFERRED_PLATFORM_REVENUE, "debit", -delta),
+                 (K.OFFICE_WALLET_LIABILITY, "credit", -delta)]
+    return await accounting_bridge().post_event(
+        "commission_adjustment", event_id=f"{booking_id}:{delta}",
+        currency=booking.get("currency", "USD"), amount=abs(delta), lines=lines,
+        business_actor=actor_from_user(admin), accounting_actor=actor_from_user(admin),
+        description=f"تعديل يدوي لعمولة المنصة: {booking.get('package_title', '')}",
+        business_ref={"booking_id": booking_id, "delta": delta,
+                      "approved_by": (admin or {}).get("email")})
+
+
 async def emit_ads_capture(ad: dict, ad_id: str, price: float, currency: str,
                            payer: dict, admin: dict = None) -> dict:
     """PD-4A: CAPTURE is the single ads revenue moment. HOLD and RELEASE post nothing."""
