@@ -18,6 +18,7 @@ from .adapters import (accounting_perm, actor_label, chart, currency_policy,
                        period_service, year_close_service, entity_currencies,
                        fx_rate_service, fx_conversion_service, fx_result_service,
                        self_audit_service, record_accounting_audit,
+                       account_links, accounting_bridge, business_reconciliation,
                        resolve_entity, PLATFORM_ENTITY)
 from .core import (AccountCreate, AccountUpdate, AccountingError, IMMUTABLE_FIELDS,
                    JournalEntryDraft, JournalStatus, JOURNAL_DOCUMENT_CONTRACT,
@@ -30,6 +31,8 @@ router = APIRouter(prefix="/api/accounting", tags=["accounting"])
 
 VIEW = "accounting.accounts.view"
 MANAGE = "accounting.accounts.manage"
+LINKS_MANAGE = "accounting.links.manage"
+RECONCILIATION_VIEW = "accounting.reconciliation.view"
 
 
 def install_error_handler(app) -> None:
@@ -147,7 +150,23 @@ async def meta(user: dict = Depends(accounting_perm(VIEW))):
                          "consolidated_reporting": "DEFERRED — CONSOLIDATED FX REPORTING"},
             "correction": "Reversal Engine only — an FX journal is immutable",
         },
-        "not_implemented_yet": ["business_account_linking", "business_integration",
+        "integration": {
+            "phase": "P1 — foundation + topup/withdrawal/B2B",
+            "direction": "business → integration → accounting.core (never the reverse)",
+            "wallet_policy": "رصيد محفظة المكتب = التزام على المنصة تجاه المكتب؛ الشحن "
+                             "ليس إيراداً والسحب ليس مصروفاً",
+            "commission_policy": "العمولة إيراد عند التسوية لا عند الحجز",
+            "ads_policy": "HOLD/RELEASE بلا قيد (تجنيب داخلي) والإيراد عند CAPTURE",
+            "b2b_policy": "نقل التزام بين طرفين — لا إيراد ولا مصروف",
+            "double_effect_protection": "الأثر التجاري (adjust_wallet/log_txn) والأثر "
+                                        "المحاسبي (قيد) منفصلان تماماً؛ لا يُستخدم القيد "
+                                        "لتغيير رصيد الأعمال ولا العكس",
+            "atomicity": "غير مُدّعاة: لا Transactions بين الأعمال والمحاسبة — "
+                          "source_key حتمي + تسجيل الفشل + مطابقة كاشفة",
+            "account_links": "بالأدوار أو ربط صريح مُتحقَّق — لا رقم حساب ثابت ولا حساب "
+                             "افتراضي صامت (FAIL BEFORE FINANCIAL EFFECT)",
+        },
+        "not_implemented_yet": ["business_integration_remaining_flows",
                                 "fx_revaluation", "consolidated_fx_reporting",
                                 "base_currency_change_migration"],
     }
@@ -500,6 +519,69 @@ async def post_fx_difference(account_code: str = Query(..., min_length=1),
     return await fx_result_service().post_realized_difference(
         eid, account_code, amount, source_key, currency=currency, date=date,
         description=description, by=actor_label(user))
+
+
+# --------------------------------------------- business integration (P1)
+@router.get("/integration/event-map")
+async def integration_event_map(user: dict = Depends(accounting_perm(VIEW))):
+    """The declared financial event map: which business moments post a journal and which
+    explicitly do NOT (a documented decision, not an omission)."""
+    from .integration.events import event_map_public
+    return event_map_public()
+
+
+@router.get("/integration/account-links")
+async def list_account_links(entity_id: Optional[str] = None,
+                             user: dict = Depends(accounting_perm(VIEW))):
+    eid = await resolve_entity(user, entity_id)
+    return await account_links().describe(eid)
+
+
+@router.post("/integration/account-links/{key}")
+async def set_account_link(key: str,
+                           account_code: str = Query(..., min_length=1),
+                           entity_id: Optional[str] = None,
+                           user: dict = Depends(accounting_perm(LINKS_MANAGE))):
+    """No hardcoded account number exists anywhere in the business code: this is where a
+    concept is bound to an account, validated (exists · same entity · active · postable ·
+    correct type) before it can ever carry a financial effect."""
+    eid = await resolve_entity(user, entity_id)
+    actor = actor_label(user)
+    result = await account_links().set_link(eid, key, account_code, by=actor)
+    await record_accounting_audit(eid, "accounting.account_link.set", actor,
+                                  after={"key": key, "account_code": account_code})
+    return result
+
+
+@router.delete("/integration/account-links/{key}")
+async def clear_account_link(key: str, entity_id: Optional[str] = None,
+                             user: dict = Depends(accounting_perm(LINKS_MANAGE))):
+    eid = await resolve_entity(user, entity_id)
+    actor = actor_label(user)
+    result = await account_links().clear_link(eid, key)
+    await record_accounting_audit(eid, "accounting.account_link.clear", actor,
+                                  after={"key": key})
+    return result
+
+
+@router.get("/integration/reconciliation")
+async def integration_reconciliation(limit: int = Query(default=500, ge=1, le=1000),
+                                     user: dict = Depends(
+                                         accounting_perm(RECONCILIATION_VIEW))):
+    """READ-ONLY detection of business↔accounting gaps. No auto-post, no auto-balance,
+    no auto-repair."""
+    eid = await resolve_entity(user, None)
+    return await business_reconciliation().run(limit=limit)
+
+
+@router.get("/integration/failures")
+async def integration_failures(limit: int = Query(default=100, ge=1, le=500),
+                               user: dict = Depends(
+                                   accounting_perm(RECONCILIATION_VIEW))):
+    """Accounting effects that failed AFTER their business effect succeeded. Recorded, not
+    swallowed; retryable with the same idempotency key."""
+    await resolve_entity(user, None)
+    return {"items": await accounting_bridge().list_failures(limit)}
 
 
 # ------------------------------------------------------------------ read paths

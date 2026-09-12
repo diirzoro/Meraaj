@@ -119,6 +119,30 @@ def self_audit_service() -> AccountingSelfAudit:
     return _self_audit
 
 
+# ---------------------------------------------------------- business integration (P1)
+# Imported here (not in `core`) so the dependency direction stays
+# business → integration → core, never the reverse.
+from ..integration import (AccountLinkService, AccountingBridge,  # noqa: E402
+                           BusinessAccountingReconciliation)
+
+_account_links = AccountLinkService(db, _store, _chart)
+_bridge = AccountingBridge(db, PLATFORM_ENTITY, _posting_service, _account_links)
+_reconciliation = BusinessAccountingReconciliation(db, PLATFORM_ENTITY, _journal_store,
+                                                   _bridge)
+
+
+def account_links() -> AccountLinkService:
+    return _account_links
+
+
+def accounting_bridge() -> AccountingBridge:
+    return _bridge
+
+
+def business_reconciliation() -> BusinessAccountingReconciliation:
+    return _reconciliation
+
+
 async def record_accounting_audit(entity_id: str, action: str, actor: str,
                                   reason: str = None, before=None, after=None,
                                   reference: str = None) -> None:
@@ -202,6 +226,7 @@ async def ensure_accounting_indexes() -> dict:
     result["period_indexes"] = await _period_store.ensure_indexes()
     result["currency_indexes"] = await _currency_settings_store.ensure_indexes()
     result["fx_rate_indexes"] = await _fx_rate_store.ensure_indexes()
+    result["account_link_indexes"] = await _account_links.ensure_indexes()
     return result
 
 

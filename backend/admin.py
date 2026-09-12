@@ -6,6 +6,8 @@ from db import db, serialize, oid, now_iso, adjust_wallet, log_txn, wallet_avail
 from security import require_admin
 from market import _room_customer_price, _room_num
 from integration import notify_rahal
+from accounting.business_events import (emit_b2b_transfer, emit_wallet_topup,
+                                        emit_wallet_withdrawal)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -128,6 +130,10 @@ async def review_topup(topup_id: str, payload: dict, admin: dict = Depends(requi
         cur = t.get("currency", "USD")
         await adjust_wallet(oid(t["office_id"]), cur, available=t["amount"], total=t["amount"])
         await log_txn(t["office_id"], "topup", t["amount"], f"شحن محفظة ({t['method']})", topup_id, currency=cur)
+        # Accounting effect (integration layer). It never touches the wallet above, and a
+        # failure here leaves a detectable gap instead of reverting a completed operation.
+        office = await db.users.find_one({"_id": oid(t["office_id"])})
+        await emit_wallet_topup(t, topup_id, office, admin)
     await db.topups.update_one({"_id": t["_id"]}, {"$set": {
         "status": "approved" if approve else "rejected", "reviewed_at": now_iso()}})
     return {"ok": True, "status": "approved" if approve else "rejected"}
@@ -156,6 +162,7 @@ async def review_transfer(transfer_id: str, payload: dict, admin: dict = Depends
         await adjust_wallet(oid(tr["to_office_id"]), cur, available=tr["amount"], total=tr["amount"])
         await log_txn(tr["from_office_id"], "p2p_out", -tr["amount"], f"تحويل إلى {tr['to_office_name']}", transfer_id, currency=cur)
         await log_txn(tr["to_office_id"], "p2p_in", tr["amount"], f"تحويل من {tr['from_office_name']}", transfer_id, currency=cur)
+        await emit_b2b_transfer(tr, transfer_id, sender, admin)
     await db.transfers.update_one({"_id": tr["_id"]}, {"$set": {
         "status": "approved" if approve else "rejected", "reviewed_at": now_iso()}})
     return {"ok": True, "status": "approved" if approve else "rejected"}
@@ -182,6 +189,7 @@ async def review_withdrawal(wid: str, payload: dict, admin: dict = Depends(requi
             raise HTTPException(400, "رصيد المكتب غير كافٍ")
         await adjust_wallet(oid(w["office_id"]), cur, available=-w["amount"], total=-w["amount"])
         await log_txn(w["office_id"], "withdrawal", -w["amount"], f"سحب أرباح ({w['method']})", wid, currency=cur)
+        await emit_wallet_withdrawal(w, wid, office, admin)
     await db.withdrawals.update_one({"_id": w["_id"]}, {"$set": {
         "status": "approved" if approve else "rejected", "reviewed_at": now_iso()}})
     return {"ok": True, "status": "approved" if approve else "rejected"}

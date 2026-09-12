@@ -448,3 +448,37 @@ Collections جديدة: `accounting_periods`, `accounting_year_close_ops`, `acco
 
 ### الحكم
 **READY FOR INTEGRATION** — لا Blocker. المهمة القادمة تبدأ بـ: INSPECT CURRENT MERAAJ → INSPECT RAHAAL (Read-only reference) → INVENTORY → MAP FINANCIAL EVENTS → DEFINE ACCOUNT LINKS → INTEGRATE.
+
+## Accounting Integration — P1 (Foundation + Topup/Withdrawal/B2B) — 2026-09-12
+
+### INSPECT + INVENTORY (الكود هو المرجع)
+- محرّك الأعمال المالي واحد ومركزي: `db.py:98 adjust_wallet()` = `$inc` على `users.wallet.{SAR|USD}` (float) و`db.py:112 log_txn()` → `db.transactions`. النداءات: market.py 20 · admin.py 21 · integration.py 7 · ads_billing.py 7 · commissions.py 3 · wallet.py 1.
+- الأحداث المالية المرصودة: topup · withdrawal · booking_debit · booking_escrow · settlement (+رسوم) · عمولة مسوّق (منح/تحرير/عكس) · cancel_refund/cancel_deduction/seller_compensation · dispute_refund/dispute_release · p2p_out/p2p_in · إعلانات HOLD/CAPTURE/RELEASE · commission_adjustment · تسويات finance.py. عملتان: SAR/USD.
+- RBAC: 25 صلاحية · 13 دوراً · `DUAL_CONTROL` لـ7 عمليات · تجاوزات لكل مستخدم. لا Account-Level Scope.
+- `finance.py` (659 سطراً): Ledger/Vouchers/Reconciliation **تجارية** لا محاسبية → REUSE كما هي (لم تُمسّ).
+
+### قرارات السياسة المالية المعتمدة (مطبَّقة)
+- **محفظة المكتب = التزام على المنصة** (Office Wallet Liability): الشحن = مدين نقدية/بنك · دائن الالتزام (ليس إيراداً). السحب = مدين الالتزام · دائن نقدية (ليس مصروفاً).
+- **B2B = نقل التزام** بين طرفين: لا إيراد ولا مصروف؛ القيد على حساب الالتزام نفسه والطرفان في metadata (العرض لكل مكتب في كشف الحساب لا في الأستاذ).
+- **العمولة إيراد عند التسوية** لا عند الحجز · **الإعلانات: HOLD/RELEASE بلا قيد والإيراد عند CAPTURE** (معلنة في خريطة الأحداث، تُنفَّذ في P2).
+- **العملة الأساس = SAR** (SAR/USD مكوّنتان، بلا أي تحويل بينهما).
+
+### ما نُفِّذ (Backend فقط)
+- `accounting/integration/` (طبقة خارج النواة، الاتجاه: business → integration → core):
+  - `account_links.py`: 12 مفتاح ربط قابل للتكوين + حل بالأدوار (`explicit link → semantic role → أول حساب تفصيلي قابل للترحيل`) + تحقق (موجود · نفس الجهة · نشط · تفصيلي · نوع صحيح) → **FAIL BEFORE FINANCIAL EFFECT**، **صفر رقم حساب ثابت وصفر حساب افتراضي صامت**. Collection: `accounting_account_links`.
+  - `events.py`: خريطة الأحداث المالية (16 حدثاً) مع تمييز `posts_journal=False` للأحداث غير المحاسبية (HOLD/RELEASE/طلبات/escrow/سقف ائتماني) — «لا قيد» قرار موثّق لا إغفال + `build_source_key()`.
+  - `posting_bridge.py`: جسر الحدث → قيد متوازن عبر بوابة الكتابة الوحيدة، يحمل **Business Actor و Accounting Actor معاً** في metadata، ولا يلمس أي محفظة. الفشل بعد نجاح الأثر التجاري **يُسجَّل** (`accounting_integration_failures`) ويبقى قابلاً للاستدراك بنفس المفتاح (لا يكسر عملية الأعمال أبداً).
+  - `reconciliation.py`: كشف قراءة فقط (حدث تجاري بلا قيد · قيد بلا مرجع تجاري · مفتاح مكرر · أثر محاسبي فاشل) — **DETECT بلا REPAIR**.
+- `accounting/business_events.py`: نقطة نداء واحدة للأعمال (`emit_wallet_topup/withdrawal/b2b_transfer`) + `actor_from_user` (هوية من سياق المصادقة فقط، و**System Actor حقيقي** للعمليات الآلية).
+- تكامل 3 Flows في `admin.py` (بعد الأثر التجاري، بلا مسّه): اعتماد الشحن · اعتماد السحب · اعتماد تحويل B2B.
+- RBAC: أُضيفت 3 صلاحيات (`accounting.journals.view` · `accounting.links.manage` · `accounting.reconciliation.view`) **بـDefault Deny** (غير ممنوحة لأي دور تلقائياً).
+- 6 مسارات جديدة: event-map · account-links (عرض/ربط/إزالة) · reconciliation · failures.
+
+### QA
+- **P1 Integration QA**: `tests/integration_p1_qa.py` → **30 PASS / 0 FAIL** (الربط، رفض النوع/المجموعة/المفقود، source_key، الأحداث غير المحاسبية، الشحن/السحب/B2B، إعادة المحاولة والتزامن، فصل الفاعلين، System Actor، ميزان المراجعة والمعادلة، **لا إيراد وهمي من حركات المحفظة**، الالتزام 600 = 1000−400، تسجيل الفشل، كشف المطابقة، تنظيف كامل).
+- **Core Regression**: `tests/accounting_core_qa.py` → **79 PASS / 0 FAIL** (بلا انحدار).
+- كل المجموعات (9) = **0 مستند** بعد التنظيف. لا Migration/Backfill/بيانات إنتاج.
+
+### المتبقي (لم يُنفَّذ بعد)
+P2 بقية Flows (حجز/تسوية/عمولات/إلغاء/نزاعات/إعلانات + توافق finance.py) · P3 RBAC تفصيلي + Account/Office Scope + Maker–Checker + تدقيق الصلاحيات · P4 واجهة المحاسبة (9 شاشات) · P5 كشف حساب المكتب + Sidebar + QA شاملة E2E + التقرير النهائي.
+**Historical cutover**: DEFERRED — CONTROLLED ACCOUNTING CUTOVER REQUIRED (لا تحويل لأي تاريخ/أرصدة قائمة).

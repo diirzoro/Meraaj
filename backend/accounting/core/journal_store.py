@@ -395,6 +395,14 @@ class JournalStore:
         return await self.entries.distinct("metadata.fx.rate_id",
                                             {"entity_id": entity_id})
 
+    async def duplicate_source_keys(self, entity_id: str) -> list:
+        rows = await self.entries.aggregate([
+            {"$match": {"entity_id": entity_id, "source_key": {"$type": "string"}}},
+            {"$group": {"_id": "$source_key", "n": {"$sum": 1}}},
+            {"$match": {"n": {"$gt": 1}}},
+        ]).to_list(length=None)
+        return [r["_id"] for r in rows]
+
     # ------------------------------------------------- reversal ops (Phase 6)
     async def claim_for_reversal(self, entity_id: str, original_id: str,
                                  reversal_id: str, reason: str, by: str, at,

@@ -33,6 +33,11 @@ PERMISSIONS = {
     # Journal/posting/reversal/period permissions arrive with their own phases.
     "accounting.accounts.view": "عرض دليل الحسابات",
     "accounting.accounts.manage": "إدارة دليل الحسابات",
+    # Integration phase: links, reconciliation and the journal read view. Default DENY —
+    # no admin receives these implicitly.
+    "accounting.journals.view": "عرض القيود اليومية",
+    "accounting.links.manage": "ربط الحسابات بالعمليات التجارية",
+    "accounting.reconciliation.view": "عرض مطابقة الأعمال والمحاسبة",
 }
 
 # Advertiser accounts (office/individual OWNERS) hold the advertiser-side ads permissions by
