@@ -327,3 +327,17 @@ Backend فقط. لا Posting، لا تخزين، لا Ledger، لا Reversal، �
 - **Phase 7 Opening**: `core/opening_balances.py` — الافتتاح **قيد مُرحَّل** عبر نفس بوابة الكتابة (لا حقل رصيد)، حساب الموازنة بالدور `OPENING_BALANCE_SUSPENSE` (لا الرقم 3103)، عملة واحدة لكل قيد، Assets/Liabilities/Equity فقط (Revenue/Expense مرفوضة وتحتاج سياسة سنة مالية)، منع Group/Inactive/حساب بدور/حساب التسوية/التكرار، `source_key` إلزامي، **افتتاح واحد لكل (entity, currency)** والمعكوس لا يُحتسب فيسمح بالتصحيح، وحراسة نشاط قائم (`LEDGER_HAS_ACTIVITY` + `allow_after_activity`)، وتاريخ إلزامي (لا now() صامت).
 - مسارات جديدة: `GET /ledger/account/{code}` · `POST /journal/entries/{id}/reverse` · `POST /opening-balances`.
 - **لا Migration/Backfill/بيانات**: الـCollections الثلاث فارغة (0)، ولم تُهيَّأ أي Entity.
+
+## Accounting Module — PHASE 6 Hardening + PHASE 8 (Core Reports) — 2026-09-12
+- **Phase 6 Hardening (تصليب الاستعادة)**: حالة وسيطة صريحة `reversal_claim` — الأصل يبقى `posted` أثناء العملية (لا تُستخدم حالة محاسبية نهائية كقفل مؤقت)، ثم `finalize_reversal` يحوّله إلى `reversed` **فقط بعد** وجود قيد المرآة. استعادة بعد الانقطاع: إن وُجد Claim معلّق و مرآة موجودة → يُستكمل الربط (`recovered:true`)؛ وإن لم توجد مرآة → Claim قابل للاسترجاع بعد `STALE_CLAIM_SECONDS=120` بلا أي تعديل يدوي على الـDB. تعويض `release_reversal_claim` عند فشل الإدخال.
+- **توافق قراءة `reversed`**: `EFFECTIVE_STATUSES = (posted, reversed)` في `journal_store.py` مطبَّق على الأستاذ، الـUsageProbe، والتقارير — الأصل المعكوس لا يختفي من التاريخ، وزوج (أصل + مرآة) يتصافى إلى صفر طبيعياً.
+- **Phase 8 Reports**: ملف جديد `core/reports.py` — `ReportingService` **قراءة فقط ومشتقّة بالكامل**:
+  - ميزان المراجعة: الإجماليات من **حسابات الترحيل (Leaf) فقط** (لا تكرار عبر الآباء)، `balanced` بمقارنة **دقيقة بلا هامش**.
+  - قائمة الدخل: إيرادات − مصروفات، `result_kind` (profit/loss/breakeven).
+  - الميزانية العمومية: أصول = التزامات + حقوق ملكية + **نتيجة الفترة غير المقفلة** (سطر مشتق `current_period_result`، `closing_performed:false` — لا قيد إقفال؛ ذلك مرحلة 9)، مع `equation_holds`.
+  - تجميع المجموعات عبر **سلسلة `parent` الحقيقية** لا بادئة الكود، وحماية من السلاسل الدائرية والترحيل على حساب غير موجود.
+  - **فصل العملات إلزامي**: تقرير واحد = عملة واحدة، ولا تحويل ولا جمع (`CURRENCY_REQUIRED`).
+  - تجميع دفعي واحد لكل تقرير: `sum_by_account` + `entity_currencies` في `journal_store.py` (لا استعلام لكل حساب).
+- مسارات جديدة: `GET /api/accounting/reports/trial-balance` · `/reports/income-statement` · `/reports/balance-sheet`؛ و`/meta` صار `phase:8`.
+- تحقق: منطق التقارير الثلاثة مُثبت بحساب يدوي (TB 350/350 متوازن، صافي 150 ربح، الميزانية 250 = 100 + 150، الفرق 0.00)، والمسارات تُرجع 401 بلا صلاحية (موصولة صحيحاً). **الـCollections الثلاث ما زالت فارغة (0 مستند)** ولا بيانات وهمية.
+- ما زال غير مُنفَّذ: إقفال الفترة/السنة، محرّك العملات/FX، ربط الحسابات، تكامل الأعمال.

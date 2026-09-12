@@ -25,6 +25,8 @@ IDEMPOTENCY_INDEX = "uniq_entity_source_key"
 ENTRY_NO_INDEX = "uniq_entity_entry_no"
 JOURNAL_ID_INDEX = "uniq_entity_journal_id"
 REVERSAL_INDEX = "uniq_entity_reversal_of"
+#: Statuses that carry accounting effect (a reversed original keeps its history).
+EFFECTIVE_STATUSES = ("posted", "reversed")
 
 
 class JournalStore:
@@ -147,7 +149,8 @@ class JournalStore:
 
     async def count_postings(self, entity_id: str, account_code: str) -> int:
         return await self.entries.count_documents(
-            {"entity_id": entity_id, "lines.account_code": account_code})
+            {"entity_id": entity_id, "lines.account_code": account_code,
+             "status": {"$in": EFFECTIVE_STATUSES}})
 
     # ---------------------------------------------------- ledger reads (Phase 5)
     # Additive READ-ONLY methods. Rahaal loaded every journal into memory and filtered in
@@ -156,7 +159,10 @@ class JournalStore:
     @staticmethod
     def _line_match(entity_id, code, currency=None, from_date=None, to_date=None,
                     to_exclusive=None):
-        stage = [{"$match": {"entity_id": entity_id, "status": "posted",
+        # COMPATIBILITY FIX (Phase 8/B11): accounting-effective history is POSTED *and*
+        # REVERSED originals — a reversed original must never vanish from ledger/reports.
+        stage = [{"$match": {"entity_id": entity_id,
+                             "status": {"$in": EFFECTIVE_STATUSES},
                              "lines.account_code": code}}]
         date_q = {}
         if from_date:
@@ -227,9 +233,46 @@ class JournalStore:
             out.append(r)
         return out
 
+    # ------------------------------------------------- report reads (Phase 8)
+    # ONE aggregation for a whole report — never one query per account.
+    async def entity_currencies(self, entity_id: str) -> list:
+        rows = await self.entries.aggregate([
+            {"$match": {"entity_id": entity_id,
+                        "status": {"$in": list(EFFECTIVE_STATUSES)}}},
+            {"$unwind": "$lines"},
+            {"$group": {"_id": "$lines.currency"}},
+        ]).to_list(length=None)
+        return sorted([r["_id"] for r in rows if r["_id"]])
+
+    async def sum_by_account(self, entity_id: str, currency: str,
+                             from_date=None, to_date=None) -> dict:
+        from decimal import Decimal as D
+        match = {"entity_id": entity_id, "status": {"$in": list(EFFECTIVE_STATUSES)}}
+        date_q = {}
+        if from_date:
+            date_q["$gte"] = from_date
+        if to_date:
+            date_q["$lte"] = to_date
+        if date_q:
+            match["date"] = date_q
+        rows = await self.entries.aggregate([
+            {"$match": match},
+            {"$unwind": "$lines"},
+            {"$match": {"lines.currency": currency}},
+            {"$group": {"_id": "$lines.account_code",
+                        "debit": {"$sum": "$lines.debit"},
+                        "credit": {"$sum": "$lines.credit"},
+                        "count": {"$sum": 1}}},
+        ]).to_list(length=None)
+        return {r["_id"]: {"debit": D(self.from_db_amount(r.get("debit") or 0)),
+                           "credit": D(self.from_db_amount(r.get("credit") or 0)),
+                           "count": int(r.get("count") or 0)}
+                for r in rows if r["_id"]}
+
     # ------------------------------------------------- reversal ops (Phase 6)
     async def claim_for_reversal(self, entity_id: str, original_id: str,
-                                 reversal_id: str, reason: str, by: str, at) -> Optional[dict]:
+                                 reversal_id: str, reason: str, by: str, at,
+                                 stale_before=None) -> Optional[dict]:
         """ATOMIC CLAIM — the only mutation ever allowed on a posted entry, and it touches
         reversal metadata ONLY (never an amount, a line, a date or a code).
 
@@ -239,10 +282,12 @@ class JournalStore:
         """
         return await self.entries.find_one_and_update(
             {"entity_id": entity_id, "id": original_id, "status": "posted",
-             "reversed_by_entry": None},
-            {"$set": {"status": "reversed", "reversed_by_entry": reversal_id,
-                      "reversed_at": at, "reversed_by": by,
-                      "reversal_reason": reason}},
+             "reversed_by_entry": None,
+             "$or": [{"reversal_claim": None},
+                     {"reversal_claim.at": {"$lt": stale_before}},
+                     {"reversal_claim.reversal_id": reversal_id}]},
+            {"$set": {"reversal_claim": {"reversal_id": reversal_id, "by": by,
+                                          "at": at, "reason": reason}}},
             return_document=ReturnDocument.BEFORE, projection={"_id": 0})
 
     async def release_reversal_claim(self, entity_id: str, original_id: str,
@@ -250,11 +295,20 @@ class JournalStore:
         """Compensating action if the mirror insert fails: restores the original to POSTED,
         and only when the claim is still ours."""
         r = await self.entries.update_one(
-            {"entity_id": entity_id, "id": original_id,
-             "reversed_by_entry": reversal_id},
-            {"$set": {"status": "posted", "reversed_by_entry": None,
-                      "reversed_at": None, "reversed_by": None,
-                      "reversal_reason": None}})
+            {"entity_id": entity_id, "id": original_id, "status": "posted",
+             "reversal_claim.reversal_id": reversal_id},
+            {"$set": {"reversal_claim": None}})
+        return r.modified_count == 1
+
+    async def finalize_reversal(self, entity_id: str, original_id: str,
+                                 reversal_id: str, reason: str, by: str, at) -> bool:
+        """A3 — status becomes REVERSED only AFTER the mirror journal exists."""
+        r = await self.entries.update_one(
+            {"entity_id": entity_id, "id": original_id, "status": "posted",
+             "reversal_claim.reversal_id": reversal_id},
+            {"$set": {"status": "reversed", "reversed_by_entry": reversal_id,
+                      "reversed_at": at, "reversed_by": by,
+                      "reversal_reason": reason, "reversal_claim": None}})
         return r.modified_count == 1
 
     async def find_reversal_of(self, entity_id: str, original_id: str) -> Optional[dict]:
@@ -269,7 +323,7 @@ class JournalStore:
         if currency:
             q["currency"] = currency
         if exclude_reversed:
-            q["status"] = "posted"
+            q["status"] = "posted"   # a reversed opening no longer blocks a corrected one
         return await self.entries.count_documents(q)
 
     async def count_other_activity(self, entity_id: str, source_type: str) -> int:

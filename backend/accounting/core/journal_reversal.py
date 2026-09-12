@@ -14,6 +14,10 @@ from .errors import AccountingError
 from .journal import JournalStatus, utc_now
 from .journal_posting import JournalPostingService, format_entry_no
 from .journal_store import ENTRY_NO_INDEX, REVERSAL_INDEX
+from datetime import timedelta
+
+#: A claim older than this with no mirror journal is abandoned and may be reclaimed.
+STALE_CLAIM_SECONDS = 120
 
 REVERSAL_SOURCE_TYPE = "reversal"
 
@@ -75,14 +79,33 @@ class JournalReversalService:
 
         reversal_id = str(uuid.uuid4())
         now = utc_now()
-        # 1) ATOMIC CLAIM on the original (concurrency guard lives in the filter).
+        # A4/A7 — CRASH RECOVERY: an earlier attempt may have claimed the original and
+        # died before writing the mirror. If a mirror exists, finish the link; otherwise
+        # the claim is completable/reclaimable without any manual DB edit.
+        orphan = original.get("reversal_claim") or None
+        if orphan:
+            mirror = await self._store.find_reversal_of(entity_id, original_id)
+            if mirror:
+                await self._store.finalize_reversal(
+                    entity_id, original_id, mirror["id"],
+                    orphan.get("reason") or str(reason).strip(),
+                    orphan.get("by") or by, utc_now())
+                return {"reversed": False, "idempotent_replay": True,
+                        "recovered": True,
+                        "reversal": JournalPostingService.public(mirror),
+                        "original_entry_no": original.get("entry_no")}
+            reversal_id = orphan.get("reversal_id") or reversal_id
+
+        # 1) ATOMIC CLAIM — status stays POSTED (a final accounting status is never used
+        #    as a temporary lock); the filter itself is the concurrency guard.
         claimed = await self._store.claim_for_reversal(
-            entity_id, original_id, reversal_id, str(reason).strip(), by, now)
+            entity_id, original_id, reversal_id, str(reason).strip(), by, now,
+            stale_before=now - timedelta(seconds=STALE_CLAIM_SECONDS))
         if not claimed:
             existing = await self._store.find_reversal_of(entity_id, original_id)
             raise AccountingError(
-                "ALREADY_REVERSED",
-                "القيد معكوس بالفعل (أو جرى عكسه في طلب متزامن)", 409,
+                "REVERSAL_IN_PROGRESS",
+                "عملية عكس أخرى قائمة على هذا القيد — أعد المحاولة بعد لحظات", 409,
                 reversal_entry_no=(existing or {}).get("entry_no"))
 
         # 2) Mirror entry, then compensate the claim if the insert fails.
@@ -104,6 +127,10 @@ class JournalReversalService:
             "reversed_at": None, "reversed_by": None,
         }
         inserted, duplicate_index = await self._store.insert_posted(doc)
+        if inserted:
+            # 3) FINALIZE — only now does the original become REVERSED.
+            await self._store.finalize_reversal(entity_id, original_id, reversal_id,
+                                                str(reason).strip(), by, now)
         if not inserted:
             released = await self._store.release_reversal_claim(entity_id, original_id,
                                                                 reversal_id)

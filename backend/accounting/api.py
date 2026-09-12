@@ -14,8 +14,8 @@ from fastapi.responses import JSONResponse
 
 from .adapters import (accounting_perm, actor_label, chart, currency_policy,
                        journal_validator, posting_service, ledger_service,
-                       reversal_service, opening_service, resolve_entity,
-                       PLATFORM_ENTITY)
+                       reversal_service, opening_service, reporting_service,
+                       resolve_entity, PLATFORM_ENTITY)
 from .core import (AccountCreate, AccountUpdate, AccountingError, IMMUTABLE_FIELDS,
                    JournalEntryDraft, JournalStatus, JOURNAL_DOCUMENT_CONTRACT,
                    MIN_LINES, DEFAULT_SCALE, BALANCE_TOLERANCE, as_str,
@@ -42,8 +42,9 @@ def install_error_handler(app) -> None:
 async def meta(user: dict = Depends(accounting_perm(VIEW))):
     coa = chart()
     return {
-        "phase": 7,
-        "scope": "chart + posting + general ledger + reversal + opening balances",
+        "phase": 8,
+        "scope": "chart + posting + general ledger + reversal + opening balances "
+                 "+ core reports",
         "platform_entity": PLATFORM_ENTITY,
         "template": coa.template.key,
         "template_title": coa.template.title,
@@ -80,8 +81,18 @@ async def meta(user: dict = Depends(accounting_perm(VIEW))):
             "period_guard": "boundary wired, NOT enforced (no closing mechanism yet)",
             "document_contract": JOURNAL_DOCUMENT_CONTRACT,
         },
-        "not_implemented_yet": ["trial_balance", "income_statement", "balance_sheet",
-                                "period_closing", "year_closing", "currency_engine",
+        "reports": {
+            "available": ["trial_balance", "income_statement", "balance_sheet"],
+            "derivation": "computed from POSTED + REVERSED journal entries at read time "
+                          "— no report collection, no cached balance",
+            "currency_rule": "one report = one currency; two currencies are never added "
+                             "and never converted",
+            "group_rollup": "real parent chain (not code prefix); totals count posting "
+                            "accounts only, so no posting is double-counted",
+            "closing": "the period result is a DERIVED equity line; no closing journal "
+                       "is written (period/year closing is a later phase)",
+        },
+        "not_implemented_yet": ["period_closing", "year_closing", "currency_engine",
                                 "account_linking", "business_integration"],
     }
 
@@ -180,6 +191,47 @@ async def post_opening_balances(payload: OpeningBalanceRequest,
     accounting capability, not a migration or a backfill of any existing data."""
     eid = await resolve_entity(user, entity_id)
     return await opening_service().open(eid, payload, by=actor_label(user))
+
+
+# ------------------------------------------------------- core reports (Phase 8)
+@router.get("/reports/trial-balance")
+async def trial_balance(entity_id: Optional[str] = None,
+                        currency: Optional[str] = None,
+                        from_date: Optional[datetime] = None,
+                        to_date: Optional[datetime] = None,
+                        include_zero: bool = False, include_groups: bool = True,
+                        user: dict = Depends(accounting_perm(VIEW))):
+    """Derived from journal entries at read time — nothing is stored or cached."""
+    eid = await resolve_entity(user, entity_id)
+    return await reporting_service().trial_balance(
+        eid, currency=currency, from_date=from_date, to_date=to_date,
+        include_zero=include_zero, include_groups=include_groups)
+
+
+@router.get("/reports/income-statement")
+async def income_statement(entity_id: Optional[str] = None,
+                           currency: Optional[str] = None,
+                           from_date: Optional[datetime] = None,
+                           to_date: Optional[datetime] = None,
+                           include_zero: bool = False,
+                           user: dict = Depends(accounting_perm(VIEW))):
+    eid = await resolve_entity(user, entity_id)
+    return await reporting_service().income_statement(
+        eid, currency=currency, from_date=from_date, to_date=to_date,
+        include_zero=include_zero)
+
+
+@router.get("/reports/balance-sheet")
+async def balance_sheet(entity_id: Optional[str] = None,
+                        currency: Optional[str] = None,
+                        as_of: Optional[datetime] = None,
+                        from_date: Optional[datetime] = None,
+                        include_zero: bool = False,
+                        user: dict = Depends(accounting_perm(VIEW))):
+    eid = await resolve_entity(user, entity_id)
+    return await reporting_service().balance_sheet(
+        eid, currency=currency, as_of=as_of, from_date=from_date,
+        include_zero=include_zero)
 
 
 # ------------------------------------------------------------------ read paths

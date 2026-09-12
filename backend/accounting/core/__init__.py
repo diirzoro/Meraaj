@@ -27,6 +27,7 @@ from .ledger import (GeneralLedgerService, normal_balance, signed_movement,
 from .journal_reversal import JournalReversalService, REVERSAL_SOURCE_TYPE
 from .opening_balances import (OpeningBalanceService, OpeningBalanceRequest,
                                OpeningLineInput, OPENING_SOURCE_TYPE)
+from .reports import ReportingService, CURRENT_PERIOD_RESULT
 
 __all__ = [
     # chart of accounts (Phases 1-2)
@@ -51,4 +52,6 @@ __all__ = [
     "CREDIT_NORMAL", "JournalReversalService", "REVERSAL_SOURCE_TYPE",
     "OpeningBalanceService", "OpeningBalanceRequest", "OpeningLineInput",
     "OPENING_SOURCE_TYPE",
+    # core reports (Phase 8)
+    "ReportingService", "CURRENT_PERIOD_RESULT",
 ]

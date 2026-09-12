@@ -28,7 +28,8 @@ from ..core import AccountStore, ChartOfAccounts
 from ..core import (CurrencyPolicy, JournalValidator, PostingAccountResolver,
                     NULL_PERIOD_GUARD, JournalStore, JournalUsageProbe,
                     JournalPostingService, GeneralLedgerService,
-                    JournalReversalService, OpeningBalanceService)
+                    JournalReversalService, OpeningBalanceService,
+                    ReportingService)
 from ..core.template import TemplateAccount as T
 from ..core.types import AccountType as AT, AccountOrigin as AO
 from ..core.roles import (CLIENT_WALLET_LIABILITY, ADS_REVENUE,
@@ -83,10 +84,16 @@ _posting_service = JournalPostingService(_journal_validator, _journal_store)
 _ledger_service = GeneralLedgerService(_journal_store, _store)
 _reversal_service = JournalReversalService(_journal_store, _store, NULL_PERIOD_GUARD)
 _opening_service = OpeningBalanceService(_posting_service, _journal_store, _chart)
+# Phase 8 — reports are pure read models over the same two sources.
+_reporting_service = ReportingService(_journal_store, _store)
 
 
 def ledger_service() -> GeneralLedgerService:
     return _ledger_service
+
+
+def reporting_service() -> ReportingService:
+    return _reporting_service
 
 
 def reversal_service() -> JournalReversalService:
