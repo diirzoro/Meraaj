@@ -24,6 +24,7 @@ from decimal import Decimal
 from typing import Optional
 
 from .errors import AccountingError
+from .contracts import MAX_REPORT_ROWS
 from .ledger import normal_balance, signed_movement
 from .money import ZERO, as_str, normalise
 from .roles import RETAINED_EARNINGS
@@ -169,6 +170,7 @@ class ReportingService:
         totals = self._rollup(by_code, movements)
 
         rows, sum_debit, sum_credit = [], ZERO, ZERO
+        truncated = False
         for acc in sorted(accounts, key=lambda a: a["code"]):
             agg = totals[acc["code"]]
             is_group = bool(acc.get("is_group"))
@@ -176,7 +178,13 @@ class ReportingService:
                 continue
             if not include_zero and agg["debit"] == ZERO and agg["credit"] == ZERO:
                 continue
-            rows.append(self._row(acc, agg))
+            if len(rows) >= MAX_REPORT_ROWS:
+                # BOUNDED READ: rows are capped, TOTALS are not (they come from the
+                # aggregation, not from the row list), so a capped report is never a
+                # wrong report.
+                truncated = True
+            else:
+                rows.append(self._row(acc, agg))
             if not is_group:
                 # ONLY leaf accounts enter the trial-balance totals — adding group rows
                 # would double-count every posting.
@@ -197,6 +205,7 @@ class ReportingService:
             # data problem and never a rounding artefact.
             "balanced": difference == ZERO,
             "account_count": len(rows),
+            "truncated": truncated, "max_rows": MAX_REPORT_ROWS,
             "posting_account_count": sum(1 for r in rows if not r["is_group"]),
             "rows": rows,
             "derived": True, "stored_balances": False,

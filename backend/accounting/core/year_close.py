@@ -30,9 +30,11 @@ from .ledger import signed_movement
 from .money import ZERO, as_str, normalise
 from .roles import RETAINED_EARNINGS
 from .types import AccountType
-from .year_state import (YEAR_CLOSE_SOURCE_TYPE, YEAR_STATE_COMPLETED,
-                         YEAR_STATE_FAILED, YEAR_STATE_JOURNAL_POSTED,
-                         YEAR_STATE_STARTED, YEAR_STATE_VERIFIED)
+from .year_state import (YEAR_ACTIVE_CLOSE_STATES, YEAR_CLOSE_SOURCE_TYPE,
+                         YEAR_STATE_COMPLETED, YEAR_STATE_FAILED,
+                         YEAR_STATE_JOURNAL_POSTED, YEAR_STATE_REOPENED,
+                         YEAR_STATE_REOPEN_STARTED, YEAR_STATE_STARTED,
+                         YEAR_STATE_VERIFIED)
 
 RESULT_TYPES = (AccountType.REVENUE.value, AccountType.EXPENSE.value)
 
@@ -46,12 +48,15 @@ def year_close_source_key(entity_id: str, fiscal_year: int, currency: str) -> st
 
 class YearCloseService:
     def __init__(self, posting_service, journal_store, account_store, period_store,
-                 period_service):
+                 period_service, reversal_service=None):
         self._posting = posting_service
         self._journal = journal_store
         self._accounts = account_store
         self._periods = period_store
         self._period_service = period_service
+        # Injected so the controlled reopen can reverse a closing journal through the ONE
+        # reversal engine. The Core never deletes or edits a posted journal.
+        self._reversal = reversal_service
 
     # --------------------------------------------------------------------- read
     async def status(self, entity_id: str, fiscal_year: int) -> dict:
@@ -310,11 +315,156 @@ class YearCloseService:
             raise AccountingError("ENTITY_REQUIRED", "الجهة المحاسبية مطلوبة")
         return entity_id
 
-    async def reopen_year(self, entity_id: str, fiscal_year: int) -> dict:
-        """Explicitly NOT implemented — and explicitly not faked."""
-        raise AccountingError(
-            "YEAR_REOPEN_DEFERRED",
-            f"إعادة فتح سنة مقفلة تحتاج مسار مالي مُحكم (عكس قيود الإقفال، إعادة فتح "
-            f"الفترات، وإعادة التحقق) — مصنّفة DEFERRED — CONTROLLED YEAR REOPEN. "
-            f"لن تُحذف قيود الإقفال في أي حال.", 409,
-            deferred="CONTROLLED_YEAR_REOPEN", fiscal_year=int(fiscal_year))
+    async def reopen_year(self, entity_id: str, fiscal_year: int,
+                          currency: str = None, reason: str = None,
+                          by: str = None) -> dict:
+        """OPEN-017 — CONTROLLED YEAR REOPEN, one currency per call.
+
+        Rahaal's equivalent was `closed_years.pull(year)`: a status flip that left the
+        closing entries in place, so the books stayed closed while the flag said open —
+        the exact contradiction this workflow exists to prevent. There was nothing to PORT
+        beyond the intent, hence NEW.
+
+        ORDER (and why): claim the operation atomically → reverse the closing journal
+        through the reversal engine (the ONLY correction mechanism; nothing is deleted or
+        edited) → verify the mirror exists → unlock the periods → mark the operation
+        REOPENED → post-reopen verification. The periods are unlocked AFTER the reversal
+        because the mirror entry is dated inside the year, and PeriodGuard (correctly)
+        refuses any date inside a closed period.
+        """
+        entity_id = self._entity(entity_id)
+        fiscal_year = int(fiscal_year)
+        currency = str(currency or "").strip().upper()
+        if not currency:
+            raise AccountingError(
+                "CURRENCY_REQUIRED",
+                "عملة إعادة الفتح مطلوبة — كل عملة تُعاد فتحها باستقلال")
+        if not by:
+            raise AccountingError("ACTOR_REQUIRED", "هوية المنفّذ مطلوبة")
+        if not reason or not str(reason).strip():
+            raise AccountingError("REASON_REQUIRED", "سبب إعادة فتح السنة مطلوب")
+        reason = str(reason).strip()
+        if self._reversal is None:
+            raise AccountingError("REVERSAL_ENGINE_UNAVAILABLE",
+                                  "محرّك العكس غير موصول — لا يمكن إعادة فتح السنة", 500)
+
+        op = await self._periods.get_year_op(entity_id, fiscal_year, currency)
+        if not op:
+            raise AccountingError(
+                "YEAR_CLOSE_NOT_FOUND",
+                f"لا توجد عملية إقفال للسنة {fiscal_year} بعملة {currency}", 404)
+        if op.get("state") == YEAR_STATE_REOPENED:
+            return {"reopened": False, "idempotent_replay": True,
+                    "already_reopened": True, "operation": self._op_public(op),
+                    "message": f"السنة {fiscal_year} بعملة {currency} مُعاد فتحها مسبقاً"}
+        if op.get("state") not in YEAR_ACTIVE_CLOSE_STATES:
+            raise AccountingError(
+                "YEAR_NOT_CLOSED",
+                f"حالة عملية الإقفال ({op.get('state')}) لا تسمح بإعادة الفتح — "
+                f"إعادة الفتح تخص سنة مقفلة فعلياً", 409)
+        journal_id = op.get("journal_id")
+        if not journal_id:
+            raise AccountingError(
+                "YEAR_CLOSE_JOURNAL_MISSING",
+                "عملية الإقفال بلا قيد إقفال مرتبط — حالة غير متسقة تحتاج مراجعة "
+                "(راجع /self-audit)", 409)
+
+        now = utc_now()
+        # 1) ATOMIC CLAIM — a final state is never used as a temporary lock; the filter is
+        #    the concurrency guard, so the second concurrent request matches nothing.
+        claimed = await self._periods.transition_year_op(
+            entity_id, fiscal_year, currency,
+            (YEAR_STATE_COMPLETED, YEAR_STATE_REOPEN_STARTED), YEAR_STATE_REOPEN_STARTED,
+            {"reopen_reason": reason, "reopen_started_at": now, "reopened_by": by,
+             "updated_at": now},
+            {"action": "reopen_started", "at": now, "by": by, "reason": reason})
+        if not claimed:
+            raise AccountingError(
+                "YEAR_REOPEN_IN_PROGRESS",
+                "عملية إعادة فتح أخرى قائمة على نفس السنة/العملة — أعد المحاولة", 409)
+
+        # 2) REVERSE THE CLOSING JOURNAL — deterministic key ⇒ retry-safe and resumable.
+        reversal_key = f"year_reopen:{entity_id}:{fiscal_year}:{currency}"
+        reversal = await self._reversal.reverse(
+            entity_id, journal_id,
+            reason=f"إعادة فتح السنة المالية {fiscal_year} ({currency}) — {reason}",
+            by=by, source_key=reversal_key, allow_closing_reversal=True)
+        mirror = reversal.get("reversal") or {}
+
+        # 3) VERIFY THE REVERSAL before anything is unlocked.
+        original_after = await self._journal.get(entity_id, journal_id)
+        mirror_doc = await self._journal.find_reversal_of(entity_id, journal_id)
+        reversal_checks = {
+            "closing_journal_reversed":
+                (original_after or {}).get("status") == "reversed",
+            "mirror_entry_exists": bool(mirror_doc),
+            "mirror_links_to_original":
+                (mirror_doc or {}).get("reversal_of") == journal_id,
+            "mirror_balanced": bool(mirror_doc) and
+                self._journal.from_db_amount(mirror_doc.get("total_debit")) ==
+                self._journal.from_db_amount(mirror_doc.get("total_credit")),
+        }
+        if not all(reversal_checks.values()):
+            await self._periods.update_year_op(entity_id, fiscal_year, currency, {
+                "updated_at": utc_now(), "error": "REVERSAL_VERIFICATION_FAILED",
+                "reversal_checks": reversal_checks})
+            raise AccountingError(
+                "YEAR_REOPEN_VERIFICATION_FAILED",
+                "تعذر التحقق من عكس قيد الإقفال — لم تُفتح الفترات ولم تتغير حالة "
+                "السنة. أعد المحاولة بنفس المفتاح (لن يُنشأ قيد عكس ثانٍ)", 409,
+                checks=reversal_checks)
+
+        # 4) UNLOCK THE DATES — only when no OTHER currency still has an active closing
+        #    effect on the same fiscal year. A year with SAR reopened and USD still closed
+        #    is NOT an open year.
+        others = [o for o in await self._periods.list_year_ops(entity_id, fiscal_year)
+                  if o.get("currency") != currency
+                  and o.get("state") in YEAR_ACTIVE_CLOSE_STATES]
+        periods_unlocked = 0
+        if not others:
+            unlock_now = utc_now()
+            periods_unlocked = await self._periods.reopen_all_closed(
+                entity_id, fiscal_year, {
+                    "at": unlock_now,
+                    "set": {"reopened_at": unlock_now, "reopened_by": by,
+                            "reopen_reason": f"إعادة فتح سنوية ({currency}) — {reason}"},
+                    "entry": {"action": "reopen", "at": unlock_now, "by": by,
+                              "reason": f"year_reopen:{currency} — {reason}"}})
+
+        # 5) FINAL STATE + post-reopen verification (the result accounts are live again).
+        done = utc_now()
+        op = await self._periods.transition_year_op(
+            entity_id, fiscal_year, currency, (YEAR_STATE_REOPEN_STARTED,),
+            YEAR_STATE_REOPENED,
+            {"reopened_at": done, "updated_at": done, "error": None,
+             "reopen_reversal_entry_no": mirror.get("entry_no"),
+             "reopen_reversal_journal_id": mirror.get("id"),
+             "periods_unlocked": periods_unlocked,
+             "reversal_checks": reversal_checks},
+            {"action": "reopened", "at": done, "by": by, "reason": reason})
+
+        policy = await self._period_service.policy(entity_id)
+        start, end = policy.year_start(fiscal_year), policy.year_end(fiscal_year)
+        plan = await self._build_plan(entity_id, currency, start, end)
+        totals = await self._journal.sum_totals(entity_id, currency, start, end)
+        post_checks = {
+            "result_accounts_live_again": bool(plan["lines"]),
+            "trial_balance_balanced": totals["debit"] == totals["credit"],
+            "closing_journal_preserved": True,
+            "periods_unlocked_or_blocked_by_other_currency":
+                periods_unlocked > 0 or bool(others),
+        }
+        return {
+            "reopened": True, "idempotent_replay": bool(reversal.get("idempotent_replay")),
+            "fiscal_year": fiscal_year, "currency": currency,
+            "closing_entry_no": op.get("entry_no") if op else None,
+            "reversal_entry": mirror,
+            "reversal_checks": reversal_checks,
+            "periods_unlocked": periods_unlocked,
+            "blocked_by_other_currencies": [o["currency"] for o in others],
+            "year_open": periods_unlocked > 0 and not others,
+            "net_result_restored": as_str(plan["net_result"]),
+            "post_reopen_verification": post_checks,
+            "no_deletion": "قيد الإقفال محفوظ ومعكوس بقيد مرآة — لم يُحذف ولم يُعدَّل",
+            "operation": self._op_public(op or {}),
+        }

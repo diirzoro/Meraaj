@@ -86,8 +86,13 @@ class GeneralLedgerService:
         acc_type = account["type"]
         opening = ZERO
         if currency:
+            # DEFECT FIX (found in Phase 11A QA): the range opening balance only exists
+            # when a `from_date` is given. Without one, the range starts at the beginning
+            # of the ledger, so the opening balance is ZERO — summing "everything before
+            # no date" counted the whole history twice in `closing_balance`.
             before = await self._journal.sum_lines(entity_id, code, currency,
-                                                   to_exclusive=from_date)
+                                                   to_exclusive=from_date) \
+                if from_date else {"debit": ZERO, "credit": ZERO}
             opening = signed_movement(acc_type, before["debit"], before["credit"])
             skipped = await self._journal.sum_lines(
                 entity_id, code, currency, from_date=from_date, to_date=to_date,

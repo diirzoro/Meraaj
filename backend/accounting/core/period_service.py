@@ -17,7 +17,7 @@ from .fiscal_year import FiscalYearPolicy
 from .journal import utc_now
 from .money import ZERO, as_str
 from .periods import PERIOD_CLOSED, PERIOD_OPEN
-from .year_state import YEAR_STATE_COMPLETED
+from .year_state import YEAR_ACTIVE_CLOSE_STATES
 
 PERIOD_CODE_FMT = "FY{year}-P{seq:02d}"
 
@@ -214,7 +214,7 @@ class PeriodService:
                                   f"الفترة {period['code']} غير مغلقة")
         ops = [o for o in await self._periods.list_year_ops(entity_id,
                                                             period["fiscal_year"])
-               if o.get("state") == YEAR_STATE_COMPLETED]
+               if o.get("state") in YEAR_ACTIVE_CLOSE_STATES]
         if ops:
             # Reopening a period inside a CLOSED YEAR requires unwinding the closing
             # journals — a controlled financial workflow, not a status flip.
@@ -222,9 +222,9 @@ class PeriodService:
                 "YEAR_CLOSED_REOPEN_DEFERRED",
                 f"السنة المالية {period['fiscal_year']} مقفلة بقيود إقفال "
                 f"({', '.join(o['currency'] for o in ops)}) — إعادة فتح فترة داخلها "
-                f"تحتاج مسار مالي مُحكم (DEFERRED — CONTROLLED YEAR REOPEN)، ولن تُحذف "
-                f"قيود الإقفال بأي حال", 409,
-                deferred="CONTROLLED_YEAR_REOPEN")
+                f"تحتاج مسار إعادة الفتح المُحكم للسنة (POST /year-close/{{fy}}/reopen)، "
+                f"ولن تُحذف قيود الإقفال بأي حال", 409,
+                required_path="POST /api/accounting/year-close/{fiscal_year}/reopen")
         now = utc_now()
         # `closed_at/closed_by/close_reason` are intentionally NOT cleared — the close
         # actually happened, and erasing it would falsify the audit trail.

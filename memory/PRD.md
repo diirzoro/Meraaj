@@ -376,3 +376,32 @@ Collections جديدة: `accounting_periods`, `accounting_year_close_ops`, `acco
 - RESOLVED: OPEN-002 (العملة الأساس صارت صريحة)، OPEN-003 (PeriodGuard مفعّل مركزياً)، OPEN-013 (نتيجة الإيرادات/المصروفات صارت لها مسار إقفال سنوي).
 - STILL OPEN: OPEN-010 (فجوات أرقام القيود — تبقى Policy)، OPEN-011 (سياسة الافتتاح: عملة واحدة، ولا تحويل تلقائي للعملة الأساس)، OPEN-016 (Timezone — كل شيء UTC والحدود المالية تُحسب UTC).
 - NEW OPEN: OPEN-017 إعادة فتح سنة مُحكمة، OPEN-018 إعادة تقييم FX غير المحقق، OPEN-019 تقارير موحّدة بالعملة الأساس، OPEN-020 تغيير العملة الأساس بعد وجود تاريخ (يحتاج ترحيل).
+
+## Accounting Module — PHASE 11A (Core Hardening + Safe Deferred + Full QA) — 2026-09-12
+
+### ما نُفِّذ
+- **OPEN-017 Controlled Year Reopen** (`core/year_close.py`): مسار كامل لكل عملة: Claim ذرّي على حالة العملية → **عكس قيد الإقفال عبر محرّك العكس** (لا حذف ولا تعديل) → التحقق من وجود المرآة وربطها وتوازنها → فتح قفل الفترات → حالة `reopened` → تحقق بعد الفتح. Idempotent بمفتاح حتمي `year_reopen:{entity}:{fy}:{currency}`. **لا تُفتح الفترات إذا بقيت عملة أخرى بإقفال فعّال** (حالات `completed`/`reopen_started`). NEW مع تبرير: مقابل Rahaal كان `closed_years.pull(year)` أي قلب حالة يترك قيود الإقفال فعّالة → تناقض؛ لا شيء قابل للـPORT سوى النية.
+- **حماية عكس قيد الإقفال** (`core/journal_reversal.py`): `source_type=year_close` لا يُعكس عبر المسار العام (`YEAR_CLOSE_REVERSAL_NOT_ALLOWED`) — العلم الداخلي `allow_closing_reversal` يستخدمه مسار إعادة الفتح فقط ولا يُعرَض في أي Route.
+- **إعادة فتح فترة داخل سنة مقفلة**: تُحوَّل إلى مسار إعادة فتح السنة (`YEAR_CLOSED_REOPEN_DEFERRED` + `required_path`).
+- **OPEN-016 Timezone**: `core/contracts.py :: ACCOUNTING_DATE_POLICY` — التاريخ المحاسبي مُدخل مالي صريح، UTC-aware، لا يُحوَّل بصمت، وserver clock للطوابع فقط. لا hardcode لأي إزاحة. **RESOLVED BY EXPLICIT ACCOUNTING-DATE POLICY**.
+- **source_key Contract**: `SOURCE_KEY_CONTRACT` — `{producer}:{entity}:{business_object}:{financial_event}:{event_id}` + قواعد (deterministic/stable/immutable/unique per financial EFFECT/retry-safe/opaque/no volatile input) + بادئات محفوظة. مفتاح لكل **أثر مالي** لا لكل Business Object.
+- **Large-data safeguards**: `REPORT_LIMITS` — ترقيم الأستاذ (حد 200)، سقف صفوف ميزان المراجعة 5000 مع `truncated` **والإجماليات غير مقطوعة** (تُحسب في الـaggregation)، ترتيب حتمي، تجميع واحد لكل تقرير. الأداء تحت حجم إنتاجي: **PERFORMANCE VALIDATION — DEFERRED TO LOAD TESTING**.
+- **Self-Audit** (`core/self_audit.py` + `GET /api/accounting/self-audit`, صلاحية `accounting.accounts.manage`): تشخيص **قراءة فقط** بفصل DETECT/REPAIR (0 إصلاح تلقائي)، لجهة واحدة فقط، ويغطي: القيود (توازن/تشويه/حساب غير موجود في الدليل)، العكس (معكوس بلا مرآة، مرآة بلا أصل، عكس مكرر، Claim معلّق)، الدليل (آباء مفقودون، دوران، تعارض نوع/مجموعة، تكرار الأدوار، الأدوار النظامية المطلوبة + نوعها + قابلية الترحيل + نشاطها)، الفترات (تواريخ غير صالحة، تداخل CRITICAL، فراغات WARNING، إقفال بلا سجل)، إقفال السنة (عملية بلا قيد، قيد بلا عملية، إقفال جزئي للعملات، حالة معاد فتحها مع إقفال فعّال والعكس)، العملات/FX (تكوين، عملة أساس مفقودة/معطّلة، عملة لها تاريخ غير مكوّنة، أسعار غير صالحة، مرجع سعر مفقود)، والمعادلة المحاسبية + ميزان المراجعة **لكل عملة**. كل Finding بـ`code/severity/reference/recommended_action`.
+- **Audit Trail**: أُعيد استخدام بنية معراج القائمة (`db.audit_log` + مسار التدقيق الموحّد في `enterprise.py`) عبر **مُصدِر في الـAdapter** (`record_accounting_audit`) — لم يُبنَ محرّك تدقيق ثانٍ، والنواة تظل تسجّل المنفّذ/الوقت/السبب على المستندات نفسها.
+
+### Defects مكتشفة ومُصلَّحة (من QA)
+1. **`ledger.py` — رصيد افتتاحي مضاعف**: عند غياب `from_date` كان يُجمع كل التاريخ كـopening ثم يُضاف إليه صافي الحركة → `closing_balance` مضاعف (1300 بدل 650). الإصلاح: الرصيد الافتتاحي للنطاق = صفر بلا `from_date`. اختبار انحدار مضاف (0.00 بلا نطاق، 650.00 مع نطاق).
+2. **`journal_reversal.py` — إعادة المحاولة لم تكن Idempotent**: فحص `ALREADY_REVERSED` كان يسبق فحص `source_key` فتُرجَع 409 لإعادة محاولة مطابقة. الإصلاح: فحص المفتاح أولاً → replay؛ ومفتاح مختلف على قيد معكوس يبقى `ALREADY_REVERSED`.
+
+### QA Matrix
+`/app/backend/tests/accounting_core_qa.py` — **79 حالة: 79 PASS / 0 FAIL**، على جهتين معزولتين `qa-core-*` و`qa-other-*`، وتنظيف كامل في النهاية: **كل المجموعات السبع = 0 مستند** (لا بيانات اختبار باقية، ولا مستندات لجهة معراج).
+
+### الحالة النهائية للبنود
+- RESOLVED: OPEN-017 Controlled Year Reopen · OPEN-016 Timezone/Accounting-Date · OPEN-003 PeriodGuard · OPEN-002 Base Currency · Semantic Roles Audit · source_key Contract.
+- ACCEPTED POLICY: OPEN-010 فجوات أرقام القيود · OPEN-011 سياسة الافتتاح (عملة واحدة، لا تحويل تلقائي) · Report currency-specificity.
+- DEFERRED: OPEN-018 FX Revaluation (ADVANCED ACCOUNTING POLICY REQUIRED) · OPEN-019 Consolidated Base-Currency Reporting (CONSOLIDATION/TRANSLATION POLICY REQUIRED) · Performance validation (LOAD TESTING).
+- BLOCKED BY DESIGN: OPEN-020 تغيير العملة الأساس بعد وجود تاريخ (REQUIRES CONTROLLED MIGRATION).
+- STILL OPEN: **Accounting Entity Model — INTEGRATION DECISION REQUIRED** (دفتر منصة واحد مقابل دفتر لكل مكتب) · Phase 11B Business Account Linking.
+
+### Integration Readiness
+**READY WITH ACCEPTED DEFERRED FEATURES** — لا Critical defect في الترحيل/العكس/الإقفال/عزل الجهات/الـIdempotency/سلامة العملات/المعادلة المحاسبية. القرار الوحيد المطلوب قبل التكامل: تعريف `entity_id`.

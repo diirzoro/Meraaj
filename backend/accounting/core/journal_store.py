@@ -362,6 +362,39 @@ class JournalStore:
                 "reversed_without_mirror": len(orphans),
                 "reversed_without_mirror_sample": orphans[:5]}
 
+    async def line_account_codes(self, entity_id: str) -> list:
+        return await self.entries.distinct("lines.account_code",
+                                            {"entity_id": entity_id})
+
+    async def list_by_source_type(self, entity_id: str, source_type: str) -> list:
+        return await self.entries.find(
+            {"entity_id": entity_id, "source_type": source_type},
+            {"_id": 0, "id": 1, "entry_no": 1, "status": 1, "currency": 1,
+             "source_id": 1}).to_list(length=None)
+
+    async def mirrors_without_original(self, entity_id: str) -> list:
+        mirrors = await self.entries.find(
+            {"entity_id": entity_id, "reversal_of": {"$type": "string"}},
+            {"_id": 0, "entry_no": 1, "reversal_of": 1}).to_list(length=None)
+        if not mirrors:
+            return []
+        originals = set(await self.entries.distinct(
+            "id", {"entity_id": entity_id,
+                   "id": {"$in": [m["reversal_of"] for m in mirrors]}}))
+        return [m["entry_no"] for m in mirrors if m["reversal_of"] not in originals]
+
+    async def duplicate_reversals(self, entity_id: str) -> list:
+        rows = await self.entries.aggregate([
+            {"$match": {"entity_id": entity_id, "reversal_of": {"$type": "string"}}},
+            {"$group": {"_id": "$reversal_of", "n": {"$sum": 1}}},
+            {"$match": {"n": {"$gt": 1}}},
+        ]).to_list(length=None)
+        return [r["_id"] for r in rows]
+
+    async def fx_rate_references(self, entity_id: str) -> list:
+        return await self.entries.distinct("metadata.fx.rate_id",
+                                            {"entity_id": entity_id})
+
     # ------------------------------------------------- reversal ops (Phase 6)
     async def claim_for_reversal(self, entity_id: str, original_id: str,
                                  reversal_id: str, reason: str, by: str, at,

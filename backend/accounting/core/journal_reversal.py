@@ -14,6 +14,7 @@ from .errors import AccountingError
 from .journal import JournalStatus, utc_now
 from .journal_posting import JournalPostingService, format_entry_no
 from .journal_store import ENTRY_NO_INDEX, REVERSAL_INDEX
+from .year_state import YEAR_CLOSE_SOURCE_TYPE
 from datetime import timedelta
 
 #: A claim older than this with no mirror journal is abandoned and may be reclaimed.
@@ -30,7 +31,12 @@ class JournalReversalService:
 
     async def reverse(self, entity_id: str, original_id: str, reason: str,
                       by: Optional[str] = None, date=None,
-                      source_key: Optional[str] = None) -> dict:
+                      source_key: Optional[str] = None,
+                      allow_closing_reversal: bool = False) -> dict:
+        """`allow_closing_reversal` is INTERNAL: only the controlled year-reopen workflow
+        passes it. No HTTP route exposes it, so a year-closing journal can never be
+        reversed through the generic reversal endpoint (which would leave the year state
+        CLOSED while its closing effect had disappeared)."""
         entity_id = (entity_id or "").strip()
         if not entity_id:
             raise AccountingError("ENTITY_REQUIRED", "الجهة المحاسبية مطلوبة")
@@ -46,6 +52,28 @@ class JournalReversalService:
             raise AccountingError(
                 "REVERSAL_OF_REVERSAL_NOT_ALLOWED",
                 "لا يجوز عكس قيد عكسي — أنشئ قيداً صحيحاً جديداً بدلاً من ذلك")
+        if original.get("source_type") == YEAR_CLOSE_SOURCE_TYPE \
+                and not allow_closing_reversal:
+            # HARDEN: reversing a closing journal directly would desynchronise the year
+            # state from the books. It must travel through the controlled reopen, which
+            # also unlocks the periods and moves the operation state forward.
+            raise AccountingError(
+                "YEAR_CLOSE_REVERSAL_NOT_ALLOWED",
+                f"القيد {original.get('entry_no')} قيد إقفال سنوي — لا يُعكس مباشرة؛ "
+                f"استخدم مسار إعادة فتح السنة المُحكم حتى لا تتناقض حالة السنة مع "
+                f"الدفاتر", 409,
+                fiscal_year=original.get("source_id"),
+                required_path="POST /api/accounting/year-close/{fiscal_year}/reopen")
+        # DEFECT FIX (found in Phase 11A QA): the idempotency check runs BEFORE the
+        # already-reversed check, so an identical RETRY of the same reversal request is an
+        # idempotent replay instead of a 409. A different key against an already-reversed
+        # entry still gets ALREADY_REVERSED below.
+        key = (str(source_key).strip() if source_key else f"reversal:{original_id}")
+        already = await self._store.find_by_source_key(entity_id, key)
+        if already:
+            return {"reversed": False, "idempotent_replay": True,
+                    "reversal": JournalPostingService.public(already),
+                    "original_entry_no": original.get("entry_no")}
         if original.get("status") == JournalStatus.REVERSED.value:
             existing = await self._store.find_reversal_of(entity_id, original_id)
             raise AccountingError(
@@ -56,14 +84,6 @@ class JournalReversalService:
                 reversal_entry_id=(existing or {}).get("id"))
         if original.get("status") != JournalStatus.POSTED.value:
             raise AccountingError("NOT_POSTED", "لا يمكن عكس قيد غير مُرحَّل")
-
-        key = (str(source_key).strip() if source_key else f"reversal:{original_id}")
-        already = await self._store.find_by_source_key(entity_id, key)
-        if already:
-            # Idempotent retry of the same reversal request.
-            return {"reversed": False, "idempotent_replay": True,
-                    "reversal": JournalPostingService.public(already),
-                    "original_entry_no": original.get("entry_no")}
 
         reversal_date = date or utc_now()
         if getattr(reversal_date, "tzinfo", None) is None:

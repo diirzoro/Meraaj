@@ -43,6 +43,10 @@ from .fx_rates import (FXRateStore, FXRateService, RATE_DIRECTION,
                        RATE_SELECTION_POLICY, quantise_rate)
 from .fx_engine import (FXConversionService, FXResultService, FX_SOURCE_TYPE,
                         CALC_SCALE, SUPPORTED_EFFECTS, DEFERRED_EFFECTS)
+# core contracts + self-audit (Phase 11A)
+from .contracts import (ACCOUNTING_DATE_POLICY, SOURCE_KEY_CONTRACT, REPORT_LIMITS,
+                        MAX_REPORT_ROWS, MAX_LEDGER_PAGE)
+from .self_audit import AccountingSelfAudit, CORE_ROLES
 
 __all__ = [
     # chart of accounts (Phases 1-2)
@@ -79,4 +83,7 @@ __all__ = [
     "FXRateService", "RATE_DIRECTION", "RATE_SELECTION_POLICY", "quantise_rate",
     "FXConversionService", "FXResultService", "FX_SOURCE_TYPE", "CALC_SCALE",
     "SUPPORTED_EFFECTS", "DEFERRED_EFFECTS",
+    # contracts + self-audit (Phase 11A)
+    "ACCOUNTING_DATE_POLICY", "SOURCE_KEY_CONTRACT", "REPORT_LIMITS",
+    "MAX_REPORT_ROWS", "MAX_LEDGER_PAGE", "AccountingSelfAudit", "CORE_ROLES",
 ]

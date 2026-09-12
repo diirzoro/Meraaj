@@ -17,11 +17,13 @@ from .adapters import (accounting_perm, actor_label, chart, currency_policy,
                        reversal_service, opening_service, reporting_service,
                        period_service, year_close_service, entity_currencies,
                        fx_rate_service, fx_conversion_service, fx_result_service,
+                       self_audit_service, record_accounting_audit,
                        resolve_entity, PLATFORM_ENTITY)
 from .core import (AccountCreate, AccountUpdate, AccountingError, IMMUTABLE_FIELDS,
                    JournalEntryDraft, JournalStatus, JOURNAL_DOCUMENT_CONTRACT,
                    MIN_LINES, DEFAULT_SCALE, BALANCE_TOLERANCE, as_str,
-                   format_entry_no, MANUAL_SOURCE_TYPES, OpeningBalanceRequest)
+                   format_entry_no, MANUAL_SOURCE_TYPES, OpeningBalanceRequest,
+                   ACCOUNTING_DATE_POLICY, SOURCE_KEY_CONTRACT, REPORT_LIMITS)
 from datetime import datetime
 
 router = APIRouter(prefix="/api/accounting", tags=["accounting"])
@@ -44,9 +46,13 @@ def install_error_handler(app) -> None:
 async def meta(user: dict = Depends(accounting_perm(VIEW))):
     coa = chart()
     return {
-        "phase": 10,
+        "phase": "11A",
         "scope": "chart + posting + general ledger + reversal + opening balances "
-                 "+ core reports + period/year closing + multi-currency & FX",
+                 "+ core reports + period/year closing (incl. controlled reopen) "
+                 "+ multi-currency & FX + self-audit",
+        "contracts": {"accounting_date": ACCOUNTING_DATE_POLICY,
+                      "source_key": SOURCE_KEY_CONTRACT,
+                      "report_limits": REPORT_LIMITS},
         "platform_entity": PLATFORM_ENTITY,
         "template": coa.template.key,
         "template_title": coa.template.title,
@@ -115,8 +121,10 @@ async def meta(user: dict = Depends(accounting_perm(VIEW))):
             "multi_currency_close": "each currency closes INDEPENDENTLY; SAR completed "
                                     "while USD failed is never reported as 'year closed'",
             "retained_earnings": "resolved by semantic role, never by account number",
-            "year_reopen": "DEFERRED — CONTROLLED YEAR REOPEN (closing journals are "
-                           "never deleted)",
+            "year_reopen": "CONTROLLED YEAR REOPEN implemented (OPEN-017): reversal of "
+                           "the closing journal through the reversal engine → period "
+                           "unlock → REOPENED state; closing journals are never deleted "
+                           "and a direct reversal of a year_close journal is refused",
         },
         "fx": {
             "base_currency": "EXPLICIT per entity — never inferred from the first "
@@ -139,9 +147,9 @@ async def meta(user: dict = Depends(accounting_perm(VIEW))):
                          "consolidated_reporting": "DEFERRED — CONSOLIDATED FX REPORTING"},
             "correction": "Reversal Engine only — an FX journal is immutable",
         },
-        "not_implemented_yet": ["account_linking", "business_integration",
+        "not_implemented_yet": ["business_account_linking", "business_integration",
                                 "fx_revaluation", "consolidated_fx_reporting",
-                                "controlled_year_reopen"],
+                                "base_currency_change_migration"],
     }
 
 
@@ -374,11 +382,37 @@ async def close_year(fiscal_year: int,
 
 
 @router.post("/year-close/{fiscal_year}/reopen")
-async def reopen_year(fiscal_year: int, entity_id: Optional[str] = None,
+async def reopen_year(fiscal_year: int,
+                      currency: str = Query(..., min_length=2, max_length=8),
+                      reason: str = Query(..., min_length=3, max_length=500),
+                      entity_id: Optional[str] = None,
                       user: dict = Depends(accounting_perm(MANAGE))):
-    """DEFERRED — CONTROLLED YEAR REOPEN. Refused explicitly rather than half-built."""
+    """CONTROLLED YEAR REOPEN (OPEN-017): the closing journal is REVERSED through the
+    reversal engine — never deleted, never edited — then the periods are unlocked and the
+    operation state moves to REOPENED. One currency per call."""
     eid = await resolve_entity(user, entity_id)
-    return await year_close_service().reopen_year(eid, fiscal_year)
+    actor = actor_label(user)
+    result = await year_close_service().reopen_year(eid, fiscal_year, currency=currency,
+                                                    reason=reason, by=actor)
+    await record_accounting_audit(eid, "accounting.year_reopen", actor, reason=reason,
+                                  after={"fiscal_year": fiscal_year,
+                                         "currency": currency,
+                                         "reversal_entry_no":
+                                             (result.get("reversal_entry") or {})
+                                             .get("entry_no"),
+                                         "periods_unlocked":
+                                             result.get("periods_unlocked")})
+    return result
+
+
+@router.get("/self-audit")
+async def self_audit(entity_id: Optional[str] = None,
+                     user: dict = Depends(accounting_perm(MANAGE))):
+    """READ-ONLY accounting diagnostic, scoped to ONE entity. It DETECTS and never
+    REPAIRS: no journal, account, period, currency, rate or balance is written, and no
+    auto-fix exists. Every finding carries a severity and a recommended human action."""
+    eid = await resolve_entity(user, entity_id)
+    return await self_audit_service().run(eid)
 
 
 # --------------------------------------- currencies & FX engine (Phase 10)

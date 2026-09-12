@@ -32,7 +32,7 @@ from ..core import (CurrencyPolicy, JournalValidator, PostingAccountResolver,
                     ReportingService, PeriodStore, PeriodService,
                     DatabasePeriodGuard, YearCloseService, CurrencySettingsStore,
                     EntityCurrencyService, FXRateStore, FXRateService,
-                    FXConversionService, FXResultService)
+                    FXConversionService, FXResultService, AccountingSelfAudit)
 from ..core.template import TemplateAccount as T
 from ..core.types import AccountType as AT, AccountOrigin as AO
 from ..core.roles import (CLIENT_WALLET_LIABILITY, ADS_REVENUE,
@@ -101,13 +101,39 @@ _reporting_service = ReportingService(_journal_store, _store)
 # Phase 9 — periods, fiscal year and year closing.
 _period_service = PeriodService(_period_store, _journal_store, _store)
 _year_close_service = YearCloseService(_posting_service, _journal_store, _store,
-                                       _period_store, _period_service)
+                                       _period_store, _period_service,
+                                       reversal_service=_reversal_service)
 # Phase 10 — FX rates, conversion and the realized FX result engine.
 _fx_rate_store = FXRateStore(db, collection_prefix="accounting_")
 _fx_rate_service = FXRateService(_fx_rate_store, _entity_currencies)
 _fx_conversion = FXConversionService(_fx_rate_service, _entity_currencies)
 _fx_result_service = FXResultService(_posting_service, _fx_conversion, _store,
                                      _entity_currencies)
+# Phase 11A — read-only diagnostic. It shares the same stores but writes nothing.
+_self_audit = AccountingSelfAudit(_journal_store, _store, _period_store,
+                                  _entity_currencies, _fx_rate_store,
+                                  _reporting_service, _period_service)
+
+
+def self_audit_service() -> AccountingSelfAudit:
+    return _self_audit
+
+
+async def record_accounting_audit(entity_id: str, action: str, actor: str,
+                                  reason: str = None, before=None, after=None,
+                                  reference: str = None) -> None:
+    """REUSES the existing Meraaj audit infrastructure (`db.audit_log` + the unified audit
+    trail in `enterprise.py`) instead of building a second audit engine. It lives in the
+    ADAPTER because the Core must not know Meraaj's audit schema; the Core already records
+    actor/time/reason ON the accounting documents themselves.
+    """
+    from datetime import datetime, timezone
+    await db.audit_log.insert_one({
+        "entity": "accounting", "entity_id": reference or entity_id,
+        "action": action, "actor": actor, "at": datetime.now(timezone.utc),
+        "before": before, "after": {"accounting_entity": entity_id,
+                                     "reason": reason, **(after or {})},
+    })
 
 
 def period_service() -> PeriodService:

@@ -158,6 +158,32 @@ class PeriodStore:
             {"$set": fields}, return_document=ReturnDocument.AFTER,
             projection={"_id": 0})
 
+    async def transition_year_op(self, entity_id: str, fiscal_year: int, currency: str,
+                                 from_states, to_state: str, fields: dict,
+                                 event: Optional[dict] = None) -> Optional[dict]:
+        """ATOMIC state transition — the expected current state is part of the FILTER, so
+        two concurrent reopen requests can never both proceed. History is appended."""
+        update = {"$set": {**fields, "state": to_state}}
+        if event:
+            update["$push"] = {"history": event}
+        return await self.year_ops.find_one_and_update(
+            {"entity_id": entity_id, "fiscal_year": int(fiscal_year),
+             "currency": currency, "state": {"$in": list(from_states)}},
+            update, return_document=ReturnDocument.AFTER, projection={"_id": 0})
+
+    async def reopen_all_closed(self, entity_id: str, fiscal_year: int,
+                                event: dict) -> int:
+        """Unlocks the dates of a fiscal year. The close record is preserved on each
+        period (`closed_at/closed_by/close_reason` are never cleared)."""
+        from .periods import PERIOD_CLOSED, PERIOD_OPEN
+        r = await self.periods.update_many(
+            {"entity_id": entity_id, "fiscal_year": int(fiscal_year),
+             "status": PERIOD_CLOSED},
+            {"$set": {**event.get("set", {}), "status": PERIOD_OPEN,
+                      "updated_at": event.get("at")},
+             "$push": {"history": event.get("entry")}})
+        return r.modified_count
+
     async def list_year_ops(self, entity_id: str,
                             fiscal_year: Optional[int] = None) -> List[dict]:
         q = {"entity_id": entity_id}
