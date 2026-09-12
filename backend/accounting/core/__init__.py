@@ -22,6 +22,11 @@ from .journal_store import (JournalStore, IDEMPOTENCY_INDEX, ENTRY_NO_INDEX,
 from .journal_usage import JournalUsageProbe
 from .journal_posting import (JournalPostingService, financial_fingerprint,
                               format_entry_no, MANUAL_SOURCE_TYPES)
+from .ledger import (GeneralLedgerService, normal_balance, signed_movement,
+                     DEBIT_NORMAL, CREDIT_NORMAL)
+from .journal_reversal import JournalReversalService, REVERSAL_SOURCE_TYPE
+from .opening_balances import (OpeningBalanceService, OpeningBalanceRequest,
+                               OpeningLineInput, OPENING_SOURCE_TYPE)
 
 __all__ = [
     # chart of accounts (Phases 1-2)
@@ -41,4 +46,9 @@ __all__ = [
     "JournalStore", "IDEMPOTENCY_INDEX", "ENTRY_NO_INDEX", "JOURNAL_ID_INDEX",
     "JournalUsageProbe", "JournalPostingService", "financial_fingerprint",
     "format_entry_no", "MANUAL_SOURCE_TYPES",
+    # ledger / reversal / opening (Phases 5-7)
+    "GeneralLedgerService", "normal_balance", "signed_movement", "DEBIT_NORMAL",
+    "CREDIT_NORMAL", "JournalReversalService", "REVERSAL_SOURCE_TYPE",
+    "OpeningBalanceService", "OpeningBalanceRequest", "OpeningLineInput",
+    "OPENING_SOURCE_TYPE",
 ]

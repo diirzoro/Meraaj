@@ -320,3 +320,10 @@ Backend فقط. لا Posting، لا تخزين، لا Ledger، لا Reversal، �
 - لا أرصدة مخزّنة إطلاقاً (لا `updateBalance` من Rahaal) — الحقيقة هي القيود المرحّلة، والأستاذ يُشتق لاحقاً.
 - `PeriodGuard` ما زال **غير مُفعّل** (`period_guard_not_enforced` في الرد) حتى مرحلة الإقفال.
 - البيانات: الثلاث Collections **فارغة (0)**، ولم تُهيَّأ `meraaj-platform`.
+
+## Accounting Module — PHASES 5-6-7 (GL + Reversal + Opening Balances) — 2026-09-12
+- **Phase 5 GL**: `core/ledger.py` — `GeneralLedgerService` **read-only مشتق** من القيود المرحّلة، **بلا Collection أستاذ وبلا أرصدة مخزّنة**. Normal balance مركزي (asset/expense=debit، liability/equity/revenue=credit)، opening-for-range، running balance آمن مع الترقيم، إجماليات وclosing، منع جمع عملتين (`CURRENCY_REQUIRED`)، ترتيب حتمي date→entry_seq→line_no، Leaf فقط. قراءة أستاذ حساب معطّل مسموحة. فهرس جديد `ledger_account_date_seq`.
+- **Phase 6 Reversal**: `core/journal_reversal.py` — قيد مرآة جديد (UUID/entry_no/seq جديدة)، الأصل **لا تتغير أي قيمة مالية فيه**، فقط Metadata العكس عبر **Atomic Claim** (`status:posted` + `reversed_by_entry:None` في الفلتر) + **فهرس فريد جزئي `uniq_entity_reversal_of`** = العكس المزدوج مستحيل. Idempotency بـ`source_key=reversal:{id}`. تعويض (release claim) إن فشل إدخال المرآة. **Reversal Validation Mode** ضيق: نفس حسابات الأصل حرفياً، و`ACCOUNT_INACTIVE` لا يمنع تصحيح التاريخ.
+- **Phase 7 Opening**: `core/opening_balances.py` — الافتتاح **قيد مُرحَّل** عبر نفس بوابة الكتابة (لا حقل رصيد)، حساب الموازنة بالدور `OPENING_BALANCE_SUSPENSE` (لا الرقم 3103)، عملة واحدة لكل قيد، Assets/Liabilities/Equity فقط (Revenue/Expense مرفوضة وتحتاج سياسة سنة مالية)، منع Group/Inactive/حساب بدور/حساب التسوية/التكرار، `source_key` إلزامي، **افتتاح واحد لكل (entity, currency)** والمعكوس لا يُحتسب فيسمح بالتصحيح، وحراسة نشاط قائم (`LEDGER_HAS_ACTIVITY` + `allow_after_activity`)، وتاريخ إلزامي (لا now() صامت).
+- مسارات جديدة: `GET /ledger/account/{code}` · `POST /journal/entries/{id}/reverse` · `POST /opening-balances`.
+- **لا Migration/Backfill/بيانات**: الـCollections الثلاث فارغة (0)، ولم تُهيَّأ أي Entity.

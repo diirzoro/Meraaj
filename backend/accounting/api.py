@@ -13,12 +13,14 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
 from .adapters import (accounting_perm, actor_label, chart, currency_policy,
-                       journal_validator, posting_service, resolve_entity,
+                       journal_validator, posting_service, ledger_service,
+                       reversal_service, opening_service, resolve_entity,
                        PLATFORM_ENTITY)
 from .core import (AccountCreate, AccountUpdate, AccountingError, IMMUTABLE_FIELDS,
                    JournalEntryDraft, JournalStatus, JOURNAL_DOCUMENT_CONTRACT,
                    MIN_LINES, DEFAULT_SCALE, BALANCE_TOLERANCE, as_str,
-                   format_entry_no, MANUAL_SOURCE_TYPES)
+                   format_entry_no, MANUAL_SOURCE_TYPES, OpeningBalanceRequest)
+from datetime import datetime
 
 router = APIRouter(prefix="/api/accounting", tags=["accounting"])
 
@@ -40,8 +42,8 @@ def install_error_handler(app) -> None:
 async def meta(user: dict = Depends(accounting_perm(VIEW))):
     coa = chart()
     return {
-        "phase": 4,
-        "scope": "chart_of_accounts + journal_posting (POSTED truth) — no ledger/reversal",
+        "phase": 7,
+        "scope": "chart + posting + general ledger + reversal + opening balances",
         "platform_entity": PLATFORM_ENTITY,
         "template": coa.template.key,
         "template_title": coa.template.title,
@@ -78,9 +80,9 @@ async def meta(user: dict = Depends(accounting_perm(VIEW))):
             "period_guard": "boundary wired, NOT enforced (no closing mechanism yet)",
             "document_contract": JOURNAL_DOCUMENT_CONTRACT,
         },
-        "not_implemented_yet": ["general_ledger", "reversal", "opening_balances",
-                                "period_closing", "reports", "currency_engine",
-                                "account_linking"],
+        "not_implemented_yet": ["trial_balance", "income_statement", "balance_sheet",
+                                "period_closing", "year_closing", "currency_engine",
+                                "account_linking", "business_integration"],
     }
 
 
@@ -134,6 +136,50 @@ async def get_journal(entry_id: str, entity_id: Optional[str] = None,
                       user: dict = Depends(accounting_perm(VIEW))):
     eid = await resolve_entity(user, entity_id)
     return await posting_service().get(eid, entry_id)
+
+
+# ------------------------------------------------- general ledger (read-only)
+@router.get("/ledger/account/{account_code}")
+async def account_ledger(account_code: str, entity_id: Optional[str] = None,
+                         currency: Optional[str] = None,
+                         from_date: Optional[datetime] = None,
+                         to_date: Optional[datetime] = None,
+                         page: int = Query(default=1, ge=1),
+                         page_size: int = Query(default=50, ge=1, le=200),
+                         user: dict = Depends(accounting_perm(VIEW))):
+    """Derived read model over POSTED journals. Nothing is stored or cached."""
+    eid = await resolve_entity(user, entity_id)
+    return await ledger_service().account_ledger(
+        eid, account_code, currency=currency, from_date=from_date, to_date=to_date,
+        page=page, page_size=page_size)
+
+
+# ------------------------------------------------------------------- reversal
+@router.post("/journal/entries/{entry_id}/reverse")
+async def reverse_journal(entry_id: str, reason: str = Query(..., min_length=3,
+                                                             max_length=500),
+                          entity_id: Optional[str] = None,
+                          source_key: Optional[str] = Query(default=None,
+                                                            max_length=200),
+                          date: Optional[datetime] = None,
+                          user: dict = Depends(accounting_perm(MANAGE))):
+    """Creates a mirror entry. The original is never edited or deleted — only its
+    reversal metadata is claimed, atomically, by this service."""
+    eid = await resolve_entity(user, entity_id)
+    return await reversal_service().reverse(eid, entry_id, reason=reason,
+                                            by=actor_label(user), date=date,
+                                            source_key=source_key)
+
+
+# ----------------------------------------------------------- opening balances
+@router.post("/opening-balances")
+async def post_opening_balances(payload: OpeningBalanceRequest,
+                                entity_id: Optional[str] = None,
+                                user: dict = Depends(accounting_perm(MANAGE))):
+    """Produces a POSTED opening journal through the single write gateway. This is an
+    accounting capability, not a migration or a backfill of any existing data."""
+    eid = await resolve_entity(user, entity_id)
+    return await opening_service().open(eid, payload, by=actor_label(user))
 
 
 # ------------------------------------------------------------------ read paths

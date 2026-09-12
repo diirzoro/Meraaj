@@ -27,7 +27,8 @@ from security import get_current_user
 from ..core import AccountStore, ChartOfAccounts
 from ..core import (CurrencyPolicy, JournalValidator, PostingAccountResolver,
                     NULL_PERIOD_GUARD, JournalStore, JournalUsageProbe,
-                    JournalPostingService)
+                    JournalPostingService, GeneralLedgerService,
+                    JournalReversalService, OpeningBalanceService)
 from ..core.template import TemplateAccount as T
 from ..core.types import AccountType as AT, AccountOrigin as AO
 from ..core.roles import (CLIENT_WALLET_LIABILITY, ADS_REVENUE,
@@ -79,6 +80,21 @@ _journal_validator = JournalValidator(PostingAccountResolver(_store), _currency_
 # The ONE write gateway for accounting truth. The journal store is deliberately not
 # exported: nothing outside this service may write a journal.
 _posting_service = JournalPostingService(_journal_validator, _journal_store)
+_ledger_service = GeneralLedgerService(_journal_store, _store)
+_reversal_service = JournalReversalService(_journal_store, _store, NULL_PERIOD_GUARD)
+_opening_service = OpeningBalanceService(_posting_service, _journal_store, _chart)
+
+
+def ledger_service() -> GeneralLedgerService:
+    return _ledger_service
+
+
+def reversal_service() -> JournalReversalService:
+    return _reversal_service
+
+
+def opening_service() -> OpeningBalanceService:
+    return _opening_service
 
 
 def store() -> AccountStore:
