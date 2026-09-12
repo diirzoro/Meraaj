@@ -137,6 +137,9 @@ class AccountStore:
     async def get_settings(self, entity_id: str) -> Optional[dict]:
         return await self.settings.find_one({"entity_id": entity_id})
 
+    async def find_one_by_role(self, entity_id: str, role: str) -> Optional[dict]:
+        return await self.accounts.find_one({"entity_id": entity_id, "role": role})
+
     # ------------------------------------------------------------------ writes
     async def insert_many(self, docs: List[dict]) -> int:
         if not docs:

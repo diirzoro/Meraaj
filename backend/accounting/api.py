@@ -1,17 +1,20 @@
-"""HTTP surface for the Accounting Module — Phase 1 (Chart of Accounts only).
+"""HTTP surface for the Accounting Module — Phases 1-2 (Chart of Accounts only).
 
-Every route is a thin transport wrapper: it resolves the entity, checks the permission and
-delegates to the Core. No accounting rule lives here (the reference implementation kept its
-rules inside the route handler; that is exactly what is being fixed by porting them into
-`core/chart.py`).
+API BOUNDARY (enforced): this file is a TRANSPORT layer.
+    Request → Adapter/Context (entity + actor + permission) → Core → Response
+No accounting rule lives here. The Core raises `AccountingError`, which carries no HTTP
+dependency; one exception handler registered on the app performs the single HTTP mapping.
+(The reference implementation kept its rules inside the route handler — that is exactly
+what porting them into `core/` fixed.)
 """
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import JSONResponse
 
 from .adapters import (accounting_perm, actor_label, chart, resolve_entity,
                        PLATFORM_ENTITY)
-from .core import AccountCreate, AccountUpdate, AccountingError
+from .core import AccountCreate, AccountUpdate, AccountingError, IMMUTABLE_FIELDS
 
 router = APIRouter(prefix="/api/accounting", tags=["accounting"])
 
@@ -19,106 +22,107 @@ VIEW = "accounting.accounts.view"
 MANAGE = "accounting.accounts.manage"
 
 
-def _fail(exc: AccountingError):
-    raise HTTPException(exc.http_status, exc.message)
+def install_error_handler(app) -> None:
+    """The ONE place where a Core error becomes an HTTP response."""
+
+    @app.exception_handler(AccountingError)
+    async def _handle(request: Request, exc: AccountingError):  # noqa: ANN001
+        return JSONResponse(status_code=exc.http_status,
+                            content={"detail": exc.message, "error": exc.code,
+                                     **exc.details})
 
 
 @router.get("/meta")
 async def meta(user: dict = Depends(accounting_perm(VIEW))):
     coa = chart()
     return {
-        "phase": 1,
-        "scope": "chart_of_accounts_only",
+        "phase": 2,
+        "scope": "chart_of_accounts_management_only",
         "platform_entity": PLATFORM_ENTITY,
         "template": coa.template.key,
         "template_title": coa.template.title,
         "coa_version": coa.template.version,
         "template_accounts": len(coa.template.accounts),
+        "roles": sorted(a.role for a in coa.template.accounts if a.role),
+        "immutable_fields": list(IMMUTABLE_FIELDS),
+        "journal_usage_probe": "unavailable (no journal in this phase)",
         "not_implemented_yet": ["journal", "posting", "ledger", "reversal",
                                 "opening_balances", "period_closing", "reports",
                                 "currency_engine", "account_linking"],
     }
 
 
+# ------------------------------------------------------------------ read paths
 @router.get("/accounts")
 async def list_accounts(entity_id: Optional[str] = None, include_inactive: bool = True,
                         user: dict = Depends(accounting_perm(VIEW))):
     eid = await resolve_entity(user, entity_id)
-    try:
-        return {"entity_id": eid,
-                "items": await chart().list_accounts(eid, include_inactive)}
-    except AccountingError as e:
-        _fail(e)
+    return {"entity_id": eid,
+            "items": await chart().list_accounts(eid, include_inactive)}
 
 
 @router.get("/accounts/tree")
 async def accounts_tree(entity_id: Optional[str] = None, include_inactive: bool = True,
                         user: dict = Depends(accounting_perm(VIEW))):
     eid = await resolve_entity(user, entity_id)
-    try:
-        return {"entity_id": eid, "roots": await chart().build_tree(eid, include_inactive)}
-    except AccountingError as e:
-        _fail(e)
+    return {"entity_id": eid, "roots": await chart().build_tree(eid, include_inactive)}
 
 
 @router.get("/accounts/next-code")
 async def next_code(parent: str = Query(..., min_length=1), entity_id: Optional[str] = None,
                     user: dict = Depends(accounting_perm(VIEW))):
     eid = await resolve_entity(user, entity_id)
-    try:
-        return await chart().next_code(eid, parent.strip())
-    except AccountingError as e:
-        _fail(e)
+    return await chart().next_code(eid, parent.strip())
+
+
+@router.get("/accounts/by-code/{code}")
+async def account_by_code(code: str, entity_id: Optional[str] = None,
+                          user: dict = Depends(accounting_perm(VIEW))):
+    eid = await resolve_entity(user, entity_id)
+    return await chart().find_by_code(eid, code)
+
+
+@router.get("/accounts/by-role/{role}")
+async def account_by_role(role: str, entity_id: Optional[str] = None,
+                          user: dict = Depends(accounting_perm(VIEW))):
+    eid = await resolve_entity(user, entity_id)
+    return await chart().find_by_role(eid, role)
 
 
 @router.get("/chart/audit")
 async def chart_audit(entity_id: Optional[str] = None,
                       user: dict = Depends(accounting_perm(VIEW))):
     eid = await resolve_entity(user, entity_id)
-    try:
-        return await chart().audit_chart(eid)
-    except AccountingError as e:
-        _fail(e)
+    return await chart().audit_chart(eid)
 
 
 @router.get("/chart/validate")
 async def chart_validate(entity_id: Optional[str] = None,
                          user: dict = Depends(accounting_perm(VIEW))):
     eid = await resolve_entity(user, entity_id)
-    try:
-        return await chart().validate_chart(eid)
-    except AccountingError as e:
-        _fail(e)
+    return await chart().validate_chart(eid)
 
 
+# ----------------------------------------------------------------- write paths
 @router.post("/chart/seed")
 async def chart_seed(entity_id: Optional[str] = None,
                      user: dict = Depends(accounting_perm(MANAGE))):
     eid = await resolve_entity(user, entity_id)
-    try:
-        return await chart().seed_template(eid, by=actor_label(user))
-    except AccountingError as e:
-        _fail(e)
+    return await chart().seed_template(eid, by=actor_label(user))
 
 
 @router.post("/accounts")
 async def create_account(payload: AccountCreate, entity_id: Optional[str] = None,
                          user: dict = Depends(accounting_perm(MANAGE))):
     eid = await resolve_entity(user, entity_id)
-    try:
-        return await chart().create_account(eid, payload, by=actor_label(user))
-    except AccountingError as e:
-        _fail(e)
+    return await chart().create_account(eid, payload, by=actor_label(user))
 
 
 @router.get("/accounts/{account_id}")
 async def get_account(account_id: str, entity_id: Optional[str] = None,
                       user: dict = Depends(accounting_perm(VIEW))):
     eid = await resolve_entity(user, entity_id)
-    try:
-        return await chart().get_account(eid, account_id)
-    except AccountingError as e:
-        _fail(e)
+    return await chart().get_account(eid, account_id)
 
 
 @router.patch("/accounts/{account_id}")
@@ -126,38 +130,25 @@ async def update_account(account_id: str, payload: AccountUpdate,
                          entity_id: Optional[str] = None,
                          user: dict = Depends(accounting_perm(MANAGE))):
     eid = await resolve_entity(user, entity_id)
-    try:
-        return await chart().update_account(eid, account_id, payload,
-                                            by=actor_label(user))
-    except AccountingError as e:
-        _fail(e)
+    return await chart().update_account(eid, account_id, payload, by=actor_label(user))
 
 
 @router.post("/accounts/{account_id}/deactivate")
 async def deactivate_account(account_id: str, entity_id: Optional[str] = None,
                              user: dict = Depends(accounting_perm(MANAGE))):
     eid = await resolve_entity(user, entity_id)
-    try:
-        return await chart().set_active(eid, account_id, False, by=actor_label(user))
-    except AccountingError as e:
-        _fail(e)
+    return await chart().set_active(eid, account_id, False, by=actor_label(user))
 
 
 @router.post("/accounts/{account_id}/activate")
 async def activate_account(account_id: str, entity_id: Optional[str] = None,
                            user: dict = Depends(accounting_perm(MANAGE))):
     eid = await resolve_entity(user, entity_id)
-    try:
-        return await chart().set_active(eid, account_id, True, by=actor_label(user))
-    except AccountingError as e:
-        _fail(e)
+    return await chart().set_active(eid, account_id, True, by=actor_label(user))
 
 
 @router.delete("/accounts/{account_id}")
 async def delete_account(account_id: str, entity_id: Optional[str] = None,
                          user: dict = Depends(accounting_perm(MANAGE))):
     eid = await resolve_entity(user, entity_id)
-    try:
-        return await chart().delete_account(eid, account_id)
-    except AccountingError as e:
-        _fail(e)
+    return await chart().delete_account(eid, account_id, by=actor_label(user))

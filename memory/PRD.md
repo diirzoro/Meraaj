@@ -256,3 +256,22 @@ Journal، Posting، Ledger، Reversal، Opening Balances، Closing، Reports، C
 ### قرارات مفتوحة تنتظر العميل
 1. الكيان المحاسبي: دفتر واحد للمنصة أم دفتر لكل مكتب (حالياً entity واحد `meraaj-platform` قابل للتغيير).
 2. العملة الأساس للمحاسبة في معراج.
+
+## Accounting Module — PHASE 2 (COA Management + Guards + Lifecycle) — 2026-09-12
+Backend فقط. بلا اختبارات، بلا بيانات تجريبية، بلا Migration/Backfill، بلا ربط أعمال، بلا Frontend، بلا Git/Deploy.
+
+### جديد في Phase 2
+- `core/usage.py`: **Boundary** لحماية الحساب المستخدم في قيود (`UsageProbe` + `NullUsageProbe` بـ`available=False`) — لا ادّعاء بفحص دفتر غير موجود؛ المرحلة القادمة تُحقن Probe حقيقياً بلا إعادة كتابة أي حارس.
+- `core/audit.py`: `ChartAuditor` (audit/validate/classification) — توسيع التدقيق البنيوي: children under terminal L4، children under leaf، invalid origin/type، role integrity (تكرار/دور على حساب custom/عدم تطابق النوع أو Group)، active child under inactive parent، inactive template accounts، sequence anomalies، invalid code length، فصل `customExtras` عن `unexpectedExtras`.
+- تصنيفات الشجرة السبع: empty | inconsistent | manual_review | older_version | structurally_matching | custom_extended | already_current — بلا أي Upgrade Migration.
+- `models.py`: `extra="forbid"` على Create/Update + `IMMUTABLE_FIELDS` (id, entity_id, code, origin, level, role, next_child_seq, created_*) و`is_active` خارج مسار التعديل (له مسار مستقل).
+- `codegen.py`: `sync_parent_sequence_after_manual_code` (يرفع العدّاد فقط عند تجاوز كود يدوي له، ولا يُنزله ولا يُعيد استخدام رقم).
+- `chart.py`: بوابة أب واحدة `_assert_usable_parent` (موجود/نفس الجهة/Group/نشط/نوع مطابق/ليس L4) تُستدعى في الإنشاء وإعادة الأب وتغيير النوع والتنشيط؛ منع تحويل Group خصّص أرقاماً إلى Leaf؛ منع حذف حساب مرتبط بدور؛ `find_by_code` و`find_by_role` (بديل أرقام Rahaal الحرفية).
+- `api.py`: مسارَا Lookup جديدان (`/accounts/by-code/{code}`, `/accounts/by-role/{role}`) + `install_error_handler` (تحويل واحد لـAccountingError إلى HTTP خارج الـCore).
+- Code review خارجي: أُصلحت ثغرة MEDIUM (تغيير type وحده كان يتجاوز تطابق نوع الأب) + دور غير نشط + int(seq) غير رقمي + تسريب طبقة store.
+
+### حالة البيانات
+`accounting_accounts` و`accounting_entity_settings` **فارغتان (0 مستند)**. لم تُهيَّأ جهة `meraaj-platform` بناءً على قرار العميل.
+
+### مؤجَّل للمراحل القادمة (مؤكد)
+Journal، Posting، Reversal، Ledger، Opening Balances، Closing، Reports، Multi-Currency، Account Linking، Used-Account Guard الفعلي، وأي ربط بـWallet/Ads/Commissions/Withdrawals.

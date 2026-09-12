@@ -115,6 +115,43 @@ async def preview_next_code(store, entity_id: str, parent_code: str) -> str:
     return code
 
 
+async def sync_parent_sequence_after_manual_code(store, entity_id: str,
+                                                 parent_code: Optional[str],
+                                                 code: str) -> Optional[int]:
+    """HARDEN (limited ADAPT, Phase 2) — keep `next_child_seq` from falling behind a
+    manually supplied code.
+
+    Rahaal relied purely on the collision-skip loop: a manual `1101050` left the counter at
+    0, so the next 50 automatic allocations each burned one wasted `$inc` round-trip before
+    finding a free code. Behaviour was correct, cost was not.
+
+    This raises the counter to the manual suffix ONLY WHEN IT IS BEHIND. It never lowers it,
+    never renumbers anything, never touches existing documents other than the parent's
+    counter, and the collision-skip loop plus the unique index both stay exactly as they
+    were — so this is an optimisation of an invariant, not a replacement for it.
+    """
+    if not parent_code:
+        return None
+    suffix = code[len(parent_code):]
+    if not suffix.isdigit():
+        return None
+    try:
+        pad = sequence_pad(parent_code)
+    except KeyError:
+        return None
+    if len(suffix) != pad:
+        return None
+    value = int(suffix)
+    parent = await store.get_by_code(entity_id, parent_code)
+    if not parent:
+        return None
+    current = int(parent.get("next_child_seq") or 0)
+    if value <= current:
+        return None
+    await store.set_child_sequence(entity_id, parent_code, value)
+    return value
+
+
 def validate_manual_code(code: str, parent_code: Optional[str]) -> None:
     """PORT — Rahaal manual-code validation in `POST /accounts`, rule for rule:
       • digits only

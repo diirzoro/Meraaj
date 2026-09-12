@@ -32,7 +32,7 @@ from documents import router as documents_router
 from maintenance import router as maintenance_router
 from ads import router as ads_router
 from ads_billing import router as ads_billing_router
-from accounting.api import router as accounting_router
+from accounting.api import router as accounting_router, install_error_handler as install_accounting_errors
 
 app = FastAPI(title="Meraaj Network API")
 
@@ -69,6 +69,7 @@ app.include_router(maintenance_router)
 app.include_router(ads_router)
 app.include_router(ads_billing_router)
 app.include_router(accounting_router)
+install_accounting_errors(app)
 
 frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 app.add_middleware(
