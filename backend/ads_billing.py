@@ -186,6 +186,9 @@ async def capture_for_ad(ad: dict, reason: str) -> Optional[dict]:
         return None
     price, ccy, payer = b["held"], b["currency"], b["payer_id"]
     await adjust_wallet(payer, ccy, pending=-price, total=-price)
+    from accounting.booking_events import emit_ads_capture
+    payer_doc = await db.users.find_one({"_id": payer})
+    await emit_ads_capture(ad, str(ad["_id"]), price, ccy, payer_doc)
     await log_txn(payer, CAPTURE, -price,
                   f"تحصيل قيمة الباقة الإعلانية بعد الاعتماد: {b.get('package_name')}",
                   ref=str(ad["_id"]), currency=ccy,

@@ -30,6 +30,12 @@ class BusinessAccountingReconciliation:
              {"status": "approved"}),
             (FINANCIAL_EVENTS["b2b_transfer"], "transfers", "_id",
              {"status": "approved"}),
+            (FINANCIAL_EVENTS["booking_debit"], "bookings", "_id",
+             {"status": {"$nin": ["pending", "rejected"]}}),
+            (FINANCIAL_EVENTS["booking_settlement"], "bookings", "_id",
+             {"settled": True}),
+            (FINANCIAL_EVENTS["ads_capture"], "advertisements", "_id",
+             {"billing.state": "captured"}),
         ):
             docs = await self._db[collection].find(status_match) \
                 .sort([("created_at", -1)]).to_list(length=min(limit, 1000))
@@ -62,7 +68,8 @@ class BusinessAccountingReconciliation:
         for spec in ACCOUNTING_EVENTS:
             journals = await self._journal.list_by_source_type(self._entity, spec.event)
             collection = {"topup": "topups", "withdrawal": "withdrawals",
-                          "transfer": "transfers"}.get(spec.business_object)
+                          "transfer": "transfers", "booking": "bookings",
+                          "ad": "advertisements"}.get(spec.business_object)
             if not collection:
                 continue
             for j in journals:

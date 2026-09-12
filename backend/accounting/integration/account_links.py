@@ -37,6 +37,7 @@ class LinkKey:
     REFUND_CLEARING = "refund_clearing"
     ADJUSTMENT_EXPENSE = "adjustment_expense"
     RECEIVABLE = "receivable"
+    DEFERRED_PLATFORM_REVENUE = "deferred_platform_revenue"
 
 
 #: `role_chain` = the semantic roles tried, in order, when no explicit link is configured.
@@ -77,6 +78,11 @@ LINK_DEFINITIONS = {
                                  "role_chain": (OPERATING_EXPENSES,)},
     LinkKey.RECEIVABLE: {"label_ar": "مدينون", "types": (AccountType.ASSET.value,),
                          "role_chain": (RECEIVABLES,)},
+    LinkKey.DEFERRED_PLATFORM_REVENUE: {
+        "label_ar": "إيراد منصة غير مكتسب (مؤجّل)",
+        "types": (AccountType.LIABILITY.value,), "role_chain": (PAYABLES,),
+        "meaning": "حصة المنصة المحصّلة عند الحجز وغير المستحقة بعد — التزام حتى لحظة "
+                   "الاستحقاق (PD-1)؛ يُنصح بربطها بحساب مستقل صريح في التشغيل"},
 }
 
 
