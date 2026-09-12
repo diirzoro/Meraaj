@@ -405,3 +405,46 @@ Collections جديدة: `accounting_periods`, `accounting_year_close_ops`, `acco
 
 ### Integration Readiness
 **READY WITH ACCEPTED DEFERRED FEATURES** — لا Critical defect في الترحيل/العكس/الإقفال/عزل الجهات/الـIdempotency/سلامة العملات/المعادلة المحاسبية. القرار الوحيد المطلوب قبل التكامل: تعريف `entity_id`.
+
+## Accounting — FINAL PRE-INTEGRATION CONFIRMATION (Architecture Decision) — 2026-09-12
+
+### القرار المعتمد نهائياً
+- **معراج له دفتر محاسبي مركزي واحد**: `entity_id = "meraaj-platform"` (`ACCOUNTING_PLATFORM_ENTITY` في الـAdapter، سطر 42) = **Meraaj Platform Accounting Ledger**، يديره Super Admin والمخوّلون محاسبياً بحسب RBAC.
+- **المكاتب ليست جهات محاسبية**: لا COA ولا Ledger ولا Journal Book ولا Trial Balance/Income Statement/Balance Sheet ولا فترات/إقفال ولا تكوين عملات ولا `entity_id` لكل مكتب. المكتب يملك **Office Statement / كشف حساب** من بنية الأعمال/المحفظة القائمة.
+- **المستخدمون ليسوا جهات محاسبية** — الصلاحيات فقط تحدد الرؤية والتنفيذ.
+- **B2B** = Business Transaction بمرجع موحّد (خارج/داخل)، وأثره المحاسبي (إن وُجد) يُحدَّد في مرحلة التكامل بعد فحص الـFlow — **لا افتراض قيد الآن**.
+- **العمولات**: تظهر للمكتب في كشفه، وأثرها المحاسبي يذهب لدفتر المنصة — **لا P&L للمكتب**.
+- **لا محرّك مالي ثانٍ للمكاتب** (لا Office Accounting Core / Journal Engine / COA).
+
+### مراجعة الأثر على Phase 1–11A (Read-only — صفر تعديل منطق)
+`AccountStore · JournalStore · JournalPostingService · GeneralLedger · Reversal · Opening · Reports · PeriodGuard · Period/Year Closing · Controlled Year Reopen · Currency Settings · FX Rates · Realized FX · Self-Audit · API Adapter` — كلها **entity-scoped بالتصميم** (entity_id في كل قراءة/كتابة، 13 فهرساً فريداً مُصدَّراً بـentity_id). **لا تعارض**، ولا حاجة لأي تغيير مالي. النواة **تبقى Multi-Entity Capable**: قرار الدفتر الواحد هو **سياسة Adapter/منتج** لا قيد داخل النواة. التغيير الوحيد في هذه المهمة: مثال في التوثيق داخل `contracts.py` كان يذكر `meraaj-platform` → صار `<entity_id>` لتبقى النواة محايدة تماماً (توثيق فقط، لا منطق).
+
+### OPEN REGISTRY (Canonical — المرجع = Issue Name + Canonical ID)
+| ID | Issue Name | Status | Phase | Notes |
+|---|---|---|---|---|
+| ACC-001 | Accounting Entity Model | **RESOLVED — MERAAJ PLATFORM SINGLE CENTRAL ACCOUNTING ENTITY** | 11A | كان يُشار له كـ"Entity Decision (Platform vs Office)" |
+| ACC-002 | Base Currency explicit | RESOLVED | 10 | كان OPEN-002 |
+| ACC-003 | PeriodGuard enforcement | RESOLVED | 9 | كان OPEN-003 |
+| ACC-004 | Entry Number Gaps | **ACCEPTED POLICY — UNIQUENESS > GAPLESSNESS** | 4 | كان OPEN-010؛ لا مشكلة مرصودة |
+| ACC-005 | Opening Balance Policy | ACCEPTED POLICY | 7 | كان OPEN-011: عملة واحدة، لا تحويل تلقائي، افتتاح واحد لكل (جهة، عملة) |
+| ACC-006 | Revenue/Expense Opening | RESOLVED | 9 | كان OPEN-013؛ مسار الإقفال السنوي يغطيها |
+| ACC-007 | Timezone / Accounting Date | **RESOLVED BY ACCOUNTING-DATE POLICY** | 11A | كان OPEN-016 |
+| ACC-008 | Controlled Year Reopen | **RESOLVED** | 11A | كان OPEN-017 (رقم أُعيد استخدامه سابقاً للأداء — انظر ACC-011) |
+| ACC-009 | FX Revaluation (Unrealized) | DEFERRED — ADVANCED ACCOUNTING POLICY REQUIRED | 10 | كان OPEN-018؛ ليس Blocker |
+| ACC-010 | Consolidated FX Reporting | DEFERRED — NOT REQUIRED FOR SINGLE-LEDGER INTEGRATION V1 | 10 | كان OPEN-019؛ ليس Blocker |
+| ACC-011 | Production-scale performance | DEFERRED TO LOAD TESTING | 11A | كان يُرقَّم OPEN-017 في تقرير أقدم — **أُعيد ترقيمه هنا ولم يُحذف** |
+| ACC-012 | Base Currency Change After History | BLOCKED BY DESIGN — CONTROLLED MIGRATION REQUIRED | 10 | كان OPEN-020؛ ليس Defect |
+| ACC-013 | source_key Integration Contract | **RESOLVED FOR CORE / READY FOR INTEGRATION** | 11A | مفتاح لكل Financial Event |
+| ACC-014 | Semantic Roles Audit | RESOLVED | 11A | مفحوص آلياً في Self-Audit |
+| ACC-015 | Business Account Linking (Phase 11B) | STILL OPEN — NEXT TASK | 11B | طبقة التكامل |
+| ACC-016 | Business ↔ Accounting audit cross-reference | STILL OPEN — INTEGRATION | 11B | لا دمج للسجلين الآن |
+
+### التأكيدات
+- **Self-Audit** (`GET /api/accounting/self-audit`) = تشخيص سلامة محاسبية لدفتر المنصة (جهة واحدة، قراءة فقط) — **وليس تدقيق كشف حساب مكتب**.
+- **فصل التدقيق**: Accounting Audit (عمليات الدفتر المركزي، على مستندات النواة + `db.audit_log` عبر الـAdapter) منفصل عن Business Audit (مكتب/مستخدم/شحن/سحب/B2B/إعلان/عمولة). الربط المرجعي بينهما يُدرس في التكامل.
+- **Cross-Entity tests في QA** كانت تختبر **عزل النواة العام (Generic isolation)** ولا تعني إنشاء دفاتر للمكاتب — الفرق موثّق.
+- **Phase 11A**: 79 PASS / 0 FAIL / 0 BLOCKED (لم يُعَد تشغيلها: القرار لم يغيّر أي كود مالي).
+- **Database Impact لهذه المهمة: NONE** — لا Migration/Backfill/بيانات/قيود، ولا تعديل لأي أرصدة مكتب/محفظة/عمولات/سحوبات/إعلانات/Finance. كل مجموعات المحاسبة = 0 مستند.
+
+### الحكم
+**READY FOR INTEGRATION** — لا Blocker. المهمة القادمة تبدأ بـ: INSPECT CURRENT MERAAJ → INSPECT RAHAAL (Read-only reference) → INVENTORY → MAP FINANCIAL EVENTS → DEFINE ACCOUNT LINKS → INTEGRATE.

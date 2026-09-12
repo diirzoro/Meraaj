@@ -40,7 +40,7 @@ SOURCE_KEY_CONTRACT = {
     "purpose": "ONE key per FINANCIAL EFFECT, so a retry can never produce a second "
                "journal and two different effects can never collapse into one.",
     "shape": "{producer}:{entity_id}:{business_object}:{financial_event}:{event_id}",
-    "example_generic": "ads:meraaj-platform:campaign-9f31:charge:inv-2026-0007",
+    "example_generic": "ads:<entity_id>:campaign-9f31:charge:inv-2026-0007",
     "segments": {
         "producer": "the adapter/module that owns the operation (never the Core)",
         "entity_id": "the accounting entity the effect belongs to",
