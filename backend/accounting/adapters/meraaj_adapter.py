@@ -25,6 +25,8 @@ from db import db
 from security import get_current_user
 
 from ..core import AccountStore, ChartOfAccounts
+from ..core import (CurrencyPolicy, JournalValidator, PostingAccountResolver,
+                    NULL_PERIOD_GUARD)
 from ..core.template import TemplateAccount as T
 from ..core.types import AccountType as AT, AccountOrigin as AO
 from ..core.roles import (CLIENT_WALLET_LIABILITY, ADS_REVENUE,
@@ -56,6 +58,20 @@ MERAAJ_COA = STANDARD_COA.extend(
 _store = AccountStore(db, collection_prefix="accounting_")
 _chart = ChartOfAccounts(_store, MERAAJ_COA)
 
+# Currency boundary: the Core knows no project currency, so the allowed set is supplied here
+# by Meraaj. `ACCOUNTING_BASE_CURRENCY` is intentionally left UNSET — the base-currency
+# decision is still open and belongs to the currency-engine phase, and nothing in the
+# journal model depends on it while journals are single-currency.
+_ALLOWED_CURRENCIES = [c for c in os.environ.get("ACCOUNTING_CURRENCIES", "SAR,USD")
+                       .split(",") if c.strip()]
+_currency_policy = CurrencyPolicy(allowed=_ALLOWED_CURRENCIES,
+                                  base=os.environ.get("ACCOUNTING_BASE_CURRENCY") or None,
+                                  allow_multi_currency=False)
+# Period guard: the open (non-enforcing) guard until the period-closing phase injects a real
+# one. Wiring it here means every journal is covered the moment that phase lands.
+_journal_validator = JournalValidator(PostingAccountResolver(_store), _currency_policy,
+                                      period_guard=NULL_PERIOD_GUARD)
+
 
 def store() -> AccountStore:
     return _store
@@ -63,6 +79,14 @@ def store() -> AccountStore:
 
 def chart() -> ChartOfAccounts:
     return _chart
+
+
+def journal_validator() -> JournalValidator:
+    return _journal_validator
+
+
+def currency_policy() -> CurrencyPolicy:
+    return _currency_policy
 
 
 async def ensure_accounting_indexes() -> dict:

@@ -12,9 +12,11 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
-from .adapters import (accounting_perm, actor_label, chart, resolve_entity,
-                       PLATFORM_ENTITY)
-from .core import AccountCreate, AccountUpdate, AccountingError, IMMUTABLE_FIELDS
+from .adapters import (accounting_perm, actor_label, chart, currency_policy,
+                       journal_validator, resolve_entity, PLATFORM_ENTITY)
+from .core import (AccountCreate, AccountUpdate, AccountingError, IMMUTABLE_FIELDS,
+                   JournalEntryDraft, JournalStatus, JOURNAL_DOCUMENT_CONTRACT,
+                   MIN_LINES, DEFAULT_SCALE, BALANCE_TOLERANCE, as_str)
 
 router = APIRouter(prefix="/api/accounting", tags=["accounting"])
 
@@ -36,8 +38,8 @@ def install_error_handler(app) -> None:
 async def meta(user: dict = Depends(accounting_perm(VIEW))):
     coa = chart()
     return {
-        "phase": 2,
-        "scope": "chart_of_accounts_management_only",
+        "phase": 3,
+        "scope": "chart_of_accounts + journal_model + central_validation_only",
         "platform_entity": PLATFORM_ENTITY,
         "template": coa.template.key,
         "template_title": coa.template.title,
@@ -45,11 +47,38 @@ async def meta(user: dict = Depends(accounting_perm(VIEW))):
         "template_accounts": len(coa.template.accounts),
         "roles": sorted(a.role for a in coa.template.accounts if a.role),
         "immutable_fields": list(IMMUTABLE_FIELDS),
-        "journal_usage_probe": "unavailable (no journal in this phase)",
-        "not_implemented_yet": ["journal", "posting", "ledger", "reversal",
+        "journal_usage_probe": "unavailable (no posted journal exists in this phase)",
+        "journal": {
+            "statuses": [s.value for s in JournalStatus],
+            "min_lines": MIN_LINES,
+            "monetary_scale": DEFAULT_SCALE,
+            "monetary_representation": "decimal.Decimal in core, Decimal128 in DB (future)",
+            "balance_tolerance": as_str(BALANCE_TOLERANCE),
+            "currency": currency_policy().describe(),
+            "persistence": "none — Phase 3 validates in memory and stores nothing",
+            "entry_no": "allocated only at posting time (atomic, entity-scoped) — a draft "
+                        "never carries an accounting number",
+            "source_key_idempotency": "deferred to its own phase, with its unique index",
+            "period_guard": "boundary wired, not enforced (no closing mechanism yet)",
+            "document_contract": JOURNAL_DOCUMENT_CONTRACT,
+        },
+        "not_implemented_yet": ["posting_workflow", "general_ledger", "reversal",
                                 "opening_balances", "period_closing", "reports",
                                 "currency_engine", "account_linking"],
     }
+
+
+@router.post("/journal/validate")
+async def validate_journal(payload: JournalEntryDraft, entity_id: Optional[str] = None,
+                           user: dict = Depends(accounting_perm(VIEW))):
+    """DRY-RUN ONLY — runs the central journal validator and returns its verdict.
+
+    Nothing is stored, numbered, posted or reversed: `persisted:false, posted:false`. This
+    is the same `assert_valid()` the posting phase will be built on, so a journal that
+    cannot pass here can never become posted.
+    """
+    eid = await resolve_entity(user, entity_id)
+    return await journal_validator().validate(eid, payload)
 
 
 # ------------------------------------------------------------------ read paths

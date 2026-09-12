@@ -275,3 +275,24 @@ Backend فقط. بلا اختبارات، بلا بيانات تجريبية، �
 
 ### مؤجَّل للمراحل القادمة (مؤكد)
 Journal، Posting، Reversal، Ledger، Opening Balances، Closing، Reports، Multi-Currency، Account Linking، Used-Account Guard الفعلي، وأي ربط بـWallet/Ads/Commissions/Withdrawals.
+
+## Accounting Module — PHASE 3 (Journal Model + Central Journal Validation) — 2026-09-12
+Backend فقط. لا Posting، لا تخزين، لا Ledger، لا Reversal، لا تقارير، لا إقفال، لا FX Engine، لا Account Linking، لا ربط أعمال، لا اختبارات، لا بيانات، لا Migration، لا Git/Deploy.
+
+### ملفات جديدة (6) في core/
+- `money.py`: التمثيل المالي — `Decimal` فقط (لا float)، scale=2، ROUND_HALF_UP على الحدود، رفض NaN/Infinity/دقة زائدة/قيمة تتجاوز MAX_AMOUNT، **BALANCE_TOLERANCE = 0** (عدم نقل tolerance 0.01 من Rahaal)، والقرار للـDB مستقبلاً: Decimal128.
+- `currency.py`: `CurrencyPolicy` — العملات المسموحة تُحقن من الـadapter (لا SAR/USD/YER داخل الـCore)، وقيود متعددة العملات **مرفوضة صريحاً** (`MULTI_CURRENCY_UNSUPPORTED`) لا مقبولة بالخطأ.
+- `periods.py`: `PeriodGuard` Protocol + `NullPeriodGuard` (Boundary للإقفال، غير مُفعّل) — الفحص في نقطة مركزية واحدة بدل تكراره في المسارات كما في Rahaal.
+- `journal.py`: `JournalStatus` (draft/posted/reversed) + `ALLOWED_TRANSITIONS` + `IMMUTABLE_STATUSES` + `JournalLineInput` + `JournalEntryDraft` (source_type/source_id عام) + `JOURNAL_DOCUMENT_CONTRACT` (عقد الوثيقة بلا إنشاء Collection).
+- `posting_accounts.py`: `PostingAccountResolver` — تحميل مجمّع للحسابات باستعلام واحد معزول بالجهة + `assert_postable` (غير نشط / مجموعة / جذري / بنية level غير سليمة) + كشف Cross-entity.
+- `journal_validator.py`: **`JournalValidator`** — البوابة المركزية الوحيدة: entity، سطور ≥2، بيان، تاريخ غير مستقبلي، مدين/دائن بجهة واحدة فقط وبدون سالب/صفر/دقة خاطئة، الحساب موجود+نفس الجهة+نشط+Leaf، عملة مسموحة وعملة واحدة، **التوازن مضبوط بدقة تامة**، ثم بوابة الفترة. `assert_valid()` هي ما سيُبنى عليه Posting لاحقاً.
+
+### معدَّل
+`core/__init__.py` (تصدير)، `core/usage.py` (توثيق اتجاه التبعية أحادي الاتجاه: COA → UsageProbe ← Journal storage، وأن DRAFT لا يجعل الحساب مستخدماً)، `adapters/meraaj_adapter.py` (تركيب الـvalidator + العملات من env)، `api.py` (meta + مسار Dry-run واحد `POST /api/accounting/journal/validate` بلا تخزين).
+
+### Collections / Indexes / بيانات
+**صفر تغيير**: لم تُنشأ `accounting_journal_entries`، ولا فهارس جديدة، ولا `source_key` (مؤجّل مع فهرسه الفريد). `accounting_accounts=0` و`accounting_entity_settings=0`.
+
+### قرارات موثّقة
+- `entry_no` لا يُخصَّص للـDraft إطلاقاً — يُصدر ذرياً ومعزولاً بالجهة وقت Posting فقط (لا `count()+1`).
+- العملة الأساس غير محسومة (`ACCOUNTING_BASE_CURRENCY` غير مضبوط) ولا شيء يعتمد عليها ما دامت القيود أحادية العملة.
