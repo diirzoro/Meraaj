@@ -26,7 +26,8 @@ from security import get_current_user
 
 from ..core import AccountStore, ChartOfAccounts
 from ..core import (CurrencyPolicy, JournalValidator, PostingAccountResolver,
-                    NULL_PERIOD_GUARD)
+                    NULL_PERIOD_GUARD, JournalStore, JournalUsageProbe,
+                    JournalPostingService)
 from ..core.template import TemplateAccount as T
 from ..core.types import AccountType as AT, AccountOrigin as AO
 from ..core.roles import (CLIENT_WALLET_LIABILITY, ADS_REVENUE,
@@ -56,7 +57,11 @@ MERAAJ_COA = STANDARD_COA.extend(
 )
 
 _store = AccountStore(db, collection_prefix="accounting_")
-_chart = ChartOfAccounts(_store, MERAAJ_COA)
+_journal_store = JournalStore(db, collection_prefix="accounting_")
+# Phase 4: the usage probe is now REAL — the chart lifecycle guards written in Phase 2 start
+# enforcing historical posting protection without any change to them.
+_usage_probe = JournalUsageProbe(_journal_store)
+_chart = ChartOfAccounts(_store, MERAAJ_COA, usage_probe=_usage_probe)
 
 # Currency boundary: the Core knows no project currency, so the allowed set is supplied here
 # by Meraaj. `ACCOUNTING_BASE_CURRENCY` is intentionally left UNSET — the base-currency
@@ -71,6 +76,9 @@ _currency_policy = CurrencyPolicy(allowed=_ALLOWED_CURRENCIES,
 # one. Wiring it here means every journal is covered the moment that phase lands.
 _journal_validator = JournalValidator(PostingAccountResolver(_store), _currency_policy,
                                       period_guard=NULL_PERIOD_GUARD)
+# The ONE write gateway for accounting truth. The journal store is deliberately not
+# exported: nothing outside this service may write a journal.
+_posting_service = JournalPostingService(_journal_validator, _journal_store)
 
 
 def store() -> AccountStore:
@@ -85,12 +93,18 @@ def journal_validator() -> JournalValidator:
     return _journal_validator
 
 
+def posting_service() -> JournalPostingService:
+    return _posting_service
+
+
 def currency_policy() -> CurrencyPolicy:
     return _currency_policy
 
 
 async def ensure_accounting_indexes() -> dict:
-    return await _store.ensure_indexes()
+    result = await _store.ensure_indexes()
+    result["journal_indexes"] = await _journal_store.ensure_indexes()
+    return result
 
 
 def actor_label(user: dict) -> str:

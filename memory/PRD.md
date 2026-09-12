@@ -296,3 +296,27 @@ Backend فقط. لا Posting، لا تخزين، لا Ledger، لا Reversal، �
 ### قرارات موثّقة
 - `entry_no` لا يُخصَّص للـDraft إطلاقاً — يُصدر ذرياً ومعزولاً بالجهة وقت Posting فقط (لا `count()+1`).
 - العملة الأساس غير محسومة (`ACCOUNTING_BASE_CURRENCY` غير مضبوط) ولا شيء يعتمد عليها ما دامت القيود أحادية العملة.
+
+## Accounting Module — PHASE 4 (Journal Posting + Idempotency + Entry Number) — 2026-09-12
+أول مرحلة تُنشئ حقيقة محاسبية مخزّنة. Backend فقط. لا GL، لا Reversal، لا تقارير، لا إقفال، لا FX، لا Account Linking، لا ربط أعمال، لا اختبارات، لا بيانات، لا Migration، لا Git/Deploy.
+
+### ملفات جديدة (3)
+- `core/journal_store.py`: Collection `accounting_journal_entries` (POSTED فقط، لا Drafts) + تحويل Decimal↔Decimal128 في مكان واحد + `allocate_entry_no` ذرّي ($inc + upsert على entity_settings) + معالجة DuplicateKeyError عبر `keyPattern` + 4 فهارس.
+- `core/journal_posting.py`: **`JournalPostingService`** = البوابة الوحيدة للكتابة: assert_valid → سياسة source_key → بصمة مالية → تخصيص رقم ذرّي → إدخال واحد → معالجة التزامن. + `financial_fingerprint` + `format_entry_no` (`JE-000001`).
+- `core/journal_usage.py`: `JournalUsageProbe` الحقيقي (يفعّل حراسات Phase 2 للحماية التاريخية بلا تعديل أي حارس).
+
+### معدَّل
+`core/__init__.py` (تصدير)، `adapters/meraaj_adapter.py` (تركيب الـstore والـprobe والـservice + فهارس القيود)، `api.py` (meta + 4 مسارات: post/entries/entries/{id}/by-source-key). **server.py ووحدات الأعمال: صفر تغيير.**
+
+### Collection + Indexes
+`accounting_journal_entries`: `uniq_entity_journal_id`, `uniq_entity_entry_no`, **`uniq_entity_source_key` (unique + partialFilterExpression: source_key هو string)**, `entity_line_account` (يستخدمه الـUsageProbe فعلاً).
+
+### قرارات
+- source_key: **إلزامي لكل source_type غير `manual`**، اختياري للـmanual؛ الحماية على مستوى الـDB لا التطبيق.
+- Retry بنفس المفتاح ومحتوى مالي مطابق → `idempotent_replay: true` بلا قيد جديد؛ ومحتوى مختلف → `IDEMPOTENCY_CONFLICT` (لا نجاح صامت).
+- البصمة تشمل: entity, currency, source_type/id, سطور مرتّبة (كود/مدين/دائن/عملة). وتستثني: التاريخ، البيان، الـactor، الأرقام المولّدة.
+- رقم القيد: entity-scoped **مستمر** (لا سنوي — السنة المالية قرار مرحلة الإقفال)، ذرّي، والفجوات نادرة ومقبولة: **التفرّد أهم من انعدام الفجوات**، ولا يُعاد استخدام رقم.
+- السطر يخزّن `account_code` فقط (ثابت بالتصميم) — لا account_id ولا أسماء أطراف ولا Snapshot للاسم.
+- لا أرصدة مخزّنة إطلاقاً (لا `updateBalance` من Rahaal) — الحقيقة هي القيود المرحّلة، والأستاذ يُشتق لاحقاً.
+- `PeriodGuard` ما زال **غير مُفعّل** (`period_guard_not_enforced` في الرد) حتى مرحلة الإقفال.
+- البيانات: الثلاث Collections **فارغة (0)**، ولم تُهيَّأ `meraaj-platform`.

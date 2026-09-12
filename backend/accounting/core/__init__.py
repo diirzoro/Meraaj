@@ -17,6 +17,11 @@ from .journal import (JournalStatus, JournalLineInput, JournalEntryDraft,
 from .posting_accounts import PostingAccountResolver
 from .journal_validator import (JournalValidator, ValidatedJournal, ValidatedLine,
                                 MIN_LINES)
+from .journal_store import (JournalStore, IDEMPOTENCY_INDEX, ENTRY_NO_INDEX,
+                            JOURNAL_ID_INDEX)
+from .journal_usage import JournalUsageProbe
+from .journal_posting import (JournalPostingService, financial_fingerprint,
+                              format_entry_no, MANUAL_SOURCE_TYPES)
 
 __all__ = [
     # chart of accounts (Phases 1-2)
@@ -32,4 +37,8 @@ __all__ = [
     "JournalStatus", "JournalLineInput", "JournalEntryDraft", "ALLOWED_TRANSITIONS",
     "IMMUTABLE_STATUSES", "JOURNAL_DOCUMENT_CONTRACT", "PostingAccountResolver",
     "JournalValidator", "ValidatedJournal", "ValidatedLine", "MIN_LINES",
+    # journal posting + idempotency + entry number (Phase 4)
+    "JournalStore", "IDEMPOTENCY_INDEX", "ENTRY_NO_INDEX", "JOURNAL_ID_INDEX",
+    "JournalUsageProbe", "JournalPostingService", "financial_fingerprint",
+    "format_entry_no", "MANUAL_SOURCE_TYPES",
 ]
