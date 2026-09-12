@@ -482,3 +482,30 @@ Collections جديدة: `accounting_periods`, `accounting_year_close_ops`, `acco
 ### المتبقي (لم يُنفَّذ بعد)
 P2 بقية Flows (حجز/تسوية/عمولات/إلغاء/نزاعات/إعلانات + توافق finance.py) · P3 RBAC تفصيلي + Account/Office Scope + Maker–Checker + تدقيق الصلاحيات · P4 واجهة المحاسبة (9 شاشات) · P5 كشف حساب المكتب + Sidebar + QA شاملة E2E + التقرير النهائي.
 **Historical cutover**: DEFERRED — CONTROLLED ACCOUNTING CUTOVER REQUIRED (لا تحويل لأي تاريخ/أرصدة قائمة).
+
+## Accounting Integration — P2 VERIFICATION (BLOCKED — POLICY DECISIONS REQUIRED) — 2026-09-12
+
+### ما تم: فحص الحقيقة المالية الفعلية لكل Flow (بلا أي تعديل كود)
+**الحجز (market.py:515-645)** — مساران مختلفان جوهرياً:
+- **B2B (مكتب)**: `platform_fee` من `resolve_commission` و`required = net_total + platform_fee`. المشتري يُخصم `required`، البائع يحصل `pending = net_total`. **إيراد المنصة يُسجَّل عند الحجز** (`log_platform_revenue(platform_fee, "عمولة منصة (حجز)")` سطر 632).
+- **B2C (فرد)**: `required = sale_total`، `margin_total = sale_total − net_total`، عمولة مسوّق = نسبة من الهامش (pending)، و`platform_profit = margin − marketer_commission` **يُسجَّل إيراداً عند الحجز** (سطر 639).
+- حجوزات Rahal: كل الآثار مؤجّلة إلى `booking.approved`.
+
+**التسوية (market.py:805-825)**: `adjust_wallet(seller, pending=-net, available=net-fee, total=-fee)` + **`log_platform_revenue(fee, "عمولة منصة (تسوية)")` سطر 817** + تحرير عمولة المسوّق (pending→available).
+
+**الإلغاء**: أزرق (market.py:890-915) = استرداد `amount_charged − admin_fee` + `log_platform_revenue(admin_fee)` + **إيراد سالب** لعكس `platform_fee`/`platform_profit`. أصفر (955-985) = `deduction` يُقسَّم: `platform_cut = deduction × platform_pct` و`seller_keeps`، والاسترداد `net_cost_total − deduction + platform_fee`.
+
+**الإعلانات (ads_billing.py)**: HOLD عند الإرسال (available→pending، نفس الملكية) · **CAPTURE عند اعتماد الأدمن** (pending−، total−) مع تسجيل الإيراد وحماية `_claim_billing` الذرّية · RELEASE عند الرفض/الإلغاء (pending→available). **لا توجد سياسة استرداد بعد التحصيل في الكود إطلاقاً.**
+
+**السقف الائتماني**: `credit_frozen` يحوّل الحجز إلى `approval_status=pending` — تفويض تجاري بلا أثر مالي مباشر.
+
+### المكتشفات الحاكمة (تمنع تنفيذ P2 بأمان)
+1. **PD-1 — لحظة الاعتراف بالإيراد تخالف سياسة P1 المعتمدة**: الكود يعترف بالإيراد **عند الحجز** (سطور 632/639)، بينما سياسة P1 المعتمدة هي «العمولة إيراد عند التسوية». لا يمكن بناء قيود على سياسة تخالف الكود.
+2. **PD-2 — اعتراف مزدوج محتمل بنفس `platform_fee`**: يُسجَّل عند الحجز (632) **و** عند التسوية (817) لنفس الحجز B2B. وأيضاً **0 من 21 نداءً** لـ`log_platform_revenue` يمرّر `key=` رغم وجوده للـidempotency → صفوف الإيراد التجارية غير محمية من التكرار. **مكتشف ولم يُصلَح (خارج نطاق P2: تعديل منطق أعمال/إيرادات).**
+3. **PD-3 — عكس الإيراد بمبلغ سالب** عند الإلغاء (904/912) بدل قيد عكسي — تعارض مع قاعدة النواة (العكس بقيد مرآة لا بمبلغ سالب).
+4. **PD-4 — سياسة استرداد الإعلانات بعد CAPTURE غير موجودة** (لا كامل ولا جزئي ولا لا-استرداد)، ولا سياسة اعتراف زمني لمدة الإعلان.
+5. **PD-5 — توزيع مبلغ الإلغاء الأصفر**: `platform_cut` هل هو إيراد منصة أم تعويض للبائع؟ والاسترداد يضيف `platform_fee` للمشتري ⇒ عكس ضمني لعمولة سابقة تحتاج تصنيفاً صريحاً.
+6. **PD-6 — حجوزات Rahal** لها لحظة أثر مالي مختلفة (approved) تحتاج اعتماداً منفصلاً.
+
+### الحالة
+P2 **موقوف عند بوابة السياسة** (كما تنصّ التعليمات: لا اختراع سياسة مالية). لم يُكتب أي قيد أو Flow جديد، ولم يُعدَّل أي كود في هذه المهمة. Baselines كما هي: Core 79/79 · P1 30/30. DB Impact: **NONE**.
