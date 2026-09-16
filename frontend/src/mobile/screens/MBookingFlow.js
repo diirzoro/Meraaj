@@ -21,6 +21,7 @@ export default function MBookingFlow() {
   const [travelers, setTravelers] = useState([emptyTraveler()]);
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(null);
+  const [idemKey] = useState(() => (window.crypto?.randomUUID?.() || `bk-${Date.now()}-${Math.random()}`));
 
   const d = p.data || {};
   const rooms = d.rooms || [];
@@ -40,7 +41,7 @@ export default function MBookingFlow() {
         package_id: id, room_type: roomType || null,
         registrants: travelers.map((t) => ({ name: t.name.trim(), passport_no: t.passport_no.trim(),
           age: Number(t.age), category: t.category })),
-      });
+      }, idemKey);
       setDone(res);
       toast.success("تم إنشاء الحجز");
     } catch (e) {

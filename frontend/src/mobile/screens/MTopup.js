@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Info } from "lucide-react";
 import mobileApi, { apiError } from "@/mobile/api/client";
+import api from "@/lib/api";
 import { Screen, TopBar, Card, PrimaryButton, mInput, MField, useAsync, StatusPill, Money } from "@/mobile/ui/kit";
 
 const METHODS = [["bank_transfer", "حوالة بنكية"], ["exchange", "صرافة"], ["cash", "إيداع نقدي"]];
@@ -14,7 +15,21 @@ export default function MTopup() {
   const [f, setF] = useState({ amount: "", currency: "SAR", method: "bank_transfer", receipt_url: "" });
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const mine = useAsync(() => mobileApi.topups());
+
+  const upload = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const { data } = await api.post("/wallet/topups/receipt", body,
+        { headers: { "Content-Type": "multipart/form-data" } });
+      setF((prev) => ({ ...prev, receipt_url: data.receipt_url }));
+      toast.success("تم رفع الإيصال");
+    } catch (e) { toast.error(apiError(e)); } finally { setUploading(false); }
+  };
 
   const submit = async () => {
     if (busy || sent) return;
@@ -49,10 +64,16 @@ export default function MTopup() {
               {METHODS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
           </MField>
-          <MField label="رابط الإيصال" hint="ارفع صورة الإيصال في أي خدمة مشاركة وألصق الرابط">
-            <input className={mInput} value={f.receipt_url} data-testid="m-topup-receipt"
-                   onChange={(e) => setF({ ...f, receipt_url: e.target.value })} />
+          <MField label="صورة الإيصال" hint="التقط صورة الإيصال أو اخترها من المعرض (PNG/JPEG/WEBP/PDF حتى ٥ ميجابايت)">
+            <input type="file" accept="image/png,image/jpeg,image/webp,application/pdf"
+                   capture="environment" className={mInput} data-testid="m-topup-receipt-file"
+                   onChange={(e) => upload(e.target.files?.[0])} />
           </MField>
+          {uploading && <p className="text-[11px] text-muted-foreground mb-3">جارٍ رفع الإيصال…</p>}
+          {f.receipt_url && (
+            <p className="text-[11px] text-emerald-800 bg-emerald-50 rounded-xl p-2 mb-3"
+               data-testid="m-topup-receipt-ok">تم رفع الإيصال وربطه بالطلب</p>
+          )}
 
           <div className="flex items-start gap-2 bg-[#0A2540]/5 rounded-xl p-3 mb-3">
             <Info className="w-4 h-4 text-[#0A2540] mt-0.5 shrink-0" />

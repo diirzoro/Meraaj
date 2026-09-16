@@ -1,8 +1,9 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { Home, Receipt, Wallet, Bell, User } from "lucide-react";
+import { Home, Receipt, Wallet, Bell, User, Calculator } from "lucide-react";
 import { useShell } from "@/mobile/MobileShell";
 
-const ICONS = { home: Home, bookings: Receipt, wallet: Wallet, notifications: Bell, account: User };
+const ICONS = { home: Home, bookings: Receipt, wallet: Wallet, notifications: Bell, account: User,
+  operations: Receipt, accounting: Calculator };
 
 /** Bottom-tab shell. Deliberately has NO sidebar and never renders dashboard chrome. */
 export default function MobileLayout() {

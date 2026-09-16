@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from bson import ObjectId
 from pymongo.errors import BulkWriteError, DuplicateKeyError
 
-from fastapi import APIRouter, HTTPException, Depends, Body
+from fastapi import APIRouter, HTTPException, Depends, Body, Header
 from pydantic import BaseModel, Field
 from typing import List, Optional, Union, Dict
 from db import (db, serialize, oid, now_iso, adjust_wallet, log_txn,
@@ -485,7 +485,16 @@ async def _maybe_expire_pending(b):
 
 
 @router.post("/bookings")
-async def create_booking(payload: BookingInput, user: dict = Depends(require_buyer)):
+async def create_booking(payload: BookingInput, user: dict = Depends(require_buyer),
+                         idempotency_key: Optional[str] = Header(default=None,
+                                                                 alias="Idempotency-Key")):
+    """A retry on a weak network must NEVER create a second booking: when the client sends
+    an `Idempotency-Key`, the first booking created with that key is returned as-is."""
+    if idempotency_key:
+        key = f"{str(user['_id'])}:{idempotency_key.strip()[:120]}"
+        existing = await db.bookings.find_one({"idempotency_key": key})
+        if existing:
+            return serialize(existing)
     pkg = await db.packages.find_one({"_id": oid(payload.package_id)})
     if not pkg or pkg["status"] != "listed":
         raise HTTPException(404, "البرنامج غير متاح")
@@ -623,6 +632,8 @@ async def create_booking(payload: BookingInput, user: dict = Depends(require_buy
         booking["cancellation_status"] = "none"
         booking["approval_expires_at"] = iso_in_hours(approval_timeout_hours())
         booking["delivery_status"] = "pending"
+    if idempotency_key:
+        booking["idempotency_key"] = f"{str(user['_id'])}:{idempotency_key.strip()[:120]}"
     await db.bookings.insert_one(booking)
     await log_txn(user["_id"], "booking_debit", -required, f"حجز برنامج: {pkg['title']}", bid, currency=cur)
     await emit_booking_created(booking, bid, user)

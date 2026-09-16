@@ -19,12 +19,9 @@ export default function MLogin() {
     e.preventDefault();
     setBusy(true);
     try {
-      const u = await login(form.email.trim(), form.password);
-      if (u?.role === "super_admin") {
-        toast.info("حسابات الإدارة تُستخدم من لوحة الويب");
-        navigate("/admin", { replace: true });
-        return;
-      }
+      // Every role — individual, office AND admin — enters the APP shell; the backend
+      // decides the experience in `/v1/mobile/bootstrap`.
+      await login(form.email.trim(), form.password);
       navigate("/m/home", { replace: true });
     } catch (err) {
       toast.error(apiError(err));

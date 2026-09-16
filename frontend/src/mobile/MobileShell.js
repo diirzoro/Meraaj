@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import mobileApi from "@/mobile/api/client";
+import initPush from "@/mobile/push";
 
 const ShellContext = createContext(null);
 
@@ -16,7 +17,9 @@ export function MobileShellProvider({ children }) {
     if (!user) { setShell(null); setLoading(false); return; }
     setLoading(true); setError("");
     try {
-      setShell(await mobileApi.bootstrap());
+      const data = await mobileApi.bootstrap();
+      setShell(data);
+      initPush(data);            // no-op on web / when push is not configured server-side
     } catch (e) {
       setError(e?.response?.data?.detail || e?.message || "تعذّر تحميل إعدادات التطبيق");
     } finally {
@@ -33,6 +36,7 @@ export function MobileShellProvider({ children }) {
     features: shell?.features || {},
     badges: shell?.badges || {},
     wallet: shell?.wallet || {},
+    experience: shell?.experience || null,
     feature: (key) => Boolean(shell?.features?.[key]),
   };
   return <ShellContext.Provider value={value}>{children}</ShellContext.Provider>;

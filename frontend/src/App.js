@@ -54,8 +54,19 @@ import AccReconciliation from "@/pages/accounting/AccReconciliation";
 import AccSelfAudit from "@/pages/accounting/AccSelfAudit";
 import OfficeStatement from "@/pages/OfficeStatement";
 
-import { MobileShellProvider } from "@/mobile/MobileShell";
+import { MobileShellProvider, useShell } from "@/mobile/MobileShell";
 import MobileLayout from "@/mobile/MobileLayout";
+import MAdminHome from "@/mobile/screens/MAdminHome";
+import MAccountingHub, { AccountingGate } from "@/mobile/screens/MAccountingHub";
+import MAccChart from "@/mobile/screens/MAccChart";
+import MAccVouchers from "@/mobile/screens/MAccVouchers";
+import MAccJournals from "@/mobile/screens/MAccJournals";
+import MAccLedger from "@/mobile/screens/MAccLedger";
+import MAccReports from "@/mobile/screens/MAccReports";
+import MAccPeriods from "@/mobile/screens/MAccPeriods";
+import MAccAudit from "@/mobile/screens/MAccAudit";
+import MAdminOrders from "@/mobile/screens/MAdminOrders";
+import MAdminTopups from "@/mobile/screens/MAdminTopups";
 import MSplash from "@/mobile/screens/MSplash";
 import MLogin from "@/mobile/screens/MLogin";
 import MRegister from "@/mobile/screens/MRegister";
@@ -108,18 +119,24 @@ function Landing() {
 const IS_NATIVE = typeof window !== "undefined"
   && (window.Capacitor?.isNativePlatform?.() || window.location.protocol === "capacitor:");
 
-/** Auth + shell gate for the mobile app. Admin accounts are pushed to the web dashboard:
- *  the Admin/Accounting dashboard is never mirrored into the app. */
+/** Auth + shell gate for the mobile app. Admin accounts get the ADMIN MOBILE EXPERIENCE
+ *  (same auth, same RBAC) — they are no longer redirected to the web dashboard. */
 function MobileGuard() {
   const { user, loading } = useAuth();
   if (loading || user === null) return <Loader />;
   if (!user) return <Navigate to="/m/login" replace />;
-  if (user.role === "super_admin") return <Navigate to="/admin" replace />;
   return (
     <MobileShellProvider>
       <MobileLayout />
     </MobileShellProvider>
   );
+}
+
+/** Home is experience-aware: the backend decides which experience the identity gets. */
+function MobileHome() {
+  const { shell, loading } = useShell();
+  if (loading && !shell) return <Loader />;
+  return shell?.experience === "admin" ? <MAdminHome /> : <MHome />;
 }
 
 /** On a native install the root opens the APP shell, never the website. */
@@ -145,7 +162,18 @@ function AppRoutes() {
       <Route path="/m/register" element={<MRegister />} />
       <Route path="/m/forgot" element={<MForgot />} />
       <Route element={<MobileGuard />}>
-        <Route path="/m/home" element={<MHome />} />
+        <Route path="/m/home" element={<MobileHome />} />
+        <Route path="/m/accounting" element={<AccountingGate><MAccountingHub /></AccountingGate>} />
+        <Route path="/m/accounting/chart" element={<AccountingGate capability="chart_view"><MAccChart /></AccountingGate>} />
+        <Route path="/m/accounting/vouchers" element={<AccountingGate capability="vouchers_view"><MAccVouchers /></AccountingGate>} />
+        <Route path="/m/accounting/journals" element={<AccountingGate capability="journals_view"><MAccJournals /></AccountingGate>} />
+        <Route path="/m/accounting/ledger" element={<AccountingGate capability="ledger_view"><MAccLedger /></AccountingGate>} />
+        <Route path="/m/accounting/reports" element={<AccountingGate capability="reports_view"><MAccReports /></AccountingGate>} />
+        <Route path="/m/accounting/periods" element={<AccountingGate capability="periods_view"><MAccPeriods /></AccountingGate>} />
+        <Route path="/m/accounting/audit" element={<AccountingGate capability="reconciliation_view"><MAccAudit /></AccountingGate>} />
+        <Route path="/m/admin/operations" element={<MAdminOrders />} />
+        <Route path="/m/admin/orders" element={<MAdminOrders />} />
+        <Route path="/m/admin/topups" element={<MAdminTopups />} />
         <Route path="/m/programs" element={<MPrograms />} />
         <Route path="/m/programs/:id" element={<MProgramDetail />} />
         <Route path="/m/programs/:id/book" element={<MBookingFlow />} />

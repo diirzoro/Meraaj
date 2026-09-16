@@ -49,8 +49,11 @@ export const mobileApi = {
   officeStatement: (params) => safeGet("/office-statement", { params }),
 
   // ---- writes: single attempt, server validates price/balance/commission
-  createBooking: (payload) => api.post("/bookings", payload).then((r) => r.data),
+  createBooking: (payload, idempotencyKey) => api.post("/bookings", payload,
+    { headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {} })
+    .then((r) => r.data),
   createTopup: (payload) => api.post("/wallet/topups", payload).then((r) => r.data),
+  registerDevice: (payload) => api.post(`${MOBILE_API}/devices`, payload).then((r) => r.data),
   requestWithdrawal: (payload) => api.post("/wallet/withdrawals", payload).then((r) => r.data),
   markNotificationRead: (id) => api.post(`/notifications/${id}/read`).then((r) => r.data),
   markAllNotificationsRead: () => api.post("/notifications/read-all").then((r) => r.data),

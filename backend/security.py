@@ -1,5 +1,7 @@
 import os
 import uuid
+import hashlib
+import secrets
 import jwt
 import bcrypt
 from datetime import datetime, timezone, timedelta
@@ -189,6 +191,77 @@ class LoginInput(BaseModel):
 def _set_cookie(response: Response, token: str):
     response.set_cookie(key="access_token", value=token, httponly=True,
                         secure=True, samesite="none", max_age=604800, path="/")
+
+
+class ResetRequestInput(BaseModel):
+    email: EmailStr
+
+
+class ResetConfirmInput(BaseModel):
+    token: str = Field(min_length=20, max_length=200)
+    password: str = Field(min_length=8, max_length=128)
+
+
+def _hash_token(raw: str) -> str:
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+@router.post("/password-reset/request")
+async def request_password_reset(payload: ResetRequestInput, request: Request):
+    """Anti-enumeration: the response is IDENTICAL whether or not the account exists, and it
+    never claims an email was sent (no delivery provider is configured — see the delivery
+    field). A single-use token hash with a 1-hour TTL is stored; the raw token is released
+    only to a super admin from the admin panel, which is the real recovery path today."""
+    email = payload.email.lower().strip()
+    generic = {"ok": True,
+               "delivery": "manual_admin_review",
+               "message": "إن كان البريد مسجّلاً فقد تم تجهيز طلب إعادة تعيين ومراجعته من "
+                          "إدارة معراج. لا يتم إرسال أي بريد إلكتروني حالياً — تواصل مع "
+                          "الإدارة لاستلام رابط إعادة التعيين."}
+    ip = (request.client.host if request.client else "unknown")
+    recent = await db.password_reset_tokens.count_documents(
+        {"ip": ip, "created_at": {"$gte": (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()}})
+    if recent >= 5:
+        raise HTTPException(429, "محاولات كثيرة — انتظر قليلاً ثم أعد المحاولة")
+    user = await db.users.find_one({"email": email}, {"_id": 1, "email": 1})
+    if user:
+        raw = secrets.token_urlsafe(32)
+        await db.password_reset_tokens.insert_one({
+            "user_id": str(user["_id"]), "email": email, "token_hash": _hash_token(raw),
+            "created_at": now_iso(), "ip": ip, "used": False,
+            "expires_at": datetime.now(timezone.utc) + timedelta(hours=1)})
+        await db.audit_log.insert_one({
+            "entity": "user", "entity_id": str(user["_id"]),
+            "action": "password_reset_requested", "actor": email, "at": now_iso(),
+            "meta": {"ip": ip, "delivery": "manual_admin_review"}})
+        await db.notifications.insert_one({
+            "user_id": None, "audience": "admin", "kind": "password_reset_requested",
+            "title": "طلب إعادة تعيين كلمة مرور",
+            "body": f"طلب إعادة تعيين كلمة المرور للحساب {email}",
+            "read": False, "at": now_iso(), "meta": {"email": email}})
+    return generic
+
+
+@router.post("/password-reset/confirm")
+async def confirm_password_reset(payload: ResetConfirmInput):
+    """Single-use, time-boxed, and it reuses the SAME bcrypt hashing as registration."""
+    doc = await db.password_reset_tokens.find_one_and_update(
+        {"token_hash": _hash_token(payload.token), "used": False},
+        {"$set": {"used": True, "used_at": now_iso()}})
+    if not doc:
+        raise HTTPException(400, "رابط إعادة التعيين غير صالح أو مستخدم مسبقاً")
+    expires = doc.get("expires_at")
+    if expires and expires.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+        raise HTTPException(400, "انتهت صلاحية رابط إعادة التعيين")
+    await db.users.update_one({"_id": oid(doc["user_id"])},
+                              {"$set": {"password_hash": hash_password(payload.password),
+                                        "password_changed_at": now_iso()}})
+    await db.sessions.delete_many({"user_id": doc["user_id"]})
+    await db.login_attempts.delete_one({"email": doc["email"]})
+    await db.audit_log.insert_one({
+        "entity": "user", "entity_id": doc["user_id"], "action": "password_reset_completed",
+        "actor": doc["email"], "at": now_iso()})
+    return {"ok": True, "message": "تم تعيين كلمة مرور جديدة — سجّل الدخول الآن"}
 
 
 @router.post("/register")
