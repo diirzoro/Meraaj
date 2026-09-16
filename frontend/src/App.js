@@ -54,6 +54,26 @@ import AccReconciliation from "@/pages/accounting/AccReconciliation";
 import AccSelfAudit from "@/pages/accounting/AccSelfAudit";
 import OfficeStatement from "@/pages/OfficeStatement";
 
+import { MobileShellProvider } from "@/mobile/MobileShell";
+import MobileLayout from "@/mobile/MobileLayout";
+import MSplash from "@/mobile/screens/MSplash";
+import MLogin from "@/mobile/screens/MLogin";
+import MRegister from "@/mobile/screens/MRegister";
+import MForgot from "@/mobile/screens/MForgot";
+import MHome from "@/mobile/screens/MHome";
+import MPrograms from "@/mobile/screens/MPrograms";
+import MProgramDetail from "@/mobile/screens/MProgramDetail";
+import MBookingFlow from "@/mobile/screens/MBookingFlow";
+import MBookings from "@/mobile/screens/MBookings";
+import MBookingDetail from "@/mobile/screens/MBookingDetail";
+import MWallet from "@/mobile/screens/MWallet";
+import MTopup from "@/mobile/screens/MTopup";
+import MNotifications from "@/mobile/screens/MNotifications";
+import MAccount from "@/mobile/screens/MAccount";
+import MTickets from "@/mobile/screens/MTickets";
+import MStatement from "@/mobile/screens/MStatement";
+import MSales from "@/mobile/screens/MSales";
+
 function Loader() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#F4F6F8]">
@@ -85,6 +105,29 @@ function Landing() {
   return <LandingPage />;
 }
 
+const IS_NATIVE = typeof window !== "undefined"
+  && (window.Capacitor?.isNativePlatform?.() || window.location.protocol === "capacitor:");
+
+/** Auth + shell gate for the mobile app. Admin accounts are pushed to the web dashboard:
+ *  the Admin/Accounting dashboard is never mirrored into the app. */
+function MobileGuard() {
+  const { user, loading } = useAuth();
+  if (loading || user === null) return <Loader />;
+  if (!user) return <Navigate to="/m/login" replace />;
+  if (user.role === "super_admin") return <Navigate to="/admin" replace />;
+  return (
+    <MobileShellProvider>
+      <MobileLayout />
+    </MobileShellProvider>
+  );
+}
+
+/** On a native install the root opens the APP shell, never the website. */
+function RootEntry() {
+  if (IS_NATIVE) return <Navigate to="/m" replace />;
+  return <Landing />;
+}
+
 // Public pages that logged-in members also use: show the app Layout when authenticated,
 // otherwise a lightweight public shell (browse market/details without logging in).
 function PublicOrMember({ children }) {
@@ -96,7 +139,27 @@ function PublicOrMember({ children }) {
 function AppRoutes() {
   return (
     <Routes>
-      <Route path="/" element={<Landing />} />
+      {/* ---------------- MOBILE APP (native shell — no dashboard chrome) ---------------- */}
+      <Route path="/m" element={<MSplash />} />
+      <Route path="/m/login" element={<MLogin />} />
+      <Route path="/m/register" element={<MRegister />} />
+      <Route path="/m/forgot" element={<MForgot />} />
+      <Route element={<MobileGuard />}>
+        <Route path="/m/home" element={<MHome />} />
+        <Route path="/m/programs" element={<MPrograms />} />
+        <Route path="/m/programs/:id" element={<MProgramDetail />} />
+        <Route path="/m/programs/:id/book" element={<MBookingFlow />} />
+        <Route path="/m/bookings" element={<MBookings />} />
+        <Route path="/m/bookings/:id" element={<MBookingDetail />} />
+        <Route path="/m/wallet" element={<MWallet />} />
+        <Route path="/m/wallet/topup" element={<MTopup />} />
+        <Route path="/m/notifications" element={<MNotifications />} />
+        <Route path="/m/account" element={<MAccount />} />
+        <Route path="/m/tickets" element={<MTickets />} />
+        <Route path="/m/statement" element={<MStatement />} />
+        <Route path="/m/sales" element={<MSales />} />
+      </Route>
+      <Route path="/" element={<RootEntry />} />
       <Route path="/embed/market" element={<EmbedMarket />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />

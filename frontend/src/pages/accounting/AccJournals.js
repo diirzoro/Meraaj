@@ -55,7 +55,7 @@ export default function AccJournals() {
     const reason = window.prompt("سبب العكس:");
     if (!reason || reason.trim().length < 3) return;
     setBusy(true);
-    try { const r = await api.post(`/accounting/journal/entries/${id}/reverse?reason=${encodeURIComponent(reason)}`); toast.success(`قيد عكسي: ${r.data.reversal_entry?.entry_no || ""}`); list.reload(); setDetailId(null); }
+    try { const r = await api.post(`/accounting/journal/entries/${id}/reverse?reason=${encodeURIComponent(reason)}`); toast.success(`قيد عكسي: ${r.data.reversal?.entry_no || ""}`); list.reload(); setDetailId(null); }
     catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
   };
 
@@ -194,7 +194,7 @@ export default function AccJournals() {
                   </tbody>
                 </table>
               </div>
-              {detail.data.status === "POSTED" && (
+              {String(detail.data.status).toLowerCase() === "posted" && (
                 <Gate perm="accounting.journals.reverse">
                   <Button size="sm" variant="destructive" disabled={busy} data-testid="journal-reverse"
                           onClick={() => reverse(detail.data.id)}><RotateCcw className="w-4 h-4 me-1" /> عكس القيد</Button>

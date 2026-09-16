@@ -61,7 +61,7 @@ export default function AccLedger() {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4 text-sm">
                 <div className="rounded-lg bg-slate-50 p-3" data-testid="ledger-opening">
                   <div className="text-[11px] text-muted-foreground">الرصيد الافتتاحي</div>
-                  <div className="font-bold"><Money value={led.data.opening_balance} /></div>
+                  <div className="font-bold"><Money value={led.data.opening_balance_for_range} /></div>
                 </div>
                 <div className="rounded-lg bg-slate-50 p-3"><div className="text-[11px] text-muted-foreground">إجمالي مدين</div>
                   <div className="font-bold"><Money value={led.data.total_debit} /></div></div>
@@ -78,7 +78,7 @@ export default function AccLedger() {
                     <th className="text-start">مدين</th><th className="text-start">دائن</th>
                     <th className="text-start">الرصيد الجاري</th></tr></thead>
                   <tbody>
-                    {(led.data.lines || []).map((l, i) => (
+                    {(led.data.items || []).map((l, i) => (
                       <tr key={i} className="border-t" data-testid={`ledger-line-${i}`}>
                         <td className="py-2 text-xs whitespace-nowrap">{String(l.date).slice(0, 10)}</td>
                         <td className="font-mono text-[11px]">{l.entry_no}</td>
@@ -92,13 +92,13 @@ export default function AccLedger() {
                   </tbody>
                 </table>
               </div>
-              {(led.data.lines || []).length === 0 && <Empty>لا حركة في هذا النطاق</Empty>}
+              {(led.data.items || []).length === 0 && <Empty>لا حركة في هذا النطاق</Empty>}
               <div className="flex items-center gap-2 mt-4">
                 <Button size="sm" variant="outline" disabled={applied.page <= 1} data-testid="ledger-prev"
                         onClick={() => setApplied({ ...applied, page: applied.page - 1 })}>السابق</Button>
                 <Badge>صفحة {applied.page}</Badge>
                 <Button size="sm" variant="outline" data-testid="ledger-next"
-                        disabled={(led.data.lines || []).length < 50}
+                        disabled={(led.data.items || []).length < 50}
                         onClick={() => setApplied({ ...applied, page: applied.page + 1 })}>التالي</Button>
               </div>
             </>
