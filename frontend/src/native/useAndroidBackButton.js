@@ -5,7 +5,9 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
 // Routes that act as "home" per role — pressing back here asks to exit instead of navigating up.
-const ROOT_ROUTES = ["/", "/dashboard", "/admin", "/login"];
+// `/m/home` and `/m/login` are the MOBILE APP roots: a back press there must never drop the
+// user into the desktop web routes.
+const ROOT_ROUTES = ["/", "/dashboard", "/admin", "/login", "/m", "/m/home", "/m/login"];
 const DOUBLE_BACK_MS = 1800;
 
 // Native Android hardware back button. No-op on web (guarded by isNativePlatform).
@@ -22,9 +24,11 @@ export function useAndroidBackButton() {
       if (!mounted) return;
       const atRoot = ROOT_ROUTES.includes(location.pathname);
 
+      const inMobileApp = location.pathname.startsWith("/m");
+
       if (!atRoot) {
         if (canGoBack) navigate(-1);
-        else navigate("/dashboard", { replace: true });
+        else navigate(inMobileApp ? "/m/home" : "/dashboard", { replace: true });
         return;
       }
 

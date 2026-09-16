@@ -1,50 +1,69 @@
-import { Bus, Clock } from "lucide-react";
-import mobileApi from "@/mobile/api/client";
-import { Screen, TopBar, Card, Skeleton, useAsync } from "@/mobile/ui/kit";
+import { useNavigate } from "react-router-dom";
+import { Bus, Clock, Landmark, Plane, Ship } from "lucide-react";
+import { Screen, TopBar, Card, Chip, GhostButton } from "@/mobile/ui/kit";
 
-/** TICKETS — place holder + adapter architecture ONLY.
- *  No provider is hardcoded and no booking flow is invented: the real screens
- *  (Search → Trip → Seat → Passenger → Price check → Booking → Issue → Cancel) are built
+/** TICKETS — a clean customer-facing "coming soon" screen.
+ *  No provider, no prices, no fake search/booking: the real flow
+ *  (Search → Trip → Seat → Passenger → Price check → Booking → Issue → Cancel) is built
  *  against the transport company's contract once it arrives. */
+const KINDS = [
+  { key: "land", label: "النقل البري", icon: Bus },
+  { key: "air", label: "تذاكر الطيران", icon: Plane },
+  { key: "sea", label: "النقل البحري", icon: Ship },
+];
+
 export default function MTickets() {
-  const info = useAsync(() => mobileApi.ticketProviders());
+  const navigate = useNavigate();
 
   return (
     <Screen>
-      <TopBar title="التذاكر" subtitle="النقل البري — قيد التجهيز" back />
-      <div className="p-4 space-y-3">
-        <Card testid="m-tickets-placeholder">
-          <div className="flex items-start gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-[#0A2540]/5 flex items-center justify-center shrink-0">
-              <Bus className="w-5 h-5 text-[#0A2540]" />
+      <TopBar title="التذاكر" back />
+
+      <div className="p-4 space-y-4">
+        <div className="rounded-[26px] bg-[#0A2540] text-white p-6 relative overflow-hidden text-center"
+             data-testid="m-tickets-placeholder">
+          <div className="absolute -top-12 -end-10 w-40 h-40 rounded-full bg-[#D4AF37]/10" />
+          <div className="relative">
+            <div className="w-16 h-16 rounded-[22px] bg-[#D4AF37] mx-auto flex items-center justify-center mb-4">
+              <Bus className="w-8 h-8 text-[#0A2540]" />
             </div>
-            <div>
-              <p className="font-semibold text-sm text-[#0A2540]">الخدمة محفوظة وجاهزة للربط</p>
-              <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
-                تم تجهيز مكان الخدمة وطبقة المزوّدين (Provider Adapter) داخل التطبيق.
-                سيُبنى تدفق الحجز على واجهة شركة النقل الحقيقية بعد استلام العقد — بلا أي
-                بيانات أو أسعار تخمينية.
-              </p>
-            </div>
+            <p className="font-head text-lg font-bold">خدمة حجز التذاكر قريباً</p>
+            <p className="text-xs text-white/60 mt-2 leading-relaxed">
+              نعمل على إتاحة حجز التذاكر داخل التطبيق مباشرة، بأسعار ومقاعد فعلية من شركة النقل.
+            </p>
+            <span className="inline-flex mt-4">
+              <Chip tone="gold"><Clock className="w-3 h-3 inline-block -mt-0.5 me-1" /> قيد التجهيز</Chip>
+            </span>
+          </div>
+        </div>
+
+        <Card testid="m-tickets-kinds">
+          <p className="font-bold text-sm text-[#0A2540] mb-3">أنواع الخدمات المخطّطة</p>
+          <div className="space-y-2.5">
+            {KINDS.map((k) => (
+              <div key={k.key} data-testid={`m-tickets-kind-${k.key}`}
+                   className="flex items-center gap-3 rounded-2xl bg-[#F1F4F8] px-3.5 py-3">
+                <span className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shrink-0">
+                  <k.icon className="w-[18px] h-[18px] text-[#0A2540]/55" />
+                </span>
+                <span className="text-sm font-semibold text-[#0A2540]/70 flex-1">{k.label}</span>
+                <Chip>غير متاح حالياً</Chip>
+              </div>
+            ))}
           </div>
         </Card>
 
-        {info.loading ? <Skeleton rows={1} /> : (
-          <Card testid="m-tickets-contract">
-            <div className="flex items-center gap-2 mb-3">
-              <Clock className="w-4 h-4 text-[#D4AF37]" />
-              <p className="font-semibold text-sm text-[#0A2540]">ما نحتاجه من شركة النقل</p>
-            </div>
-            <ul className="space-y-2">
-              {(info.data?.required_provider_contract || []).map((line, i) => (
-                <li key={i} className="text-[11px] text-muted-foreground flex gap-2" data-testid={`m-tickets-req-${i}`}>
-                  <span className="text-[#D4AF37]">•</span>
-                  <span className="font-mono leading-relaxed" dir="ltr">{line}</span>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        )}
+        <Card testid="m-tickets-meanwhile">
+          <p className="font-bold text-sm text-[#0A2540]">إلى أن تتوفر</p>
+          <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
+            يمكنك متابعة برامج العمرة وحجوزاتك ومحفظتك كالمعتاد.
+          </p>
+          <div className="mt-4">
+            <GhostButton onClick={() => navigate("/m/programs")} data-testid="m-tickets-goto-programs">
+              <Landmark className="w-4 h-4" /> تصفح برامج العمرة
+            </GhostButton>
+          </div>
+        </Card>
       </div>
     </Screen>
   );

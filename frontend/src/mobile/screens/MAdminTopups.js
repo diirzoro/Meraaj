@@ -1,14 +1,22 @@
 import { useState } from "react";
 import { toast } from "sonner";
+import { Building2, Image as ImageIcon } from "lucide-react";
 import api, { apiError } from "@/lib/api";
-import { Screen, TopBar, Card, Skeleton, ErrorState, EmptyState, Money, StatusPill, PrimaryButton, Sheet, useAsync } from "@/mobile/ui/kit";
+import {
+  Screen, TopBar, Card, Skeleton, ErrorState, EmptyState, Money, StatusPill, PrimaryButton,
+  DangerButton, GhostButton, Segmented, Sheet, useAsync, haptic,
+} from "@/mobile/ui/kit";
+
+const TABS = [["pending", "قيد المراجعة"], ["approved", "معتمدة"], ["rejected", "مرفوضة"]];
 
 /** Admin top-up review on mobile. The backend only accepts a review while the request is
  *  still `pending`, so a double tap or a retry can never credit a wallet twice. */
 export default function MAdminTopups() {
   const [status, setStatus] = useState("pending");
-  const list = useAsync(() => api.get(`/admin/topups?status=${status}`).then((r) => r.data), [status]);
+  const list = useAsync(() => api.get(`/admin/topups?status=${status}`).then((r) => r.data), [status],
+    { cacheKey: `m-admin-topups-${status}` });
   const [open, setOpen] = useState(null);
+  const [confirm, setConfirm] = useState(null); // "approve" | "reject"
   const [busy, setBusy] = useState(false);
 
   const review = async (approve) => {
@@ -16,38 +24,40 @@ export default function MAdminTopups() {
     setBusy(true);
     try {
       await api.post(`/admin/topups/${open.id}/review`, { approve });
+      haptic("success");
       toast.success(approve ? "تم اعتماد الشحن وإضافة الرصيد" : "تم رفض الطلب");
-      setOpen(null); list.reload();
-    } catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
+      setConfirm(null); setOpen(null); list.reload();
+    } catch (e) { haptic("error"); toast.error(apiError(e)); } finally { setBusy(false); }
   };
 
   return (
-    <Screen>
+    <Screen refresh={list.reload}>
       <TopBar title="طلبات شحن الرصيد" subtitle="الاعتماد يضيف الرصيد في السيرفر" back />
-      <div className="p-4 flex gap-2" data-testid="m-admin-topups-tabs">
-        {[["pending", "قيد المراجعة"], ["approved", "معتمدة"], ["rejected", "مرفوضة"]].map(([v, l]) => (
-          <button key={v} onClick={() => setStatus(v)} data-testid={`m-admin-topups-tab-${v}`}
-                  className={`h-10 px-3 rounded-full text-[11px] font-bold ${status === v ? "bg-[#0A2540] text-white" : "bg-white border text-[#0A2540]"}`}>
-            {l}
-          </button>
-        ))}
+      <div className="p-4">
+        <Segmented items={TABS} value={status} onChange={setStatus}
+                   testid="m-admin-topups-tabs" testidPrefix="m-admin-topups-tab-" />
       </div>
 
       {list.loading ? <Skeleton rows={3} />
         : list.error ? <ErrorState message={list.error} onRetry={list.reload} />
         : (list.data || []).length === 0 ? <EmptyState title="لا طلبات" />
         : (
-          <div className="px-4 space-y-3" data-testid="m-admin-topups-list">
+          <div className="px-4 space-y-3.5 m-stagger" data-testid="m-admin-topups-list">
             {list.data.map((t) => (
               <Card key={t.id} testid={`m-admin-topup-${t.id}`} onClick={() => setOpen(t)}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-[#0A2540] truncate">{t.office_name}</p>
-                    <p className="text-[11px] text-muted-foreground mt-1">{t.method} · {String(t.created_at).slice(0, 10)}</p>
-                  </div>
-                  <div className="text-end shrink-0 space-y-1">
-                    <div className="text-sm"><Money value={t.amount} currency={t.currency} /></div>
-                    <StatusPill status={t.status} />
+                <div className="flex items-start gap-3">
+                  <span className="w-11 h-11 rounded-2xl bg-[#0A2540]/[0.06] flex items-center justify-center shrink-0">
+                    <Building2 className="w-5 h-5 text-[#0A2540]" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-bold text-[#0A2540] truncate">{t.office_name}</p>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      {t.method} · {String(t.created_at).slice(0, 10)}
+                    </p>
+                    <div className="flex items-center justify-between mt-3">
+                      <StatusPill status={t.status} />
+                      <Money value={t.amount} currency={t.currency} className="text-sm" />
+                    </div>
                   </div>
                 </div>
               </Card>
@@ -55,31 +65,58 @@ export default function MAdminTopups() {
           </div>
         )}
 
-      <Sheet open={!!open} onClose={() => setOpen(null)} title="مراجعة طلب الشحن" testid="m-admin-topup-sheet">
+      <Sheet open={!!open} onClose={() => { setOpen(null); setConfirm(null); }} title="مراجعة طلب الشحن"
+             testid="m-admin-topup-sheet">
         {open && (
-          <div className="space-y-3">
-            <div className="text-[11px] space-y-1">
-              <div>المكتب: <b>{open.office_name}</b></div>
-              <div>المبلغ: <b><Money value={open.amount} currency={open.currency} /></b></div>
-              <div>الطريقة: <b>{open.method}</b></div>
+          <div className="space-y-4">
+            <div className="rounded-2xl bg-[#F1F4F8] p-4 space-y-2">
+              {[["المكتب", open.office_name], ["الطريقة", open.method]].map(([k, v]) => (
+                <div key={k} className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">{k}</span>
+                  <span className="font-bold text-[#0A2540]">{v}</span>
+                </div>
+              ))}
+              <div className="flex items-center justify-between text-xs pt-2 border-t border-black/5">
+                <span className="text-muted-foreground">المبلغ</span>
+                <Money value={open.amount} currency={open.currency} className="text-base" />
+              </div>
             </div>
+
             {open.receipt_url && (
               <a href={open.receipt_url} target="_blank" rel="noreferrer" data-testid="m-admin-topup-receipt"
-                 className="block text-center h-11 leading-[2.75rem] rounded-xl bg-white border text-sm font-semibold text-[#0A2540]">
-                عرض الإيصال
+                 className="flex items-center justify-center gap-2 h-14 rounded-2xl bg-white border border-black/[0.07] text-sm font-bold text-[#0A2540] active:scale-[0.98] transition-transform">
+                <ImageIcon className="w-4 h-4" /> عرض الإيصال
               </a>
             )}
-            {open.status === "pending" && (
-              <>
-                <PrimaryButton loading={busy} onClick={() => review(true)} data-testid="m-admin-topup-approve">
+
+            {open.status === "pending" && (confirm ? (
+              <div className="space-y-3">
+                <p className="text-xs text-center text-[#0A2540] font-semibold">
+                  {confirm === "approve"
+                    ? "تأكيد الاعتماد؟ سيُضاف الرصيد إلى محفظة المكتب."
+                    : "تأكيد رفض الطلب؟"}
+                </p>
+                {confirm === "approve" ? (
+                  <PrimaryButton loading={busy} onClick={() => review(true)} data-testid="m-admin-topup-approve-confirm">
+                    نعم، اعتماد وإضافة الرصيد
+                  </PrimaryButton>
+                ) : (
+                  <DangerButton loading={busy} onClick={() => review(false)} data-testid="m-admin-topup-reject-confirm">
+                    نعم، رفض الطلب
+                  </DangerButton>
+                )}
+                <GhostButton onClick={() => setConfirm(null)}>تراجع</GhostButton>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <PrimaryButton onClick={() => setConfirm("approve")} data-testid="m-admin-topup-approve">
                   اعتماد وإضافة الرصيد
                 </PrimaryButton>
-                <button onClick={() => review(false)} disabled={busy} data-testid="m-admin-topup-reject"
-                        className="w-full h-12 rounded-xl border border-red-200 text-red-600 text-sm font-semibold">
+                <DangerButton onClick={() => setConfirm("reject")} data-testid="m-admin-topup-reject">
                   رفض الطلب
-                </button>
-              </>
-            )}
+                </DangerButton>
+              </div>
+            ))}
           </div>
         )}
       </Sheet>

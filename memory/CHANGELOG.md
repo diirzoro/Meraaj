@@ -54,3 +54,14 @@
 - ملاحظة تشغيلية: سكربتات Batch2/Mobile تحتاج تحميل متغيرات البيئة قبل التشغيل:
   `cd /app/backend && set -a && . ./.env && set +a && python3 tests/mobile_final_qa.py`
 - تحقق بصري: `/m/home` على 390×844 و الصفحة الرئيسية على 1920×800 تعملان بشكل سليم.
+
+## 2026-06 — MERAAJ MOBILE: إعادة تصميم Native UX/UI (بلا تغيير Backend مالي)
+**النطاق**: واجهة `/m/*` فقط. لم تُلمس Accounting Core ولا Batch1/Batch2 ولا RBAC ولا الـ APIs ولا Idempotency، ولا أي `data-testid` قائم.
+
+**Design System جديد** `src/mobile/ui/kit.js` (إعادة كتابة كـ superset): TopBar (Large + ظل عند التمرير) · Card · ListRow · KpiCard · SectionTitle · Skeleton(Shimmer) · Empty/Error · Primary/Gold/Ghost/Danger Buttons · Fab · mInput/MField · SearchField · **SheetSelect** (Bottom-Sheet Picker بدل `<select>` الخام) · DateField · **FilePicker** (كاميرا/ملف) · Segmented/Chip · Sheet · StatusPill · Money · **PullToRefresh** · `useAsync` مع **SWR cache** لحفظ حالة التبويبات.
+**ملفات جديدة**: `mobile/ui/mobile.css` (انتقالات push/pop، stagger، shimmer، sheet، PTR) · `mobile/ui/haptics.js` (@capacitor/haptics، no-op على الويب).
+**Navigation**: نفس الخمسة تبويبات (server-driven) + انتقالات push/pop حسب فهرس الـ history + Badges + حفظ حالة التبويب + **إصلاح زر الرجوع الأندرويدي**: `/m/home` و `/m/login` و `/m` أصبحت جذور التطبيق ولا يُعاد المستخدم أبداً إلى `/dashboard`.
+**شاشات أُعيد تصميمها (22)**: MSplash · MLogin · MRegister (خطوتان) · MForgot (خطوات) · MHome (Hero محفظة + شبكة خدمات + Carousel برامج بصور) · MAdminHome (**KPI Cards من `/api/admin/dashboard` الموجود** + إجراءات سريعة + تنبيهات) · MPrograms (بطاقات بصور + تصفية Sheet) · MProgramDetail (Hero + شريط سعر ثابت) · MBookingFlow · MBookings (فلترة حالة + أنواع) · MBookingDetail (Timeline) · MWallet (بطاقة محفظة بتبديل عملة) · MTopup (مبالغ سريعة + Sheet pickers + FilePicker + شاشة نجاح) · MStatement · MSales · MNotifications · MAccount (Settings/Sections) · **MTickets (أُزيلت متطلبات API التقنية من واجهة العميل → شاشة "قريباً" محترمة)** · MAccountingHub (+ **ScopeBanner**: العرض الجزئي لا يظهر كتقرير كامل) · MAccChart (بحث + Chips) · MAccVouchers/MAccJournals/MAccPeriods (**Sheet للسبب بدل window.prompt**) · MAccLedger · MAccReports · MAccAudit · MAdminOrders · MAdminTopups (تأكيد خطوتين للاعتماد/الرفض).
+**Backend exceptions**: **لا شيء**. استُخدم `cover_image`/`images` الموجود أصلاً في `/api/packages` و`/v1/mobile/home`، وKPI من `/api/admin/dashboard` الموجود.
+**إصلاح جانبي في سكربت QA**: `mobile_final_qa.py` لم يكن يحذف `accounting_periods` المزروعة عند التنظيف (تركت ٣٥ حساباً و١٢ فترة في preview) — أُضيف الحذف ونُظّفت البيانات المتبقية (٠ قيود، لا بيانات مالكة).
+**QA**: Core **77/77** · P1 **30/30** · Batch1 **41/41** · Batch2 **94/94** · Mobile **58/58** (المجموع 300/0 FAIL) · ESLint نظيف · فحص بصري على 390×844 لـ 15 شاشة: **صفر تجاوز أفقي**.

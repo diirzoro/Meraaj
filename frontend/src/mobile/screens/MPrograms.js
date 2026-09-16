@@ -1,11 +1,21 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, SlidersHorizontal } from "lucide-react";
+import { Landmark, SlidersHorizontal, CalendarDays, Users } from "lucide-react";
 import mobileApi from "@/mobile/api/client";
-import { Screen, TopBar, Card, Skeleton, ErrorState, EmptyState, Money, Sheet, mInput, MField, PrimaryButton, useAsync } from "@/mobile/ui/kit";
+import {
+  Screen, TopBar, Skeleton, ErrorState, EmptyState, Money, Sheet, SheetSelect, DateField,
+  SearchField, PrimaryButton, GhostButton, Chip, mInput, MField, useAsync,
+} from "@/mobile/ui/kit";
 
-const SORTS = [["newest", "الأحدث"], ["price_asc", "الأقل سعراً"], ["price_desc", "الأعلى سعراً"],
-  ["date_asc", "الأقرب مغادرة"], ["best_selling", "الأكثر مبيعاً"]];
+const SORTS = [
+  { value: "newest", label: "الأحدث" },
+  { value: "price_asc", label: "الأقل سعراً" },
+  { value: "price_desc", label: "الأعلى سعراً" },
+  { value: "date_asc", label: "الأقرب مغادرة" },
+  { value: "best_selling", label: "الأكثر مبيعاً" },
+];
+
+const cover = (p) => p?.cover_image || (Array.isArray(p?.images) ? p.images[0] : null);
 
 export default function MPrograms() {
   const navigate = useNavigate();
@@ -13,7 +23,8 @@ export default function MPrograms() {
   const [filters, setFilters] = useState({ sort: "newest", min_price: "", max_price: "", date_from: "" });
   const [applied, setApplied] = useState({ sort: "newest" });
   const [sheet, setSheet] = useState(false);
-  const list = useAsync(() => mobileApi.programs({ ...applied, q: applied.q || undefined }), [JSON.stringify(applied)]);
+  const list = useAsync(() => mobileApi.programs({ ...applied, q: applied.q || undefined }),
+    [JSON.stringify(applied)], { cacheKey: `m-programs-${JSON.stringify(applied)}` });
 
   const apply = () => {
     setApplied({ q: q.trim() || undefined, sort: filters.sort,
@@ -21,20 +32,24 @@ export default function MPrograms() {
       date_from: filters.date_from || undefined });
     setSheet(false);
   };
+  const activeFilters = ["min_price", "max_price", "date_from"].filter((k) => applied[k]).length
+    + (applied.sort && applied.sort !== "newest" ? 1 : 0);
 
   return (
-    <Screen>
-      <TopBar title="برامج العمرة" subtitle="بيانات حقيقية من سوق معراج" back />
-      <div className="p-4 flex gap-2">
-        <div className="relative flex-1">
-          <input className={`${mInput} ps-10`} placeholder="ابحث باسم البرنامج" value={q}
-                 data-testid="m-programs-search" onChange={(e) => setQ(e.target.value)}
-                 onKeyDown={(e) => e.key === "Enter" && apply()} />
-          <Search className="w-4 h-4 absolute inset-y-0 my-auto start-3.5 text-[#0A2540]/40" />
-        </div>
+    <Screen refresh={list.reload}>
+      <TopBar title="برامج العمرة" subtitle="من سوق معراج مباشرة" back />
+
+      <div className="p-4 flex gap-2.5">
+        <SearchField value={q} onChange={setQ} onSubmit={apply} placeholder="ابحث باسم البرنامج"
+                     testid="m-programs-search" />
         <button onClick={() => setSheet(true)} data-testid="m-programs-filter-btn"
-                className="w-12 h-12 rounded-xl bg-white border border-black/10 flex items-center justify-center active:scale-95 transition-transform">
+                className="relative w-14 h-14 rounded-2xl bg-white border border-black/[0.07] flex items-center justify-center active:scale-95 transition-transform shrink-0">
           <SlidersHorizontal className="w-5 h-5 text-[#0A2540]" />
+          {activeFilters > 0 && (
+            <span className="absolute -top-1 -end-1 w-5 h-5 rounded-full bg-[#D4AF37] text-[#0A2540] text-[10px] font-bold flex items-center justify-center">
+              {activeFilters}
+            </span>
+          )}
         </button>
       </div>
 
@@ -43,31 +58,46 @@ export default function MPrograms() {
         : (list.data || []).length === 0
           ? <EmptyState title="لا توجد برامج مطابقة" hint="جرّب تعديل البحث أو عوامل التصفية" />
           : (
-            <div className="px-4 space-y-3" data-testid="m-programs-list">
+            <div className="px-4 space-y-4 m-stagger" data-testid="m-programs-list">
               {list.data.map((p) => (
-                <Card key={p.id} testid={`m-program-${p.id}`} onClick={() => navigate(`/m/programs/${p.id}`)}>
-                  <p className="font-semibold text-sm text-[#0A2540]">{p.title}</p>
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground mt-2">
-                    {p.departure_date && <span>المغادرة {String(p.departure_date).slice(0, 10)}</span>}
-                    {p.duration_days ? <span>{p.duration_days} ليلة</span> : null}
-                    <span>{p.available_seats} مقعد متاح</span>
+                <button key={p.id} data-testid={`m-program-${p.id}`} onClick={() => navigate(`/m/programs/${p.id}`)}
+                        className="w-full text-start bg-white rounded-[24px] border border-black/[0.04] overflow-hidden shadow-[0_6px_22px_-14px_rgba(10,37,64,0.45)] active:scale-[0.985] transition-transform">
+                  <div className="h-36 bg-[#0A2540] relative">
+                    {cover(p) ? (
+                      <img src={cover(p)} alt="" className="w-full h-full object-cover" loading="lazy" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <Landmark className="w-10 h-10 text-[#D4AF37]/50" />
+                      </div>
+                    )}
+                    <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/60 to-transparent">
+                      <p className="font-head font-bold text-white text-[15px] line-clamp-1">{p.title}</p>
+                    </div>
                   </div>
-                  <div className="flex items-center justify-between mt-3 pt-3 border-t">
-                    <span className="text-[11px] text-muted-foreground">يبدأ من</span>
-                    <Money value={p.start_price ?? p.final_sale_price} currency={p.currency} />
+                  <div className="p-4">
+                    <div className="flex flex-wrap gap-2">
+                      {p.departure_date && (
+                        <Chip><CalendarDays className="w-3 h-3 inline-block -mt-0.5 me-1" />
+                          {String(p.departure_date).slice(0, 10)}</Chip>
+                      )}
+                      {p.duration_days ? <Chip>{p.duration_days} ليلة</Chip> : null}
+                      <Chip tone={p.available_seats > 0 ? "good" : "bad"}>
+                        <Users className="w-3 h-3 inline-block -mt-0.5 me-1" />{p.available_seats} مقعد
+                      </Chip>
+                    </div>
+                    <div className="flex items-center justify-between mt-4 pt-3.5 border-t border-black/5">
+                      <span className="text-[11px] text-muted-foreground font-semibold">يبدأ من</span>
+                      <Money value={p.start_price ?? p.final_sale_price} currency={p.currency} className="text-base" />
+                    </div>
                   </div>
-                </Card>
+                </button>
               ))}
             </div>
           )}
 
       <Sheet open={sheet} onClose={() => setSheet(false)} title="تصفية وترتيب" testid="m-programs-filter-sheet">
-        <MField label="الترتيب">
-          <select className={mInput} value={filters.sort} data-testid="m-filter-sort"
-                  onChange={(e) => setFilters({ ...filters, sort: e.target.value })}>
-            {SORTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-          </select>
-        </MField>
+        <SheetSelect label="الترتيب" value={filters.sort} options={SORTS} testid="m-filter-sort"
+                     onChange={(v) => setFilters({ ...filters, sort: v })} />
         <div className="grid grid-cols-2 gap-3">
           <MField label="أدنى سعر">
             <input className={mInput} inputMode="decimal" value={filters.min_price} data-testid="m-filter-min"
@@ -78,11 +108,15 @@ export default function MPrograms() {
                    onChange={(e) => setFilters({ ...filters, max_price: e.target.value })} />
           </MField>
         </div>
-        <MField label="المغادرة من تاريخ">
-          <input type="date" className={mInput} value={filters.date_from} data-testid="m-filter-date"
-                 onChange={(e) => setFilters({ ...filters, date_from: e.target.value })} />
-        </MField>
+        <DateField label="المغادرة من تاريخ" value={filters.date_from} testid="m-filter-date"
+                   onChange={(v) => setFilters({ ...filters, date_from: v })} />
         <PrimaryButton onClick={apply} data-testid="m-filter-apply">تطبيق</PrimaryButton>
+        <div className="mt-2">
+          <GhostButton onClick={() => {
+            setFilters({ sort: "newest", min_price: "", max_price: "", date_from: "" });
+            setQ(""); setApplied({ sort: "newest" }); setSheet(false);
+          }}>مسح التصفية</GhostButton>
+        </div>
       </Sheet>
     </Screen>
   );

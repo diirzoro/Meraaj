@@ -1,10 +1,12 @@
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Building2, FileText, LogOut, ShieldCheck, Smartphone, User } from "lucide-react";
+import {
+  Building2, FileText, LogOut, Receipt, ShieldCheck, Smartphone, TrendingUp, User, Wallet,
+} from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useShell } from "@/mobile/MobileShell";
 import { APP_VERSION } from "@/mobile/api/client";
-import { Screen, TopBar, Card } from "@/mobile/ui/kit";
+import { Screen, TopBar, Card, ListRow, DangerButton, Chip, clearAsyncCache } from "@/mobile/ui/kit";
 
 export default function MAccount() {
   const { user, logout } = useAuth();
@@ -13,71 +15,70 @@ export default function MAccount() {
 
   const doLogout = async () => {
     await logout();
+    clearAsyncCache();
     toast.success("تم تسجيل الخروج");
     navigate("/m/login", { replace: true });
   };
 
-  const rows = [
-    ...(user?.role === "office"
-      ? [{ key: "statement", label: "كشف حساب المكتب", icon: FileText, to: "/m/statement" }]
-      : []),
-    { key: "wallet", label: "المحفظة والحركات", icon: Building2, to: "/m/wallet" },
-    { key: "bookings", label: "حجوزاتي", icon: User, to: "/m/bookings" },
+  const isOffice = user?.role === "office";
+  const activity = [
+    { key: "bookings", label: "حجوزاتي", icon: Receipt, to: "/m/bookings" },
+    ...(isOffice ? [{ key: "sales", label: "مبيعاتي", icon: TrendingUp, to: "/m/sales" }] : []),
+    { key: "wallet", label: "المحفظة والحركات", icon: Wallet, to: "/m/wallet" },
+    ...(isOffice ? [{ key: "statement", label: "كشف حساب المكتب", icon: FileText, to: "/m/statement" }] : []),
   ];
 
   return (
     <Screen>
-      <TopBar title="حسابي" />
-      <div className="p-4 space-y-3">
+      <TopBar title="حسابي" large />
+
+      <div className="p-4 space-y-5">
+        {/* identity */}
         <Card testid="m-account-identity">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-[#0A2540] flex items-center justify-center">
-              <User className="w-6 h-6 text-[#D4AF37]" />
+          <div className="flex items-center gap-4">
+            <div className="w-16 h-16 rounded-[22px] bg-[#0A2540] flex items-center justify-center shrink-0">
+              {isOffice ? <Building2 className="w-7 h-7 text-[#D4AF37]" /> : <User className="w-7 h-7 text-[#D4AF37]" />}
             </div>
             <div className="min-w-0">
-              <p className="font-semibold text-sm text-[#0A2540] truncate">
+              <p className="font-head font-bold text-base text-[#0A2540] truncate">
                 {shell?.user?.name || user?.office_name || user?.owner_name}
               </p>
-              <p className="text-[11px] text-muted-foreground truncate">{user?.email}</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
-                {user?.role === "office" ? "حساب مكتب" : "حساب فرد"}
-                {shell?.user?.is_staff ? " · موظف مكتب" : ""}
-              </p>
+              <p className="text-xs text-muted-foreground truncate mt-0.5">{user?.email}</p>
+              <div className="flex gap-1.5 mt-2">
+                <Chip>{isOffice ? "حساب مكتب" : "حساب فرد"}</Chip>
+                {shell?.user?.is_staff ? <Chip tone="gold">موظف مكتب</Chip> : null}
+              </div>
             </div>
           </div>
         </Card>
 
-        <Card className="p-0 overflow-hidden" testid="m-account-links">
-          {rows.map((r) => (
-            <button key={r.key} onClick={() => navigate(r.to)} data-testid={`m-account-link-${r.key}`}
-                    className="w-full flex items-center gap-3 px-4 py-3.5 border-b last:border-0 text-start active:bg-slate-50">
-              <r.icon className="w-[18px] h-[18px] text-[#0A2540]/60" />
-              <span className="text-sm text-[#0A2540] flex-1">{r.label}</span>
-            </button>
-          ))}
-        </Card>
+        {/* activity */}
+        <div>
+          <p className="text-[11px] font-bold text-[#0A2540]/45 px-2 mb-2">نشاطي</p>
+          <Card className="p-0 overflow-hidden" testid="m-account-links">
+            {activity.map((r, i) => (
+              <ListRow key={r.key} icon={r.icon} label={r.label} testid={`m-account-link-${r.key}`}
+                       onClick={() => navigate(r.to)} last={i === activity.length - 1} />
+            ))}
+          </Card>
+        </div>
 
-        <Card testid="m-account-security">
-          <div className="flex items-start gap-3">
-            <ShieldCheck className="w-5 h-5 text-[#0A2540]/60 mt-0.5" />
-            <p className="text-[11px] text-muted-foreground leading-relaxed">
-              كل عملية مالية أو حجز يتحقق منها السيرفر وفق صلاحياتك؛ التطبيق لا يحتفظ بكلمة
-              المرور ولا يحدد الأسعار أو العمولات.
-            </p>
-          </div>
-        </Card>
+        {/* app info */}
+        <div>
+          <p className="text-[11px] font-bold text-[#0A2540]/45 px-2 mb-2">التطبيق</p>
+          <Card className="p-0 overflow-hidden" testid="m-account-version">
+            <ListRow icon={Smartphone} label="إصدار التطبيق" value={APP_VERSION} />
+            <ListRow icon={ShieldCheck} label="واجهة الخدمات" value={shell?.api_version || "v1"} last />
+          </Card>
+          <p className="text-[11px] text-muted-foreground leading-relaxed mt-3 px-2" data-testid="m-account-security">
+            كل عملية مالية أو حجز يتحقق منها السيرفر وفق صلاحياتك؛ التطبيق لا يحتفظ بكلمة المرور
+            ولا يحدد الأسعار أو العمولات.
+          </p>
+        </div>
 
-        <Card testid="m-account-version">
-          <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-            <Smartphone className="w-4 h-4" />
-            <span>إصدار التطبيق {APP_VERSION} · واجهة {shell?.api_version || "v1"}</span>
-          </div>
-        </Card>
-
-        <button onClick={doLogout} data-testid="m-account-logout"
-                className="w-full h-12 rounded-xl bg-white border border-red-200 text-red-600 text-sm font-semibold flex items-center justify-center gap-2">
+        <DangerButton onClick={doLogout} data-testid="m-account-logout">
           <LogOut className="w-4 h-4 rtl:rotate-180" /> تسجيل الخروج
-        </button>
+        </DangerButton>
       </div>
     </Screen>
   );
