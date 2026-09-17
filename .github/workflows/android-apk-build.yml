@@ -1,0 +1,75 @@
+name: Meraaj Android APK (Test)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - meraaj-updates
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/android-apk-build.yml'
+
+env:
+  REACT_APP_BACKEND_URL: https://meraaj-test.targetmediagrp.com
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout meraaj-updates
+        uses: actions/checkout@v4
+        with:
+          ref: meraaj-updates
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: yarn install --frozen-lockfile
+
+      - name: Build web app for TEST
+        working-directory: frontend
+        run: yarn build
+
+      - name: Sync Capacitor Android
+        working-directory: frontend
+        run: npx cap sync android
+
+      - name: Verify TEST backend configuration
+        working-directory: frontend
+        run: |
+          echo "REACT_APP_BACKEND_URL=$REACT_APP_BACKEND_URL"
+          test "$REACT_APP_BACKEND_URL" = "https://meraaj-test.targetmediagrp.com"
+
+      - name: Build debug APK
+        working-directory: frontend/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Rename APK
+        working-directory: frontend/android
+        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/Meraaj-Network-Test.apk
+
+      - name: Upload TEST APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: meraaj-network-test-apk
+          path: frontend/android/app/build/outputs/apk/debug/Meraaj-Network-Test.apk
+          if-no-files-found: error
+          retention-days: 14
