@@ -29,7 +29,42 @@ PERMISSIONS = {
     "backup.restore": "الاستعادة من نسخة",
     "ads.view": "مشاهدة قسم الإعلانات", "ads.manage": "إنشاء وإدارة الإعلانات",
     "ads.approve": "اعتماد/رفض الإعلانات", "ads.cancel": "قرار طلبات إلغاء الإعلانات",
+    # Accounting module — Phase 1 introduces the chart-of-accounts permissions only.
+    # Journal/posting/reversal/period permissions arrive with their own phases.
+    "accounting.accounts.view": "عرض دليل الحسابات",
+    "accounting.accounts.manage": "إدارة دليل الحسابات",
+    # Integration phase: links, reconciliation and the journal read view. Default DENY —
+    # no admin receives these implicitly.
+    "accounting.journals.view": "عرض القيود اليومية",
+    "accounting.links.manage": "ربط الحسابات بالعمليات التجارية",
+    "accounting.reconciliation.view": "عرض مطابقة الأعمال والمحاسبة",
+    # Batch 2 — user-facing accounting. Default DENY for every key below.
+    "accounting.journals.create": "إنشاء قيد يومية يدوي",
+    "accounting.journals.post": "ترحيل القيود",
+    "accounting.journals.reverse": "عكس القيود",
+    "accounting.vouchers.view": "عرض السندات المحاسبية",
+    "accounting.vouchers.receipt": "إنشاء سند قبض",
+    "accounting.vouchers.payment": "إنشاء سند صرف",
+    "accounting.vouchers.approve": "اعتماد/ترحيل السندات",
+    "accounting.vouchers.cancel": "إلغاء/عكس السندات",
+    "accounting.ledger.view": "عرض الأستاذ العام",
+    "accounting.statement.view": "عرض كشف الحساب المحاسبي",
+    "accounting.reports.view": "عرض التقارير المالية الكاملة",
+    "accounting.periods.view": "عرض الفترات المحاسبية",
+    "accounting.periods.manage": "إدارة الفترات المحاسبية",
+    "accounting.periods.close": "إقفال فترة محاسبية",
+    "accounting.periods.reopen": "إعادة فتح فترة محاسبية",
+    "accounting.year.close": "الإقفال السنوي",
+    "accounting.year.reopen": "إعادة فتح السنة المالية",
+    "accounting.currency.view": "عرض العملات وأسعار الصرف",
+    "accounting.currency.manage": "إدارة العملات وأسعار الصرف",
+    "accounting.links.view": "عرض ربط الحسابات",
+    "accounting.audit.view": "عرض سجل التدقيق المحاسبي",
+    "accounting.selfaudit.run": "تشغيل التدقيق الذاتي المحاسبي",
+    "office.statement.view": "عرض كشف حساب المكتب (تجاري)",
 }
+
+ACCOUNTING_PERMISSIONS = sorted(k for k in PERMISSIONS if k.startswith("accounting."))
 
 # Advertiser accounts (office/individual OWNERS) hold the advertiser-side ads permissions by
 # default so nothing that works today breaks; an admin can revoke them per user via
@@ -48,16 +83,64 @@ ROLES = {
     "finance_manager": {"label": "Finance Manager", "ar": "المدير المالي",
                         "perms": ["orders.view", "funds.release", "withdrawals.approve",
                                   "commissions.edit", "credit.edit", "reports.view", "data.export",
-                                  "audit.view"]},
+                                  "audit.view", "accounting.accounts.view",
+                                  "accounting.accounts.manage", "accounting.journals.view",
+                                  "accounting.journals.create", "accounting.journals.post",
+                                  "accounting.journals.reverse", "accounting.vouchers.view",
+                                  "accounting.vouchers.receipt", "accounting.vouchers.payment",
+                                  "accounting.vouchers.approve", "accounting.ledger.view",
+                                  "accounting.statement.view", "accounting.reports.view",
+                                  "accounting.periods.view", "accounting.periods.manage",
+                                  "accounting.periods.close", "accounting.currency.view",
+                                  "accounting.links.view", "accounting.reconciliation.view",
+                                  "accounting.audit.view", "office.statement.view"]},
+    "accounting_admin": {"label": "Accounting Admin", "ar": "مدير الحسابات",
+                         "perms": ["accounting.accounts.view", "accounting.accounts.manage",
+                                   "accounting.journals.view", "accounting.journals.create",
+                                   "accounting.journals.post", "accounting.journals.reverse",
+                                   "accounting.vouchers.view", "accounting.vouchers.receipt",
+                                   "accounting.vouchers.payment", "accounting.vouchers.approve",
+                                   "accounting.vouchers.cancel", "accounting.ledger.view",
+                                   "accounting.statement.view", "accounting.reports.view",
+                                   "accounting.periods.view", "accounting.periods.manage",
+                                   "accounting.periods.close", "accounting.periods.reopen",
+                                   "accounting.year.close", "accounting.year.reopen",
+                                   "accounting.currency.view", "accounting.currency.manage",
+                                   "accounting.links.view", "accounting.links.manage",
+                                   "accounting.reconciliation.view", "accounting.audit.view",
+                                   "accounting.selfaudit.run", "office.statement.view",
+                                   "reports.view"]},
     "accountant": {"label": "Accountant", "ar": "محاسب",
-                   "perms": ["orders.view", "reports.view", "data.export"]},
+                   "perms": ["orders.view", "reports.view", "data.export",
+                             "accounting.accounts.view", "accounting.accounts.manage",
+                             "accounting.journals.view", "accounting.journals.create",
+                             "accounting.journals.post", "accounting.vouchers.view",
+                             "accounting.vouchers.receipt", "accounting.vouchers.payment",
+                             "accounting.ledger.view", "accounting.statement.view",
+                             "accounting.reports.view", "accounting.periods.view",
+                             "accounting.currency.view", "office.statement.view"]},
+    "cashier": {"label": "Cashier", "ar": "أمين صندوق",
+                "perms": ["accounting.vouchers.view", "accounting.vouchers.receipt",
+                          "accounting.vouchers.payment", "accounting.statement.view"]},
+    "reports_user": {"label": "Reports User (read only)", "ar": "مستخدم تقارير — قراءة فقط",
+                     "perms": ["reports.view", "accounting.reports.view",
+                               "accounting.ledger.view", "accounting.statement.view",
+                               "accounting.journals.view"]},
     "compliance_officer": {"label": "Compliance Officer", "ar": "مسؤول الالتزام",
                            "perms": ["orders.view", "audit.view", "documents.passport_view",
                                      "reports.view", "orgs.manage"]},
     "customer_support": {"label": "Customer Support", "ar": "خدمة العملاء",
                          "perms": ["orders.view", "documents.upload"]},
     "auditor": {"label": "Auditor (read only)", "ar": "مدقّق — قراءة فقط",
-                "perms": ["orders.view", "audit.view", "reports.view", "ads.view"]},
+                "perms": ["orders.view", "audit.view", "reports.view", "ads.view",
+                          "accounting.accounts.view", "accounting.journals.view",
+                          "accounting.ledger.view", "accounting.statement.view",
+                          "accounting.reports.view", "accounting.periods.view",
+                          "accounting.currency.view", "accounting.links.view",
+                          "accounting.reconciliation.view", "accounting.audit.view",
+                          "accounting.selfaudit.run"]},
+    "hr_admin": {"label": "HR Admin", "ar": "مدير الموارد البشرية",
+                 "perms": ["users.manage", "reports.view"]},
     "seller_admin": {"label": "Seller Admin", "ar": "مدير حساب بائع",
                      "perms": ["orders.view", "orders.decide", "prices.edit", "documents.upload",
                                "ads.view", "ads.manage"]},
@@ -75,6 +158,16 @@ DUAL_CONTROL = {
     "withdrawals.approve": "اعتماد السحب", "orders.cancel": "الإلغاء والاسترداد",
     "funds.release": "تحرير الأموال", "documents.delete": "حذف المستندات",
     "settings.edit": "تعديل إعدادات النظام",
+    # Batch 2 — high-risk accounting operations reuse the SAME Maker–Checker engine.
+    "accounting.vouchers.payment": "ترحيل سند صرف",
+    "accounting.journals.post": "ترحيل قيد يدوي",
+    "accounting.journals.reverse": "عكس قيد",
+    "accounting.periods.close": "إقفال فترة محاسبية",
+    "accounting.periods.reopen": "إعادة فتح فترة محاسبية",
+    "accounting.year.close": "الإقفال السنوي",
+    "accounting.year.reopen": "إعادة فتح السنة المالية",
+    "accounting.accounts.manage": "تغييرات هيكلية على دليل الحسابات",
+    "accounting.currency.manage": "تغييرات العملات وأسعار الصرف",
 }
 
 
@@ -124,8 +217,66 @@ def require_perm(key: str):
 # ---------------- catalog & assignment ----------------
 @router.get("/rbac/catalog")
 async def catalog(admin: dict = Depends(require_admin)):
+    from accounting.scope import MODES as SCOPE_MODES, MODE_LABELS
     return {"permissions": PERMISSIONS, "roles": ROLES, "dual_control": DUAL_CONTROL,
+            "accounting_permissions": ACCOUNTING_PERMISSIONS,
+            "account_scope_modes": [{"mode": m, "label_ar": MODE_LABELS[m]}
+                                    for m in SCOPE_MODES],
             "settings": await _dual_settings()}
+
+
+class AccountScopeIn(BaseModel):
+    mode: str
+    codes: List[str] = []
+    reason: str = Field(min_length=3)
+
+
+@router.post("/rbac/users/{user_id}/account-scope")
+async def set_account_scope(user_id: str, payload: AccountScopeIn,
+                            admin: dict = Depends(require_admin)):
+    """ACCOUNT SCOPE extends this same RBAC document — it is not a second authorization
+    engine, and it is enforced in the backend (see accounting/scope.py)."""
+    from accounting.scope import MODES, MODE_ALL
+    from accounting.adapters import chart, PLATFORM_ENTITY
+    if payload.mode not in MODES:
+        raise HTTPException(400, f"نطاق غير معروف: {payload.mode}")
+    u = await db.users.find_one({"_id": oid(user_id)}, {"email": 1})
+    if not u:
+        raise HTTPException(404, "المستخدم غير موجود")
+    codes = sorted({str(c).strip() for c in payload.codes if str(c).strip()})
+    if payload.mode != MODE_ALL and not codes:
+        raise HTTPException(400, "اختر حساباً واحداً على الأقل لهذا النطاق")
+    if codes:
+        known = {a["code"] for a in await chart().list_accounts(PLATFORM_ENTITY, True)}
+        bad = [c for c in codes if c not in known]
+        if bad:
+            raise HTTPException(400, f"حسابات غير موجودة: {', '.join(bad)}")
+    before = await db.user_roles.find_one({"user_id": user_id}, {"account_scope": 1})
+    scope = {"mode": payload.mode, "codes": [] if payload.mode == MODE_ALL else codes}
+    await db.user_roles.update_one({"user_id": user_id}, {"$set": {
+        "account_scope": scope, "account_scope_by": admin.get("email"),
+        "account_scope_at": now_iso()}}, upsert=True)
+    await db.audit_log.insert_one({
+        "entity": "user", "entity_id": user_id, "action": "account_scope_assigned",
+        "actor": admin.get("email"), "actor_id": str(admin["_id"]),
+        "reason": payload.reason.strip(),
+        "before": {"account_scope": (before or {}).get("account_scope")},
+        "after": {"account_scope": scope}, "at": now_iso()})
+    return {"ok": True, "account_scope": scope}
+
+
+@router.delete("/rbac/users/{user_id}/account-scope")
+async def clear_account_scope(user_id: str, reason: str = "إزالة نطاق الحسابات",
+                              admin: dict = Depends(require_admin)):
+    before = await db.user_roles.find_one({"user_id": user_id}, {"account_scope": 1})
+    await db.user_roles.update_one({"user_id": user_id},
+                                   {"$unset": {"account_scope": ""}})
+    await db.audit_log.insert_one({
+        "entity": "user", "entity_id": user_id, "action": "account_scope_removed",
+        "actor": admin.get("email"), "actor_id": str(admin["_id"]), "reason": reason,
+        "before": {"account_scope": (before or {}).get("account_scope")},
+        "after": {"account_scope": None}, "at": now_iso()})
+    return {"ok": True, "removed": True}
 
 
 async def _dual_settings() -> dict:
@@ -164,6 +315,7 @@ async def rbac_users(q: Optional[str] = None, role: Optional[str] = None,
         d["denied_permissions"] = a.get("denied_permissions", [])
         d["branch_id"] = a.get("branch_id")
         d["office_id"] = a.get("office_id")
+        d["account_scope"] = a.get("account_scope") or {"mode": "all_accounts", "codes": []}
         d["permissions"] = await user_permissions(u)
         d["is_rahal"] = bool(u.get("rahal_office_ref")) or u.get("source") == "rahal"
         d["is_staff"] = bool(u.get("is_staff_account"))
@@ -585,8 +737,11 @@ async def twofa_disable(payload: SessionActionIn, admin: dict = Depends(require_
 
 @router.get("/my-permissions")
 async def my_permissions(request: Request, user: dict = Depends(get_current_user)):
+    from accounting.scope import load_scope
     acting = user.get("_acting_staff")
     return {"role": user.get("role"), "permissions": await user_permissions(user),
             "acting_staff": {"name": acting["name"], "email": acting["email"]} if acting else None,
             "office_id": str(user["_id"]),
+            "account_scope": (await load_scope(user)).public(),
+            "dual_control": await _dual_settings(),
             "twofa_enabled": bool(user.get("twofa_enabled"))}

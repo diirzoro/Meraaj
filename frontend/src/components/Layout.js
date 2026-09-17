@@ -1,21 +1,50 @@
 import { useState, useRef } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import {
   LayoutDashboard, Store, Package, ShoppingBag, TicketCheck, Wallet,
   Banknote, ShieldAlert, LogOut, Building2, Network, Menu, X, TrendingUp, Ban,
-  Database, Eraser,
+  Database, Eraser, ChevronDown, Calculator, ReceiptText, NotebookPen, Scale,
+  Coins, CalendarClock, GitCompare, ShieldCheck,
   BookOpen, ArrowDownCircle, Percent, Gauge, Bell, FileSpreadsheet, Settings2, Megaphone,
 } from "lucide-react";
+
+/** NAVIGATION MODEL — `items` are leaves, `group` entries are collapsible parents.
+ *  A group is rendered ONLY if at least one of its children is visible to the user, and every
+ *  child carries its OWN permission (never one broad accounting.* grant). Hiding a link is
+ *  convenience only: every route and API re-checks the same permission in the backend. */
+
+const ACCOUNTING_GROUP = {
+  group: "accounting", label: "الحسابات", icon: Calculator, children: [
+    { to: "/accounting/chart", label: "الدليل المحاسبي", icon: BookOpen, perm: "accounting.accounts.view" },
+    { to: "/accounting/vouchers", label: "السندات", icon: ReceiptText, perm: "accounting.vouchers.view" },
+    { to: "/accounting/journals", label: "القيود اليومية", icon: NotebookPen, perm: "accounting.journals.view" },
+    { to: "/accounting/ledger", label: "الأستاذ وكشف الحساب", icon: Scale, perm: "accounting.ledger.view" },
+    { to: "/accounting/currencies", label: "العملات والمصارفة", icon: Coins, perm: "accounting.currency.view" },
+    { to: "/accounting/periods", label: "الفترات والإقفال", icon: CalendarClock, perm: "accounting.periods.view" },
+    { to: "/accounting/links", label: "ربط الحسابات", icon: Network, perm: "accounting.links.view" },
+    { to: "/accounting/reconciliation", label: "المطابقة المحاسبية", icon: GitCompare, perm: "accounting.reconciliation.view" },
+    { to: "/accounting/self-audit", label: "التدقيق الذاتي", icon: ShieldCheck, perm: "accounting.selfaudit.run" },
+  ],
+};
 
 const officeNav = [
   { to: "/dashboard", label: "الرئيسية", icon: LayoutDashboard },
   { to: "/market", label: "سوق البرامج", icon: Store },
-  { to: "/packages", label: "برامجي (بائع)", icon: Package },
-  { to: "/sales", label: "مبيعاتي", icon: TicketCheck },
-  { to: "/bookings", label: "حجوزاتي (مشتري)", icon: ShoppingBag },
-  { to: "/wallet", label: "المحفظة", icon: Wallet },
-  { to: "/my-ads", label: "إعلاناتي وعروضي", icon: Megaphone, perm: "ads.view" },
+  { group: "office-business", label: "أعمالي", icon: Package, children: [
+    { to: "/packages", label: "برامجي (بائع)", icon: Package },
+    { to: "/sales", label: "مبيعاتي", icon: TicketCheck },
+    { to: "/bookings", label: "حجوزاتي (مشتري)", icon: ShoppingBag },
+    { to: "/my-ads", label: "إعلاناتي وعروضي", icon: Megaphone, perm: "ads.view" },
+  ] },
+  { group: "office-money", label: "الحساب المالي", icon: Banknote, children: [
+    { to: "/wallet", label: "المحفظة", icon: Wallet },
+    { to: "/office-statement", label: "كشف حساب المكتب", icon: FileSpreadsheet },
+  ] },
+  ACCOUNTING_GROUP,
+  { group: "office-reports", label: "التقارير", icon: FileSpreadsheet, children: [
+    { to: "/accounting/reports", label: "التقارير المالية", icon: Scale, perm: "accounting.reports.view" },
+  ] },
 ];
 
 const individualNav = [
@@ -27,26 +56,41 @@ const individualNav = [
 ];
 
 const adminNav = [
-  { to: "/admin", label: "لوحة المؤشرات", icon: LayoutDashboard },
-  { to: "/admin/orders", label: "مركز الطلبات", icon: ShoppingBag },
-  { to: "/admin/finance", label: "المركز المالي", icon: Banknote },
-  { to: "/admin/ledger", label: "الدفتر المالي", icon: BookOpen },
-  { to: "/admin/withdrawals", label: "دورة السحوبات", icon: ArrowDownCircle },
-  { to: "/admin/commissions", label: "محرك العمولات", icon: Percent },
-  { to: "/admin/credit", label: "السقف الائتماني", icon: Gauge },
-  { to: "/admin/programs", label: "البرامج والمقاعد", icon: Package },
-  { to: "/admin/travelers", label: "المسافرون والمستندات", icon: TicketCheck },
-  { to: "/admin/integrations", label: "صحة التكامل", icon: Network },
-  { to: "/admin/orgs", label: "المؤسسات والمكاتب", icon: Building2 },
-  { to: "/admin/roles", label: "الصلاحيات والأمان", icon: ShieldAlert },
-  { to: "/admin/notifications", label: "الإشعارات والمهام", icon: Bell },
-  { to: "/admin/reports", label: "التقارير", icon: FileSpreadsheet },
-  { to: "/admin/ads", label: "الإعلانات والعروض", icon: Megaphone, perm: "ads.view" },
-  { to: "/admin/system", label: "إعدادات النظام", icon: Settings2 },
-  { to: "/admin/backups", label: "النسخ الاحتياطي", icon: Database },
-  { to: "/admin/maintenance", label: "الصيانة والاحتفاظ", icon: Eraser },
-  { to: "/admin/cancellations", label: "طلبات الإلغاء", icon: Ban },
-  { to: "/admin/disputes", label: "النزاعات", icon: ShieldAlert },
+  { to: "/admin", label: "الرئيسية", icon: LayoutDashboard },
+  { group: "operations", label: "العمليات", icon: ShoppingBag, children: [
+    { to: "/admin/orders", label: "مركز الطلبات", icon: ShoppingBag },
+    { to: "/admin/programs", label: "البرامج والمقاعد", icon: Package },
+    { to: "/admin/travelers", label: "المسافرون والمستندات", icon: TicketCheck },
+    { to: "/admin/withdrawals", label: "دورة السحوبات", icon: ArrowDownCircle },
+    { to: "/admin/cancellations", label: "طلبات الإلغاء", icon: Ban },
+    { to: "/admin/disputes", label: "النزاعات", icon: ShieldAlert },
+  ] },
+  { group: "business-finance", label: "المالية التجارية", icon: Banknote, children: [
+    { to: "/admin/finance", label: "المركز المالي", icon: Banknote },
+    { to: "/admin/ledger", label: "الدفتر المالي (تجاري)", icon: BookOpen },
+    { to: "/admin/commissions", label: "محرك العمولات", icon: Percent },
+    { to: "/admin/credit", label: "السقف الائتماني", icon: Gauge },
+    { to: "/office-statement", label: "كشف حساب المكتب", icon: FileSpreadsheet },
+  ] },
+  ACCOUNTING_GROUP,
+  { group: "reports", label: "التقارير", icon: FileSpreadsheet, children: [
+    { to: "/accounting/reports", label: "التقارير المالية", icon: Scale, perm: "accounting.reports.view" },
+    { to: "/admin/reports", label: "التقارير التشغيلية", icon: FileSpreadsheet },
+  ] },
+  { group: "org-management", label: "إدارة المكاتب والمنظمات", icon: Building2, children: [
+    { to: "/admin/orgs", label: "المؤسسات والمكاتب", icon: Building2 },
+  ] },
+  { group: "marketing", label: "التسويق", icon: Megaphone, children: [
+    { to: "/admin/ads", label: "الإعلانات والعروض", icon: Megaphone, perm: "ads.view" },
+  ] },
+  { group: "system", label: "النظام والإدارة", icon: Settings2, children: [
+    { to: "/admin/roles", label: "الصلاحيات والأمان", icon: ShieldAlert },
+    { to: "/admin/system", label: "إعدادات النظام", icon: Settings2 },
+    { to: "/admin/integrations", label: "صحة التكامل", icon: Network },
+    { to: "/admin/notifications", label: "الإشعارات والمهام", icon: Bell },
+    { to: "/admin/backups", label: "النسخ الاحتياطي", icon: Database },
+    { to: "/admin/maintenance", label: "الصيانة والاحتفاظ", icon: Eraser },
+  ] },
 ];
 
 function navFor(role) {
@@ -55,11 +99,81 @@ function navFor(role) {
   return officeNav;
 }
 
+/** Keep only entries the user may actually open; drop groups that end up empty. */
+function visibleNav(role, can) {
+  return navFor(role).reduce((acc, item) => {
+    if (!item.group) {
+      if (!item.perm || can(item.perm)) acc.push(item);
+      return acc;
+    }
+    const children = item.children.filter((c) => !c.perm || can(c.perm));
+    if (children.length) acc.push({ ...item, children });
+    return acc;
+  }, []);
+}
+
+const GROUP_STATE_KEY = "meraaj_nav_groups";
+
+function NavLeaf({ item, depth = 0, onNavigate }) {
+  return (
+    <NavLink
+      to={item.to} end={item.to === "/admin"} onClick={onNavigate}
+      data-testid={`nav-${item.to.replace(/\//g, "") || "home"}`}
+      className={({ isActive }) =>
+        `sidebar-link flex items-center gap-3 py-2.5 rounded-lg text-sm font-medium ${
+          depth ? "ps-9 pe-4" : "px-4 py-3"
+        } ${isActive ? "bg-white/10 text-white" : "text-white/60 hover:bg-white/5 hover:text-white"}`
+      }
+    >
+      <item.icon className="w-[18px] h-[18px] shrink-0" />
+      <span className="truncate">{item.label}</span>
+    </NavLink>
+  );
+}
+
+function NavGroup({ item, openGroups, toggle, onNavigate }) {
+  const { pathname } = useLocation();
+  const hasActive = item.children.some((c) => pathname === c.to || pathname.startsWith(`${c.to}/`));
+  const open = openGroups[item.group] ?? hasActive;   // an active child auto-opens its parent
+  return (
+    <div data-testid={`nav-group-${item.group}`}>
+      <button
+        onClick={() => toggle(item.group, !open)}
+        data-testid={`nav-group-toggle-${item.group}`}
+        aria-expanded={open}
+        className={`w-full sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-semibold ${
+          hasActive ? "text-white" : "text-white/70 hover:bg-white/5 hover:text-white"
+        }`}
+      >
+        <item.icon className="w-[18px] h-[18px] shrink-0" />
+        <span className="flex-1 text-start truncate">{item.label}</span>
+        <ChevronDown className={`w-4 h-4 transition-transform ${open ? "" : "-rotate-90 rtl:rotate-90"}`} />
+      </button>
+      {open && (
+        <div className="mt-1 space-y-1 border-s border-white/10 ms-5" data-testid={`nav-group-children-${item.group}`}>
+          {item.children.map((c) => <NavLeaf key={c.to} item={c} depth={1} onNavigate={onNavigate} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Layout({ children }) {
   const { user, logout, can } = useAuth();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
-  const nav = navFor(user?.role).filter((i) => !i.perm || can(i.perm));
+  const nav = visibleNav(user?.role, can);
+  // Multiple groups may stay open; the choice survives navigation and reloads.
+  const [openGroups, setOpenGroups] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(GROUP_STATE_KEY) || "{}"); } catch { return {}; }
+  });
+  const toggleGroup = (key, value) => {
+    setOpenGroups((prev) => {
+      const next = { ...prev, [key]: value };
+      localStorage.setItem(GROUP_STATE_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
 
   const doLogout = async () => { localStorage.removeItem("meraaj_resume_route"); await logout(); navigate("/login"); };
 
@@ -106,21 +220,10 @@ export default function Layout({ children }) {
         </div>
 
         <nav className="flex-1 px-3 py-4 pb-24 space-y-1 overflow-y-auto">
-          {nav.map((item) => (
-            <NavLink
-              key={item.to} to={item.to} end={item.to === "/admin"}
-              onClick={() => setOpen(false)}
-              data-testid={`nav-${item.to.replace(/\//g, "") || "home"}`}
-              className={({ isActive }) =>
-                `sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium ${
-                  isActive ? "bg-white/10 text-white" : "text-white/60 hover:bg-white/5 hover:text-white"
-                }`
-              }
-            >
-              <item.icon className="w-[18px] h-[18px]" />
-              {item.label}
-            </NavLink>
-          ))}
+          {nav.map((item) => (item.group
+            ? <NavGroup key={item.group} item={item} openGroups={openGroups}
+                        toggle={toggleGroup} onNavigate={() => setOpen(false)} />
+            : <NavLeaf key={item.to} item={item} onNavigate={() => setOpen(false)} />))}
         </nav>
 
         <div className="px-3 py-4 border-t border-white/10">

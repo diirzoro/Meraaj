@@ -32,6 +32,10 @@ from documents import router as documents_router
 from maintenance import router as maintenance_router
 from ads import router as ads_router
 from ads_billing import router as ads_billing_router
+from accounting.api import router as accounting_router, install_error_handler as install_accounting_errors
+from accounting.vouchers import router as accounting_vouchers_router
+from office_statement import router as office_statement_router
+from mobile_api import router as mobile_router
 
 app = FastAPI(title="Meraaj Network API")
 
@@ -67,6 +71,11 @@ app.include_router(documents_router)
 app.include_router(maintenance_router)
 app.include_router(ads_router)
 app.include_router(ads_billing_router)
+app.include_router(accounting_router)
+app.include_router(accounting_vouchers_router)
+app.include_router(office_statement_router)
+app.include_router(mobile_router)
+install_accounting_errors(app)
 
 frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 app.add_middleware(
@@ -96,6 +105,8 @@ async def startup():
     from orgs import seed_notification_templates
     await seed_notification_templates()
     await ensure_default_rule()
+    from accounting.adapters import ensure_accounting_indexes
+    await ensure_accounting_indexes()
     logger.info("Meraaj Network API started; admin seeded.")
 
 

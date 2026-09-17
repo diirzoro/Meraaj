@@ -459,13 +459,15 @@ async def apply_approval_financials(b):
     await adjust_wallet(oid(b["seller_id"]), cur, pending=net_total, total=net_total)
     await log_txn(b["seller_id"], "booking_escrow", net_total, f"إيراد معلق (قبول): {b.get('package_title','')}", bid, currency=cur)
     if b.get("buyer_type") == "office" and b.get("platform_fee"):
-        await log_platform_revenue(b["platform_fee"], f"عمولة منصة (قبول): {b.get('package_title','')}", bid, currency=cur)
+        await log_platform_revenue(b["platform_fee"], f"عمولة منصة (قبول): {b.get('package_title','')}", bid, currency=cur,
+                                   key=f"approval_fee:{bid}")
     if b.get("buyer_type") != "office":
         if b.get("marketer_id") and (b.get("marketer_commission", 0) or 0) > 0:
             await adjust_wallet(oid(b["marketer_id"]), cur, pending=b["marketer_commission"], total=b["marketer_commission"])
             await log_txn(b["marketer_id"], "marketer_commission", b["marketer_commission"], f"عمولة تسويق (قبول): {b.get('package_title','')}", bid, currency=cur)
         if b.get("platform_profit"):
-            await log_platform_revenue(b["platform_profit"], f"أرباح المنصة (قبول): {b.get('package_title','')}", bid, currency=cur)
+            await log_platform_revenue(b["platform_profit"], f"أرباح المنصة (قبول): {b.get('package_title','')}", bid, currency=cur,
+                                       key=f"approval_profit:{bid}")
 
 
 async def refund_and_release(b):

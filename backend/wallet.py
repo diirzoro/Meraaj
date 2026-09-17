@@ -1,7 +1,7 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Response
 from pydantic import BaseModel, Field
 from db import db, serialize, oid, now_iso, adjust_wallet, log_txn, wallet_available, CurrencyField
-from security import require_buyer
+from security import require_buyer, get_current_user
 from datetime import datetime, timezone
 
 router = APIRouter(prefix="/api/wallet", tags=["wallet"])
@@ -24,6 +24,54 @@ class TopupInput(BaseModel):
     currency: CurrencyField = "SAR"  # SAR | USD
     method: str
     receipt_url: str
+
+
+RECEIPT_TYPES = ("image/png", "image/jpeg", "image/webp", "application/pdf")
+
+
+@router.post("/topups/receipt")
+async def upload_topup_receipt(file: UploadFile = File(...),
+                               user: dict = Depends(require_buyer)):
+    """Receipt upload from the phone's camera/gallery. Reuses the SAME GridFS mechanism the
+    app already uses for ad banners — no second storage engine. The returned URL is what
+    the top-up request stores, and reading it back is authorised (owner or finance admin)."""
+    if (file.content_type or "") not in RECEIPT_TYPES:
+        raise HTTPException(400, "نوع الملف غير مدعوم — استخدم PNG أو JPEG أو WEBP أو PDF")
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "الملف فارغ")
+    if len(data) > 5 * 1024 * 1024:
+        raise HTTPException(400, "حجم الملف يتجاوز 5 ميجابايت")
+    from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+    bucket = AsyncIOMotorGridFSBucket(db, bucket_name="topup_receipts")
+    fid = await bucket.upload_from_stream(
+        file.filename or "receipt", data,
+        metadata={"content_type": file.content_type, "office_id": str(user["_id"]),
+                  "by": user.get("email"), "at": now_iso()})
+    return {"receipt_url": f"/api/wallet/receipt/{fid}", "size": len(data),
+            "content_type": file.content_type}
+
+
+@router.get("/receipt/{file_id}")
+async def get_topup_receipt(file_id: str, user: dict = Depends(get_current_user)):
+    """Ownership enforced in the backend: only the uploading office or an authorised
+    finance/admin user can read a receipt."""
+    from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+    from rbac import has_perm
+    meta = await db["topup_receipts.files"].find_one({"_id": oid(file_id)})
+    if not meta:
+        raise HTTPException(404, "الإيصال غير موجود")
+    owner = (meta.get("metadata") or {}).get("office_id")
+    own_id = str(user.get("parent_office_id") or user["_id"])
+    privileged = user.get("role") == "super_admin" or await has_perm(user, "funds.release")
+    if owner != own_id and not privileged:
+        raise HTTPException(403, "لا تملك صلاحية الوصول إلى هذا الإيصال")
+    bucket = AsyncIOMotorGridFSBucket(db, bucket_name="topup_receipts")
+    stream = await bucket.open_download_stream(oid(file_id))
+    data = await stream.read()
+    return Response(content=data,
+                    media_type=(meta.get("metadata") or {}).get("content_type",
+                                                                "application/octet-stream"))
 
 
 @router.post("/topups")

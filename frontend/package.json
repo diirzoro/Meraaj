@@ -5,6 +5,7 @@
   "dependencies": {
     "@capacitor/app": "^7",
     "@capacitor/core": "^7",
+    "@capacitor/haptics": "^7",
     "@capacitor/keyboard": "^7",
     "@capacitor/splash-screen": "^7",
     "@capacitor/status-bar": "^7",
