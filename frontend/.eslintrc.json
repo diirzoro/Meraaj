@@ -1,0 +1,15 @@
+{
+  "root": true,
+  "parserOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "module",
+    "ecmaFeatures": { "jsx": true }
+  },
+  "env": { "browser": true, "es2022": true, "node": true },
+  "plugins": ["react-hooks"],
+  "ignorePatterns": ["node_modules/**", "build/**", "android/**", "plugins/**"],
+  "rules": {
+    "react-hooks/exhaustive-deps": "off",
+    "react-hooks/rules-of-hooks": "off"
+  }
+}
