@@ -78,9 +78,16 @@ app.include_router(mobile_router)
 install_accounting_errors(app)
 
 frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+allowed_origins = [
+    frontend_url,
+    "http://localhost:3000",
+    # Capacitor Android WebView uses https://localhost as its local origin.
+    "https://localhost",
+    "http://localhost",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[frontend_url, "http://localhost:3000"],
+    allow_origins=list(dict.fromkeys(allowed_origins)),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
