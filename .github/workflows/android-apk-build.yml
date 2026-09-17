@@ -1,10 +1,11 @@
-name: Meraaj Android APK (NEW TEST FIX)
+name: Meraaj Android APK V2 (TEST)
 
 on:
   workflow_dispatch:
   push:
     branches:
       - meraaj-updates
+      - meraaj-update-v2
     paths:
       - 'frontend/**'
       - '.github/workflows/android-apk-build.yml'
@@ -17,10 +18,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout meraaj-updates
+      - name: Checkout current branch
         uses: actions/checkout@v4
         with:
-          ref: meraaj-updates
+          ref: ${{ github.ref_name }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -90,18 +91,24 @@ jobs:
           echo "REACT_APP_BACKEND_URL=$REACT_APP_BACKEND_URL"
           test "$REACT_APP_BACKEND_URL" = "https://meraaj-test.targetmediagrp.com"
 
+      - name: Verify Android version
+        working-directory: frontend/android
+        run: |
+          grep -q 'versionCode 2' app/build.gradle
+          grep -q 'versionName "1.1"' app/build.gradle
+
       - name: Build debug APK
         working-directory: frontend/android
         run: gradle assembleDebug --no-daemon
 
       - name: Rename APK
         working-directory: frontend/android
-        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/Meraaj-Network-Test-NEW-FIX.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/Meraaj-Network-Test-V2.apk
 
-      - name: Upload NEW TEST APK
+      - name: Upload V2 TEST APK
         uses: actions/upload-artifact@v4
         with:
-          name: meraaj-network-test-apk-NEW-FIX
-          path: frontend/android/app/build/outputs/apk/debug/Meraaj-Network-Test-NEW-FIX.apk
+          name: meraaj-network-test-apk-V2
+          path: frontend/android/app/build/outputs/apk/debug/Meraaj-Network-Test-V2.apk
           if-no-files-found: error
           retention-days: 14
