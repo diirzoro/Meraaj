@@ -998,3 +998,39 @@ async def integration_status():
         "webhook_events": ["package.deactivated", "package.deleted", "package.removed",
                            "package.disabled", "package.activated", "package.updated", "inventory.updated"],
     }
+
+
+# ---------------------------------------------------------------------------
+# Chart-of-Accounts fetch from Rahal (read-only, signed). Used by the accounting
+# transport layer for «استيراد من رحّال». No local fallback and no invented data:
+# if Rahal is not configured or unreachable the caller gets an explicit error.
+# ---------------------------------------------------------------------------
+async def fetch_rahal_chart(office_ref: str = None) -> dict:
+    url = os.environ.get("RAHAL_COA_URL", "").strip()
+    if not url:
+        base = _rahal_base_url()
+        url = base.rstrip("/") + "/api/meraaj/coa" if base else ""
+    if not url:
+        raise RuntimeError("rahal_not_configured")
+    body = {"office_ref": office_ref} if office_ref else {}
+    raw = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    try:
+        async with httpx.AsyncClient(timeout=15) as h:
+            r = await h.post(url, content=raw, headers={
+                "Content-Type": "application/json",
+                "X-Meraaj-Signature": _outbound_signature(raw),
+            })
+    except httpx.RequestError as e:
+        raise RuntimeError(f"rahal_unreachable: {e}") from e
+    if r.status_code != 200:
+        raise RuntimeError(f"rahal_http_{r.status_code}: {r.text[:200]}")
+    try:
+        payload = r.json()
+    except ValueError as e:
+        raise RuntimeError("rahal_invalid_json") from e
+    data = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else payload
+    rows = (data or {}).get("accounts") or (data or {}).get("items") or []
+    if not isinstance(rows, list):
+        raise RuntimeError("rahal_invalid_payload")
+    return {"source_url": url, "office_ref": office_ref,
+            "version": (data or {}).get("version"), "accounts": rows}
