@@ -1,4 +1,4 @@
-name: Meraaj Android APK (Test)
+name: Meraaj Android APK (NEW TEST FIX)
 
 on:
   workflow_dispatch:
@@ -96,12 +96,12 @@ jobs:
 
       - name: Rename APK
         working-directory: frontend/android
-        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/Meraaj-Network-Test.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/Meraaj-Network-Test-NEW-FIX.apk
 
-      - name: Upload TEST APK
+      - name: Upload NEW TEST APK
         uses: actions/upload-artifact@v4
         with:
-          name: meraaj-network-test-apk
-          path: frontend/android/app/build/outputs/apk/debug/Meraaj-Network-Test.apk
+          name: meraaj-network-test-apk-NEW-FIX
+          path: frontend/android/app/build/outputs/apk/debug/Meraaj-Network-Test-NEW-FIX.apk
           if-no-files-found: error
           retention-days: 14
