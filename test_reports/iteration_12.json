@@ -1,0 +1,65 @@
+{
+  "summary": "Full one-pass verification of the Enterprise admin build (Batches 3-5) + Batch 1/2 fix verification + money-safety/Rahal regressions. New pytest suite tests/test_admin_enterprise_b345.py = 157 tests, 152 PASS / 5 FAIL (96.8%). Regression suites re-run: test_admin_enterprise_b1.py 49/49 PASS (incl. Rahal SSO no-duplicate-user, inbound webhook HMAC 200 vs 401), test_admin_enterprise_b2.py 46/46 PASS after updating 7 stale expectations that the new build intentionally changed (seeded default commission rule, 7->6 unified withdrawal stages). Frontend: admin login, all 18 nav items, /admin/programs, /admin/travelers, /admin/integrations, /admin/notifications, /admin/reports, /admin/system (5 tabs), /admin/roles (5 tabs), /admin/orgs and all pre-existing admin pages render with no console errors; report run + UTF-8 CSV export download verified; Scanner PoC verified (no file browser, correct Arabic fallback). MONEY SAFETY: no balance drift anywhere - reconciliation dry-run and real opening-balance entry left every wallet byte-identical, all 6 withdrawal stage changes moved no money, B2B booking charged exactly net + 10% platform commission (1000 + 20 = 1020) with commission_snapshot stored, escrow/seats correct on seller approve.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/admin/integrations/outbox/{id}/retry and /retry-all", "issue": "Always 500. admin_ops.py lines 77 and 96 do `from integration import _deliver, _sign` but integration.py has no `_sign` - the function is `_outbound_signature`. ImportError in backend log: \"cannot import name '_sign' from 'integration'\". Retry is therefore completely non-functional (UI shows the Arabic failure text). NOTE: the audit entry IS written before the crash, so a failed retry still leaves an outbox_manual_retry audit record.", "priority": "CRITICAL"},
+      {"endpoint": "POST /api/auth/login", "issue": "A SUSPENDED account can still log in: login() never checks user.status. POST /admin/users/{id}/suspend sets status=suspended + force_logout_at (old token dies) but a fresh login returns 200 with a valid token, so suspension does not block the account.", "priority": "HIGH"},
+      {"endpoint": "GET /api/admin/credit", "issue": "Batch-2 fix NOT implemented: the search parameter q does NOT bypass only_exposed. credit.py applies `if only_exposed and not exposed: continue` unconditionally, so searching for a named office with only_exposed=true returns an empty list (reproduced: q=<office name>&only_exposed=true -> 0 items).", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "GET /api/admin/audit", "issue": "The `actor` filter is only applied to audit_log; booking_events / credit_events / commission_events / package_events are merged unfiltered, so ?actor=abuzay84@gmail.com returns rows with actor 'office'/'seller'/'super_admin'. Same for any future field filter (only `entity` and post-merge `q` are honoured)."},
+      {"endpoint": "GET /api/admin/settings", "issue": "The response mixes metadata into the sections map: after any POST /admin/settings the merged object contains `updated_at` and `updated_by` as if they were sections (11 -> 13 keys), which will render as two bogus sections/flags in the UI. Exclude keys starting with updated_ (like _id)."},
+      {"endpoint": "POST /api/admin/reconciliation/adjust", "issue": "Guard order: the 'no difference' check runs before the duplicate opening_balance check, so a second call returns 'لا يوجد فرق يستوجب قيد تسوية' instead of the intended 'يوجد قيد افتتاحي مسجّل مسبقاً'. The second entry IS refused (money-safe), only the message/branch is unreachable."},
+      {"endpoint": "POST /api/admin/notifications/scan", "issue": "The passport-expiry window is computed with string arithmetic (today[:2] + str(int(today[2:4]) + 1) + today[4:]) which breaks for years ending in 99 (2099 -> '20100-..'). Use a real date offset."},
+      {"endpoint": "POST /api/admin/integrations/outbox/retry-all", "issue": "Deliveries are sequential and unbounded (up to 200 events) inside the request; with 82 undelivered events this is a long blocking call. Consider a background task / concurrency limit."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AdminIntegrations - failure groups", "issue": "The failure-groups panel rendered 0 <tr> rows although GET /admin/integrations/health returns non-empty failure_groups with real last_error values. Needs a visual re-check (may be rendered as non-table markup, otherwise the grouping is not displayed).", "selector": "[data-testid=\"failure-groups\"]", "priority": "MEDIUM"},
+      {"component": "AdminCredit", "issue": "With the default 'إظهار من له سقف أو مديونية فقط' filter ON the table is empty ('لا توجد نتائج') while the pagination footer says 'صفحة 1 من ١٠٠٥ حساب' - the count is out of sync with the filtered result (API correctly returns total=0 for only_exposed=true, 941 for false).", "selector": "[data-testid=\"credit-pagination\"]", "priority": "LOW"},
+      {"component": "AdminNotifications - scan", "issue": "Clicking 'تشغيل الفحص' gives no visible result/summary in the scan panel (the API returns {created, total}); the user cannot tell the scan ran.", "selector": "[data-testid=\"scan-btn\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Integration retry from /admin/integrations", "issue": "Confirming retry-all triggers the backend 500 (ImportError _sign); the UI correctly surfaces an Arabic failure message but no event is ever re-delivered.", "affected_selectors": ["[data-testid=\"retry-all-btn\"]", "[data-testid=\"confirm-retry\"]"]}
+    ],
+    "design_issues": [
+      {"screen": "Admin sidebar", "issues": ["18 nav items (spec said 15); the last items are clipped at 1080px height - the sidebar list needs its own scroll container"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_admin_enterprise_b345.py",
+    "/app/backend/tests/_mk_second_admin.py",
+    "/app/test_reports/pytest/b345_results.xml",
+    "/app/test_reports/pytest/b12_regression.xml"
+  ],
+  "action_items": [
+    "CRITICAL: fix admin_ops.py imports -> `from integration import _deliver, _outbound_signature as _sign` (or rename); both retry endpoints currently 500 on every call.",
+    "HIGH: block login for status=suspended users in security.py login() (return 403 with an Arabic message) - suspension is currently cosmetic.",
+    "HIGH: implement the promised q-bypasses-only_exposed behaviour in credit.py list_credit.",
+    "Apply the actor filter (and any future filters) to every merged source in GET /admin/audit.",
+    "Strip updated_at/updated_by from the settings sections map in GET /admin/settings.",
+    "Swap the guard order in /reconciliation/adjust so the duplicate-entry message is reachable.",
+    "Verify the failure-groups rendering on /admin/integrations and add a visible scan result on /admin/notifications."
+  ],
+  "critical_code_review_comments": [
+    "admin_ops.py imports a non-existent symbol (_sign) - a smoke test of every new POST endpoint would have caught it; there is no import-time check because the import is inside the handler.",
+    "enterprise.py:360 merges the raw settings document into DEFAULT_SETTINGS without filtering metadata keys.",
+    "enterprise.py `users` report issues one db.sessions.find_one per user (907+ round trips) and `programs`/`travelers` reports aggregate per document - acceptable now (<10s) but will not scale.",
+    "orgs.py scan_alerts builds the +1-year date by string slicing; use datetime arithmetic.",
+    "rbac.py user_permissions() is called per row in /rbac/users (N+1 on user_roles); the assignment map is already loaded - reuse it."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_admin_enterprise_b345.py",
+    "/app/backend/tests/_mk_second_admin.py",
+    "/app/backend/tests/test_admin_enterprise_b2.py",
+    "/app/memory/test_credentials.md"
+  ],
+  "success_rate": {"backend": "96.8% (152/157 new + 95/95 regression)", "frontend": "90%"},
+  "seed_data_creation": "Second super admin qa.checker@qa-example.com / Checker@2026 (needed for Maker-Checker; recorded in /app/memory/test_credentials.md). Suite-created TEST_ offices/packages/bookings/withdrawals. CLEANED UP: no suspended accounts, no force_logout_at flags, 2FA disabled, 0 credit limits, 0 frozen offices, 0 extra commission rules, 0 test approvals/user_roles/saved reports/templates, the reconciliation opening_balance txn + its audit entry deleted, dual-control settings restored. 3 gzip mongodump archives remain in /app/backups (retention 7 respected).",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "Super Admin abuzay84@gmail.com / Meraaj@2026; second Super Admin qa.checker@qa-example.com / Checker@2026; offices seller@test.com & buyer@test.com / Test@1234",
+  "context_for_next_testing_agent": "Run the new suite SERIALLY: `cd /app/backend && python -m pytest tests/test_admin_enterprise_b345.py -n 0`. The 5 remaining failures are the 5 real defects above (credit q/only_exposed, retry 500 x2, suspended login, audit actor filter) plus test_settings_sections which fails only after a settings POST has ever been made (metadata leak). Verified working and NOT worth retesting in depth: analytics counts_check/awaiting_seller, credit unique index (DuplicateKeyError confirmed), seeded default+inactive B2C commission rules, 6-stage withdrawal cycle with Arabic numbered labels and executed/closed guards, reconciliation dry-run + single opening entry with byte-identical wallets, programs CRUD/state/extend/images/events + seats-below-sold guard, travelers/documents/passport-alerts + 10MB/20MB upload limits + audited admin delete, RBAC catalog (21 perms/12 roles), role assignment (offices unaffected), maker-checker 403 self-approval, sessions/login-history/force-logout token invalidation, 2FA TOTP, notification scan idempotency, all 13 reports + CSV BOM export, anomalies, system health, backup run/retention/restore-refusal. IMPORTANT: the seller review lifecycle (approval_status=pending) only exists for RAHAL-sourced packages - the suite marks its TEST package source=rahal to exercise approve/reject.",
+  "rca_of_the_issue": "1) Retry 500: admin_ops.py does a lazy `from integration import _deliver, _sign`; integration.py exposes `_outbound_signature`, so every retry raises ImportError -> 500 (confirmed in /var/log/supervisor/backend.err.log). 2) Suspended login: security.py login() validates password + lockout only; user.status is never consulted, and the token created after suspension has iat > force_logout_at so the force-logout guard also passes. 3) Credit search: credit.py applies the only_exposed continue-filter after building the row regardless of whether q was supplied."
+}
