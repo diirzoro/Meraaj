@@ -8,6 +8,9 @@
     "allowMixedContent": false
   },
   "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    },
     "SplashScreen": {
       "launchAutoHide": false,
       "backgroundColor": "#0A2540",
