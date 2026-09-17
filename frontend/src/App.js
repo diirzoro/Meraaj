@@ -99,8 +99,6 @@ function Protected({ role, perm, children }) {
   if (!user) return <Navigate to="/login" replace />;
   if (perm && permissions.length === 0) return <Loader />;
   if (perm && !can(perm)) return <Navigate to={user.role === "super_admin" ? "/admin" : "/dashboard"} replace />;
-  // `role` omitted => permission-only route: any authenticated role holding the permission
-  // may open it (accounting employees are office/staff accounts, not super admins).
   if (!role) return <Layout>{children}</Layout>;
   if (user.role === "super_admin" && role !== "admin") return <Navigate to="/admin" replace />;
   if (role === "admin" && user.role !== "super_admin") return <Navigate to="/dashboard" replace />;
@@ -116,11 +114,11 @@ function Landing() {
   return <LandingPage />;
 }
 
-const IS_NATIVE = typeof window !== "undefined"
-  && (window.Capacitor?.isNativePlatform?.() || window.location.protocol === "capacitor:");
+/** Native Android starts on the public Landing page. Auth then enters the existing mobile shell. */
+function RootEntry() {
+  return <Landing />;
+}
 
-/** Auth + shell gate for the mobile app. Admin accounts get the ADMIN MOBILE EXPERIENCE
- *  (same auth, same RBAC) — they are no longer redirected to the web dashboard. */
 function MobileGuard() {
   const { user, loading } = useAuth();
   if (loading || user === null) return <Loader />;
@@ -132,21 +130,12 @@ function MobileGuard() {
   );
 }
 
-/** Home is experience-aware: the backend decides which experience the identity gets. */
 function MobileHome() {
   const { shell, loading } = useShell();
   if (loading && !shell) return <Loader />;
   return shell?.experience === "admin" ? <MAdminHome /> : <MHome />;
 }
 
-/** On a native install the root opens the APP shell, never the website. */
-function RootEntry() {
-  if (IS_NATIVE) return <Navigate to="/m" replace />;
-  return <Landing />;
-}
-
-// Public pages that logged-in members also use: show the app Layout when authenticated,
-// otherwise a lightweight public shell (browse market/details without logging in).
 function PublicOrMember({ children }) {
   const { user, loading } = useAuth();
   if (loading || user === null) return <Loader />;
@@ -156,7 +145,6 @@ function PublicOrMember({ children }) {
 function AppRoutes() {
   return (
     <Routes>
-      {/* ---------------- MOBILE APP (native shell — no dashboard chrome) ---------------- */}
       <Route path="/m" element={<MSplash />} />
       <Route path="/m/login" element={<MLogin />} />
       <Route path="/m/register" element={<MRegister />} />
@@ -191,7 +179,6 @@ function AppRoutes() {
       <Route path="/embed/market" element={<EmbedMarket />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
-
       <Route path="/dashboard" element={<Protected role="member"><Dashboard /></Protected>} />
       <Route path="/market" element={<PublicOrMember><Market /></PublicOrMember>} />
       <Route path="/market/:id" element={<PublicOrMember><PackageDetail /></PublicOrMember>} />
@@ -203,7 +190,6 @@ function AppRoutes() {
       <Route path="/wallet" element={<Protected role="member"><WalletPage /></Protected>} />
       <Route path="/my-ads" element={<Protected role="member" perm="ads.view"><MyAds /></Protected>} />
       <Route path="/marketer" element={<Protected role="individual"><Marketer /></Protected>} />
-
       <Route path="/admin" element={<Protected role="admin"><AdminDashboard /></Protected>} />
       <Route path="/admin/orders" element={<Protected role="admin"><AdminOrders /></Protected>} />
       <Route path="/admin/orders/:id" element={<Protected role="admin"><AdminOrderDetail /></Protected>} />
@@ -222,14 +208,10 @@ function AppRoutes() {
       <Route path="/admin/backups" element={<Protected role="admin"><AdminBackups /></Protected>} />
       <Route path="/admin/maintenance" element={<Protected role="admin"><AdminMaintenance /></Protected>} />
       <Route path="/admin/finance" element={<Protected role="admin"><AdminFinance /></Protected>} />
-      {/* Unified into /admin/orgs — old route kept as a backward-compatible redirect
-          until every function is manually confirmed as transferred. */}
       <Route path="/admin/offices" element={<Navigate to="/admin/orgs" replace />} />
       <Route path="/admin/cancellations" element={<Protected role="admin"><AdminCancellations /></Protected>} />
       <Route path="/admin/ads" element={<Protected role="admin" perm="ads.view"><AdminAds /></Protected>} />
       <Route path="/admin/disputes" element={<Protected role="admin"><AdminDisputes /></Protected>} />
-
-      {/* ---- الحسابات (permission-only routes: enforced again in the backend) ---- */}
       <Route path="/accounting/chart" element={<Protected perm="accounting.accounts.view"><AccChart /></Protected>} />
       <Route path="/accounting/vouchers" element={<Protected perm="accounting.vouchers.view"><AccVouchers /></Protected>} />
       <Route path="/accounting/journals" element={<Protected perm="accounting.journals.view"><AccJournals /></Protected>} />
@@ -241,21 +223,24 @@ function AppRoutes() {
       <Route path="/accounting/reconciliation" element={<Protected perm="accounting.reconciliation.view"><AccReconciliation /></Protected>} />
       <Route path="/accounting/self-audit" element={<Protected perm="accounting.selfaudit.run"><AccSelfAudit /></Protected>} />
       <Route path="/office-statement" element={<Protected><OfficeStatement /></Protected>} />
-
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
 
 export default function App() {
+  useEffect(() => {
+    document.documentElement.lang = "ar";
+    document.documentElement.dir = "rtl";
+  }, []);
   return (
-    <AuthProvider>
-      <BrowserRouter>
+    <BrowserRouter>
+      <AuthProvider>
         <NativeBridge />
         <SessionManager />
         <AppRoutes />
-        <Toaster position="top-center" richColors dir="rtl" />
-      </BrowserRouter>
-    </AuthProvider>
+        <Toaster position="top-center" richColors />
+      </AuthProvider>
+    </BrowserRouter>
   );
 }
