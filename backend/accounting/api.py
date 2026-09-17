@@ -7,10 +7,11 @@ dependency; one exception handler registered on the app performs the single HTTP
 (The reference implementation kept its rules inside the route handler — that is exactly
 what porting them into `core/` fixed.)
 """
-from typing import Optional
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict
 
 from .adapters import (accounting_perm, actor_label, chart, currency_policy,
                        journal_validator, posting_service, ledger_service,
@@ -697,6 +698,122 @@ async def create_account(payload: AccountCreate, entity_id: Optional[str] = None
                          user: dict = Depends(accounting_perm(MANAGE))):
     eid = await resolve_entity(user, entity_id)
     return await chart().create_account(eid, payload, by=actor_label(user))
+
+
+# ------------------------------------------------- استيراد الشجرة من رحّال
+# TRANSPORT ONLY: read the linked Rahal office chart and ADD the missing accounts
+# through the same Core `create_account` path. Never deletes, never overwrites an
+# existing code. Available ONLY to a user linked to a Rahal office.
+_RAHAL_TYPES = {
+    "asset": "asset", "assets": "asset", "أصول": "asset",
+    "liability": "liability", "liabilities": "liability", "خصوم": "liability",
+    "equity": "equity", "حقوق ملكية": "equity",
+    "revenue": "revenue", "revenues": "revenue", "income": "revenue", "إيرادات": "revenue",
+    "expense": "expense", "expenses": "expense", "مصروفات": "expense",
+}
+
+
+class RahalChartImport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: str = "all"                       # all | category | selected
+    categories: List[str] = []              # root/group codes
+    codes: List[str] = []                   # explicit account codes
+
+
+def _require_rahal_link(user: dict) -> Optional[str]:
+    if not (user.get("source") == "rahal" or user.get("rahal_office_ref")):
+        raise HTTPException(403, "هذه الوظيفة متاحة فقط لمن دخل معراج عبر حساب رحّال المرتبط")
+    return user.get("rahal_office_ref")
+
+
+def _normalize_rahal_rows(rows: list) -> list:
+    out = []
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        code = str(r.get("code") or r.get("account_code") or "").strip()
+        atype = _RAHAL_TYPES.get(str(r.get("type") or r.get("account_type") or "").strip().lower())
+        if not code or not atype:
+            continue
+        out.append({
+            "code": code,
+            "name": str(r.get("name") or r.get("name_en") or r.get("name_ar") or code)[:160],
+            "name_ar": (str(r.get("name_ar")) if r.get("name_ar") else None),
+            "type": atype,
+            "parent": str(r.get("parent") or r.get("parent_code") or "").strip() or None,
+            "is_group": bool(r.get("is_group")),
+        })
+    out.sort(key=lambda a: (len(a["code"]), a["code"]))
+    return out
+
+
+async def _rahal_chart_for(user: dict) -> list:
+    from integration import fetch_rahal_chart  # transport dependency, kept out of the Core
+    office_ref = _require_rahal_link(user)
+    try:
+        fetched = await fetch_rahal_chart(office_ref)
+    except RuntimeError as e:
+        raise HTTPException(503, f"تعذّر جلب الشجرة من رحّال: {e}") from e
+    return _normalize_rahal_rows(fetched.get("accounts"))
+
+
+@router.get("/rahal/chart")
+async def rahal_chart_preview(entity_id: Optional[str] = None,
+                              user: dict = Depends(accounting_perm(VIEW))):
+    """Preview what can be imported: the Rahal chart + which codes Meraaj already has."""
+    eid = await resolve_entity(user, entity_id)
+    rows = await _rahal_chart_for(user)
+    existing = {a["code"] for a in await chart().list_accounts(eid, include_inactive=True)}
+    return {
+        "office_ref": user.get("rahal_office_ref"),
+        "categories": [{"code": a["code"], "name_ar": a["name_ar"] or a["name"]}
+                       for a in rows if len(a["code"]) <= 2],
+        "accounts": [{**a, "already_in_meraaj": a["code"] in existing} for a in rows],
+        "importable": sum(1 for a in rows if a["code"] not in existing),
+    }
+
+
+@router.post("/rahal/chart/import")
+async def rahal_chart_import(payload: RahalChartImport, entity_id: Optional[str] = None,
+                             user: dict = Depends(accounting_perm(MANAGE))):
+    eid = await resolve_entity(user, entity_id)
+    rows = await _rahal_chart_for(user)
+    by_code = {a["code"]: a for a in rows}
+
+    if payload.mode == "category":
+        wanted = {a["code"] for a in rows
+                  if any(a["code"].startswith(c) for c in payload.categories)}
+    elif payload.mode == "selected":
+        wanted = {c for c in payload.codes if c in by_code}
+    else:
+        wanted = set(by_code)
+
+    # pull in the ancestors of every wanted account so a parent always exists first
+    for code in list(wanted):
+        node = by_code.get(code)
+        while node and node.get("parent"):
+            wanted.add(node["parent"])
+            node = by_code.get(node["parent"])
+
+    selected = [a for a in rows if a["code"] in wanted]
+    created, skipped, failed = [], [], []
+    for a in selected:
+        if await chart().find_by_code(eid, a["code"]):
+            skipped.append(a["code"])                      # ADDITIVE ONLY: never replaced
+            continue
+        try:
+            await chart().create_account(eid, AccountCreate(
+                name=a["name"], name_ar=a["name_ar"], type=a["type"],
+                parent=a["parent"], code=a["code"], is_group=a["is_group"],
+            ), by=actor_label(user))
+            created.append(a["code"])
+        except AccountingError as e:
+            failed.append({"code": a["code"], "error": e.message})
+        except Exception as e:                              # noqa: BLE001 - reported, not raised
+            failed.append({"code": a["code"], "error": str(e)[:200]})
+    return {"mode": payload.mode, "created": created, "skipped": skipped, "failed": failed,
+            "created_count": len(created), "skipped_count": len(skipped),
+            "failed_count": len(failed)}
 
 
 @router.get("/accounts/{account_id}")
