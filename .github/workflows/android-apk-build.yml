@@ -1,4 +1,4 @@
-name: Meraaj Android APK V2 (TEST)
+name: Meraaj Android APK V3 (TEST)
 
 on:
   workflow_dispatch:
@@ -6,6 +6,7 @@ on:
     branches:
       - meraaj-updates
       - meraaj-update-v2
+      - meraaj-android-v3
     paths:
       - 'frontend/**'
       - '.github/workflows/android-apk-build.yml'
@@ -94,8 +95,8 @@ jobs:
       - name: Verify Android version
         working-directory: frontend/android
         run: |
-          grep -q 'versionCode 2' app/build.gradle
-          grep -q 'versionName "1.1"' app/build.gradle
+          grep -q 'versionCode 3' app/build.gradle
+          grep -q 'versionName "1.2"' app/build.gradle
 
       - name: Build debug APK
         working-directory: frontend/android
@@ -103,12 +104,12 @@ jobs:
 
       - name: Rename APK
         working-directory: frontend/android
-        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/Meraaj-Network-Test-V2.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/Meraaj-Network-Test-V3.apk
 
-      - name: Upload V2 TEST APK
+      - name: Upload V3 TEST APK
         uses: actions/upload-artifact@v4
         with:
-          name: meraaj-network-test-apk-V2
-          path: frontend/android/app/build/outputs/apk/debug/Meraaj-Network-Test-V2.apk
+          name: meraaj-network-test-apk-V3
+          path: frontend/android/app/build/outputs/apk/debug/Meraaj-Network-Test-V3.apk
           if-no-files-found: error
           retention-days: 14
