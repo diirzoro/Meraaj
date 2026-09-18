@@ -166,7 +166,6 @@ function AppRoutes() {
         <Route path="/m/accounting/ledger" element={<AccountingGate capability="ledger_view"><MAccLedger /></AccountingGate>} />
         <Route path="/m/accounting/reports" element={<AccountingGate capability="reports_view"><MAccReports /></AccountingGate>} />
         <Route path="/m/accounting/periods" element={<AccountingGate capability="periods_view"><MAccPeriods /></AccountingGate>} />
-        <Route path="/m/accounting/audit" element={<AccountingGate capability="reconciliation_view"><MAccAudit /></AccountingGate>} />
         <Route path="/m/admin/operations" element={<MAdminOrders />} />
         <Route path="/m/admin/orders" element={<MAdminOrders />} />
         <Route path="/m/admin/topups" element={<MAdminTopups />} />
@@ -228,8 +227,7 @@ function AppRoutes() {
       <Route path="/accounting/currencies" element={<Protected perm="accounting.currency.view"><AccCurrencies /></Protected>} />
       <Route path="/accounting/links" element={<Protected perm="accounting.links.view"><AccLinks /></Protected>} />
       <Route path="/accounting/reports" element={<Protected perm="accounting.reports.view"><AccReports /></Protected>} />
-      <Route path="/accounting/reconciliation" element={<Protected perm="accounting.reconciliation.view"><AccReconciliation /></Protected>} />
-      <Route path="/accounting/self-audit" element={<Protected perm="accounting.selfaudit.run"><AccSelfAudit /></Protected>} />
+      {/* المطابقة المحاسبية والتدقيق الذاتي: مخفيان من الواجهة — الـ APIs والمنطق باقية كما هي */}
       <Route path="/office-statement" element={<Protected><OfficeStatement /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

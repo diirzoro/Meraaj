@@ -114,6 +114,17 @@ async def startup():
     await ensure_default_rule()
     from accounting.adapters import ensure_accounting_indexes
     await ensure_accounting_indexes()
+    # Any fresh Meraaj environment must never reach the accounting UI with an empty chart.
+    # Uses ONLY the official idempotent seed: it refuses to run when accounts already exist,
+    # and never resets, replaces or migrates anything.
+    try:
+        from accounting.adapters import chart, PLATFORM_ENTITY
+        coa = await chart().seed_template(PLATFORM_ENTITY, by="startup:auto-seed")
+        if coa.get("seeded"):
+            logger.info("Accounting chart seeded on startup: %s accounts (template %s)",
+                        coa.get("accounts"), coa.get("template"))
+    except Exception as e:  # noqa: BLE001 - startup must never fail on this
+        logger.warning("Accounting chart auto-seed skipped: %s", e)
     logger.info("Meraaj Network API started; admin seeded.")
 
 

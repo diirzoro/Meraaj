@@ -46,7 +46,6 @@ const ITEMS = [
   { cap: "ledger_view", label: "الأستاذ وكشف الحساب", route: "/m/accounting/ledger", icon: Icons.Scale },
   { cap: "reports_view", label: "التقارير المالية", route: "/m/accounting/reports", icon: Icons.PieChart },
   { cap: "periods_view", label: "الفترات والإقفال", route: "/m/accounting/periods", icon: Icons.CalendarClock },
-  { cap: "reconciliation_view", label: "المطابقة والتدقيق الذاتي", route: "/m/accounting/audit", icon: Icons.ShieldCheck },
 ];
 
 export default function MAccountingHub() {

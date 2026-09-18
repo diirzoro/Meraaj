@@ -33,7 +33,7 @@ export default function AccChart() {
     try {
       const parent = (flat.data?.items || []).find((a) => a.code === form.parent);
       await api.post("/accounting/accounts", {
-        parent: form.parent, name: form.name_en || form.name_ar, name_ar: form.name_ar,
+        parent: form.parent, name: form.name_en.trim(), name_ar: form.name_ar.trim(),
         type: parent?.type, is_group: form.is_group,
       });
       toast.success("تم إنشاء الحساب");
@@ -42,6 +42,16 @@ export default function AccChart() {
       reload(); flat.reload();
     } catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
   };
+
+  // لغة أسماء الحسابات: الحقل العربي يقبل العربية فقط، والإنجليزي يقبل الإنجليزية فقط.
+  const ARABIC = /[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]/;
+  const LATIN = /[A-Za-z]/;
+  const arError = form.name_ar && LATIN.test(form.name_ar)
+    ? "الاسم بالعربية يقبل العربية فقط — اكتب الاسم الإنجليزي في حقل الاسم بالإنجليزية" : "";
+  const enError = form.name_en && ARABIC.test(form.name_en)
+    ? "الاسم بالإنجليزية يقبل الإنجليزية فقط — اكتب الاسم العربي في حقل الاسم بالعربية" : "";
+  const editNameError = editName && LATIN.test(editName)
+    ? "الاسم بالعربية يقبل العربية فقط" : "";
 
   const act = async (fn, okMsg) => {
     setBusy(true);
@@ -130,17 +140,19 @@ export default function AccChart() {
             <Field label="الاسم بالعربية">
               <input className={inputCls} value={form.name_ar} data-testid="coa-name-ar"
                      onChange={(e) => setForm({ ...form, name_ar: e.target.value })} />
+              {arError && <p className="text-[11px] text-red-600 mt-1" data-testid="coa-name-ar-error">{arError}</p>}
             </Field>
-            <Field label="الاسم بالإنجليزية (اختياري)">
-              <input className={inputCls} value={form.name_en} data-testid="coa-name-en"
+            <Field label="الاسم بالإنجليزية">
+              <input className={inputCls} value={form.name_en} data-testid="coa-name-en" dir="ltr"
                      onChange={(e) => setForm({ ...form, name_en: e.target.value })} />
+              {enError && <p className="text-[11px] text-red-600 mt-1" data-testid="coa-name-en-error">{enError}</p>}
             </Field>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={form.is_group} data-testid="coa-is-group"
                      onChange={(e) => setForm({ ...form, is_group: e.target.checked })} />
               حساب مجموعة (لا يقبل قيوداً مباشرة)
             </label>
-            <Button disabled={busy || !form.parent || !form.name_ar} onClick={create}
+            <Button disabled={busy || !form.parent || !form.name_ar || !form.name_en || !!arError || !!enError} onClick={create}
                     data-testid="coa-create-submit" className="w-full bg-[#0A2540]">إنشاء</Button>
           </div>
         </DialogContent>
@@ -240,9 +252,12 @@ export default function AccChart() {
                   <Field label="تعديل الاسم العربي">
                     <input className={inputCls} data-testid="coa-edit-name" defaultValue={picked.name_ar || ""}
                            onChange={(e) => setEditName(e.target.value)} />
+                    {editNameError && (
+                      <p className="text-[11px] text-red-600 mt-1" data-testid="coa-edit-name-error">{editNameError}</p>
+                    )}
                   </Field>
                   <div className="flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" disabled={busy || !editName} data-testid="coa-save-name"
+                    <Button size="sm" variant="outline" disabled={busy || !editName || !!editNameError} data-testid="coa-save-name"
                             onClick={() => act(() => api.patch(`/accounting/accounts/${picked.id}`, { name_ar: editName }), "تم التعديل")}>
                       <Pencil className="w-4 h-4 me-1" /> حفظ الاسم
                     </Button>
