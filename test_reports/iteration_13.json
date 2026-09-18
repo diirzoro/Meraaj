@@ -1,0 +1,61 @@
+{
+  "summary": "FINAL Enterprise review round. Re-ran all three existing suites plus a new final suite (tests/test_admin_enterprise_final.py). COMBINED TOTAL ACROSS ALL FOUR SUITES = 293 tests, 292 passed, 1 failed (99.7%): b1+b2 = 95/95, b345 = 157/157 (after 3 stale assertions were updated to the newly-intended behaviour), final = 40/41. All 5 previously failing cases are fixed and verified (outbox manual retry 200 + audit, suspended login 403, /admin/credit search bypassing only_exposed, /admin/settings not leaking updated_at/updated_by, adjust guard order existing-entry-before-zero-difference). Verified integrations diagnose (136 undelivered, 100% classified rahal-side not_found/404 = expected external condition), reconciliation preview (218 mismatches, NOT capped, no writes, execution_enabled=false), encrypted backups (.enc, 7-file retention, restore 403 + wrong-phrase rejected, admin-only), cron endpoints (401 without secret, fast 2xx ack, duplicate:true per run_id, crons.yml declares both jobs), staff separation sharing the OFFICE wallet (office identity + _acting_staff, no staff wallet, no ledger row against the staff user, duplicate email/second-account rejected, disable blocks only the staff login), Arabic RTL PDFs (all 13 reports + voucher, embedded font, UI export-pdf-btn / voucher-pdf-btn open a PDF), Scanner PoC (no file browser, Arabic bridge-fallback message), and an end-to-end buyer/seller booking money regression. MONEY SAFETY: zero wallet/ledger/transaction drift across every reconciliation call, 0 opening_balance entries in the DB, no staff wallet, no negative balance. Auth playbook re-checked: bcrypt $2b$, httpOnly+secure cookie, explicit CORS origins with credentials, 429 lockout after 5 failures. All 18 admin pages (incl. legacy finance/offices/cancellations/disputes) load with 0 console errors.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/admin/reconciliation/adjust-all", "issue": "Does NOT return 403 while ALLOW_RECONCILIATION!=true. It returns 200 {processed:0, skipped:100} because the per-entry 403 raised by adjust_reconciliation is swallowed by `except HTTPException: skipped += 1`. Requirement is an explicit 403 (money-safe in practice: nothing was written, verified by wallet/ledger/txn snapshots). Fix: add the same env gate at the top of adjust_all before the loop.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/admin/reconciliation/adjust-all", "issue": "Iterates `reconciliation(admin)` with full=False, whose mismatch list is capped at 100 — once enabled it would only process 100 of the 218 mismatching accounts. Should call reconciliation(admin, full=True)."},
+      {"endpoint": "GET /api/admin/integrations/diagnose", "issue": "Classification rule `if \"unknown\" in e or \"ref\" in e and \"not\" in e` relies on Python's and/or precedence — works but is fragile/unclear; add parentheses. Note the whole current backlog (136) classifies as not_found/rahal, so meraaj_side_fixable=0 (expected)."},
+      {"endpoint": "security.get_current_user (staff path)", "issue": "For a staff account the parent-office branch never re-checks the STAFF user's own status; disabling a staff account relies solely on force_logout_at vs token iat. If force_logout_at is ever cleared/reset, an old staff token would authenticate again as the office. Add `if user.get('status') != 'active': 403` before resolving the parent."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AdminIntegrations", "issue": "GET /api/admin/integrations/diagnose is not consumed anywhere in the frontend — the Integrations page only shows health + failure groups, so the new root-cause/owner/recommended-action diagnosis is invisible to the client", "selector": "[data-testid=\"failure-groups\"]", "priority": "MEDIUM"},
+      {"component": "AdminLedger reconciliation dialog", "issue": "Dialog still calls /admin/reconciliation (list capped at 100) instead of the new /admin/reconciliation/preview; the header count is correct (218) but only 100 rows and no proposed_entry/already_adjusted/execution_enabled info are shown", "selector": "button:has-text(\"المطابقة\")", "priority": "MEDIUM"},
+      {"component": "AdminOrgs staff login creation", "issue": "Uses two window.prompt() calls (no email validation, password typed in clear text, no data-testid inputs) and hardcodes roles:[\"limited_user\"] instead of the staff record's roles — the API supports the real roles list", "selector": "[data-testid^=\"staff-account-\"]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Integrations single-event retry", "issue": "Works (POST .../{id}/retry -> 200) but the call blocks ~10-17s on the Rahal network timeout with no in-dialog progress indicator, so the success toast can be missed; consider a spinner/inline result", "affected_selectors": ["[data-testid=\"confirm-retry\"]", "[data-testid=\"retry-dialog\"]"]}
+    ],
+    "design_issues": [
+      {"screen": "Admin sidebar (1920x1080)", "issues": ["The last nav item (النزاعات) is partially hidden behind the fixed footer account block — add bottom padding to the nav scroll area"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_admin_enterprise_final.py",
+    "/app/backend/tests/test_admin_enterprise_b1.py",
+    "/app/backend/tests/test_admin_enterprise_b2.py",
+    "/app/backend/tests/test_admin_enterprise_b345.py",
+    "/app/backend/tests/_cleanup_iter13.py",
+    "/app/backend/tests/_final_probe.py"
+  ],
+  "action_items": [
+    "Add the ALLOW_RECONCILIATION gate at the top of POST /admin/reconciliation/adjust-all so it returns 403 (dry_run must stay 200)",
+    "Make adjust-all use reconciliation(full=True) so it would cover all 218 mismatches, not the first 100",
+    "Surface GET /admin/integrations/diagnose in /admin/integrations and switch the ledger reconciliation dialog to /admin/reconciliation/preview",
+    "Replace the window.prompt staff-login creation in AdminOrgs with a proper dialog (data-testids, email validation, masked password) and pass the staff record's roles instead of the hardcoded limited_user",
+    "Harden security.get_current_user: reject a staff account whose own status != active before resolving the parent office",
+    "Fix the sidebar bottom overlap with the footer account block"
+  ],
+  "critical_code_review_comments": [
+    "finance.adjust_all swallows HTTPException per entry; an operator cannot distinguish 'gate off' from 'nothing to adjust' — gate first, then loop, and return the per-account skip reasons",
+    "finance.reconciliation is O(users) with a per-office name lookup elsewhere; preview over 218 mismatches does one extra find_one each — acceptable now, but index transactions(office_id, currency, type) before enabling execution",
+    "enterprise.run_backup deletes the plaintext archive only when openssl exits 0; if encryption fails it silently records encrypted:false — raise/alert instead so an unencrypted backup is never kept quietly",
+    "orgs.create_staff_account correctly omits the wallet key; keep a DB-level guard (or a nightly check) that no document with parent_office_id ever gains a wallet field"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_admin_enterprise_final.py (new suite)",
+    "/app/backend/tests/test_admin_enterprise_b345.py (3 stale assertions updated: reconciliation real-entry now expects the 403 gate, bad-currency expects 403 real / 400 dry-run, suspended login expects 403)",
+    "/app/backend/tests/_cleanup_iter13.py (new cleanup script)",
+    "/app/backend/tests/_final_probe.py (new read-only probe)"
+  ],
+  "success_rate": {"backend": "99.7% (292/293 across the four suites; the single failure is the adjust-all 403 gate)", "frontend": "95% (all 18 admin pages + office pages load with 0 console errors; PDF/backup/staff/scanner flows pass; diagnose + preview not wired into the UI)"},
+  "seed_data_creation": "Suite-created throwaway TEST_ offices/packages/bookings only. All QA staff records + staff login users (test_qa_staff_*, test_qa_bstaff_*, test_qa_ui_staff@qa-example.com) were deleted, force_logout_at cleared on every account, no account left suspended, credit limits all 0/active, 0 opening_balance transactions, settings untouched (only updated_at/updated_by metadata), 7 encrypted backups in /app/backups, ALLOW_RESTORE=false and ALLOW_RECONCILIATION=false left untouched. The drill account staffqa@test.com / Staff@1234 (staff of مكتب النور) was preserved and re-verified: /auth/me returns office 6a86e76e2fb63d3cb1f90cc9 مكتب النور with _acting_staff and no own wallet.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "Super Admin abuzay84@gmail.com / Meraaj@2026; offices seller@test.com & buyer@test.com / Test@1234; staff staffqa@test.com / Staff@1234; second admin qa.checker@qa-example.com / Checker@2026 (kept for dual control)",
+  "context_for_next_testing_agent": "Run order: `cd /app/backend && python -m pytest tests/test_admin_enterprise_b1.py tests/test_admin_enterprise_b2.py -n 0` (95), `... b345.py -n 0` (157, must be serial), `... test_admin_enterprise_final.py -n 0` (41). The only expected failure is TestReconciliationGuards::test_adjust_all_blocked until the ALLOW_RECONCILIATION gate is added to adjust_all. After running the final suite, always execute tests/_cleanup_iter13.py (deletes QA staff logins/records, clears force_logout flags) — it prints suspension/credit/opening-balance/settings assertions. Undelivered outbox is now 136 (was 111) because QA bookings add events; all classify as rahal-side 404, meraaj_side_fixable=0. Reconciliation preview: 218 mismatches, totals SAR 957,727.35 / USD 3,319,331.12, 0 already_adjusted. Booking money model for assertions: B2B buyer pays net*seats + PLATFORM_COMMISSION_PCT*buyer_commission*seats (e.g. 2 seats of net 100 + commission 20 => 204) and the seller gets net*seats as pending escrow; the pending-approval/approve path exists ONLY for Rahal-sourced packages, non-Rahal bookings are confirmed on creation. Booking creation body uses `registrants` (not travelers/seats).",
+  "rca_of_the_issue": "adjust-all: the ALLOW_RECONCILIATION check lives inside adjust_reconciliation, and adjust_all calls it in a try/except HTTPException loop, so every gated 403 is converted into a 'skipped' counter and the endpoint answers 200. Nothing is written (verified: identical wallet sums, ledger totals and transaction count before/after, 0 opening_balance docs), so this is a contract/UX defect rather than a money-safety defect. Fix by checking `os.environ.get('ALLOW_RECONCILIATION') != 'true' and not payload.dry_run -> HTTPException(403)` at the top of adjust_all, and pass full=True to reconciliation so all 218 accounts are covered once approval is granted."
+}

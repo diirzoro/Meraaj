@@ -3,8 +3,12 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { IDLE_TIMEOUT_MS, RESUME_KEY } from "@/config";
 
+const IS_NATIVE = typeof window !== "undefined"
+  && (window.Capacitor?.isNativePlatform?.() || window.location.protocol === "capacitor:");
+
 // Routes that must never be auto-locked or hijacked by the refresh redirect
-const skip = (p) => p.startsWith("/embed") || p === "/login" || p === "/register";
+const skip = (p) => p.startsWith("/embed") || p === "/login" || p === "/register"
+  || p === "/m/login" || p === "/m/register" || p === "/m/forgot";
 
 export default function SessionManager() {
   const { user, loading, logout } = useAuth();
@@ -27,6 +31,11 @@ export default function SessionManager() {
     if (!isReload || !user) return;
     const p = window.location.pathname;
     if (skip(p)) return;
+    // Inside the mobile app shell a refresh must stay in the shell, never jump to /dashboard.
+    if (IS_NATIVE || p.startsWith("/m")) {
+      if (!p.startsWith("/m")) navigate("/m/home", { replace: true });
+      return;
+    }
     const home = user.role === "super_admin" ? "/admin" : "/dashboard";
     if (p !== home) navigate(home, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -44,7 +53,7 @@ export default function SessionManager() {
         try { localStorage.setItem(RESUME_KEY, path); } catch { /* noop */ }
       }
       await logout();
-      navigate("/login", { replace: true });
+      navigate(IS_NATIVE || location.pathname.startsWith("/m") ? "/m/login" : "/login", { replace: true });
     };
     const reset = () => { clearTimeout(timer); timer = setTimeout(expire, ms); };
     const events = ["mousemove", "mousedown", "keydown", "scroll", "touchstart", "click"];

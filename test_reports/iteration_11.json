@@ -1,0 +1,62 @@
+{
+  "summary": "Batch 2 (Financial Ledger, 6-stage Withdrawals, Commission Engine, Credit Control) tested end-to-end. New pytest suite tests/test_admin_enterprise_b2.py = 46/46 PASS (auth guards, commission default preservation, rule application/scope isolation/priority/validation/immutability/events, manual override incl. all 5 rejection paths, credit default+limit+enforcement+freeze+events+top-up, ledger filters/pagination/CSV BOM/vouchers/reconciliation, 6-stage withdrawal cycle with money-safety balance checks). Batch 1 regression suite re-run = 49/49 PASS. Frontend: /admin/ledger, /admin/withdrawals, /admin/commissions, /admin/credit and the order-detail override card all render and work on desktop and 390px mobile. ONE functional defect found: a credit-FROZEN office with a sufficient wallet balance can still create bookings (freeze is only evaluated when the wallet is short). No money drift, no double ledger entries, no negative balance without an approved limit was observed.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/bookings (market.create_booking) + credit.credit_allows", "issue": "Credit FREEZE is not enforced for funded offices. create_booking only calls credit_allows() when plan_debit() returns None (wallet short), so an office frozen via POST /api/admin/credit/{id}/freeze but holding enough balance books successfully (verified: freeze=200, booking=200, wallet debited 5000->3980). Expected per spec: a frozen office is blocked from booking regardless of balance.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/admin/bookings/{id}/commission-override", "issue": "A reason shorter than 5 chars returns 422 (Pydantic Field(min_length=5)) instead of the specified 400; same for POST /withdrawals/{id}/receipt with a short receipt_url. Functionally rejected, but the API contract/frontend error mapping differs from the other 400 business errors."},
+      {"endpoint": "db.credit_limits (data)", "issue": "Leftover dev/QA doc: office 6a874bfef5d41cc3c4bb2f19 (TEST_فرد_NEGMKT) has SAR status='frozen' with limit 0. Harmless for prod data but it silently blocks that account's credit path; clean up dev leftovers."},
+      {"endpoint": "GET /api/admin/reconciliation (data quality)", "issue": "216 mismatches confirmed correctly computed (wallet_total - ledger_total, sorted by |diff|, capped at 100 returned). Informational: office 6a874bfef... has USD available -58 originating 2026-08-20 (pre-Batch-2 QA seed: marketer_commission credited pending then debited), i.e. a pre-existing negative balance with limit 0 — not caused by Batch 2."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AdminCredit", "issue": "'إظهار من له سقف أو مديونية فقط' (only_exposed) is checked by default, so an office with no limit and no debt is not listed at all — granting the FIRST credit limit is impossible until the user discovers and unchecks the filter (search by name returns 0 rows). Suggest defaulting off when a search query is present.", "selector": "[data-testid=\"credit-only-exposed\"]", "priority": "MEDIUM"},
+      {"component": "AdminCredit", "issue": "With only_exposed off the table renders ~2416 rows (893 offices x currencies) with no pagination/virtualisation — slow render on the preview and unusable scrolling.", "selector": "[data-testid=\"credit-table\"]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/admin/credit", "issues": ["Freeze/unfreeze collects the MANDATORY audited reason via native window.prompt() while the limit dialog uses a proper Textarea — inconsistent, unstyled in RTL and not keyboard/test friendly. Move it into a shadcn dialog."]},
+      {"screen": "/admin/ledger", "issues": ["date_from/date_to use native browser date inputs (type=date, shows mm/dd/yyyy in an Arabic RTL UI) instead of the shadcn calendar used elsewhere."]},
+      {"screen": "Voucher / reconciliation / events dialogs", "issues": ["Console a11y warning: 'Missing Description or aria-describedby={undefined} for DialogContent' on every dialog on the ledger and commissions pages."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_admin_enterprise_b2.py",
+    "/app/test_reports/pytest/b2.xml",
+    "/app/backend/tests/_b2_freeze_probe.py",
+    "/app/backend/tests/_b2_state_check.py",
+    "/app/backend/tests/_seed_b2_ui.py",
+    "/app/backend/tests/_b2_negwallet_probe.py"
+  ],
+  "action_items": [
+    "HIGH: enforce the credit freeze for every B2B booking, not only when the wallet is short — check the frozen flag in market.create_booking before/independently of plan_debit (and consider blocking top-up-funded spending too).",
+    "Return 400 (Arabic message) instead of 422 for a short override reason / short receipt_url, or map 422 in the UI.",
+    "AdminCredit: don't hide unexposed offices when a search term is typed, and paginate the credit table.",
+    "Replace window.prompt for the freeze reason with a dialog + Textarea (reason is audited).",
+    "Use the shadcn calendar for the ledger date filters; add DialogDescription/aria-describedby to the new dialogs.",
+    "Remove the leftover frozen credit_limits doc for 6a874bfef5d41cc3c4bb2f19 (dev artifact)."
+  ],
+  "critical_code_review_comments": [
+    "credit.credit_allows() is the only place the frozen flag is honoured, and market.create_booking calls it exclusively in the plan_debit-is-None branch → freeze is a soft control today. Extract an explicit `assert_not_frozen(user, currency)` call at the top of the booking flow.",
+    "commissions.resolve_commission(): the per_category branch recomputes `amount = base_amount * value` for percent mode after the loop, so per_category values are silently ignored for percent rules (only meaningful for fixed). Either reject per_category for percent rules or document it.",
+    "finance.ledger(): office names are resolved with one users.find_one per distinct office inside the loop (N+1). Use a single $in query for the page's office_ids.",
+    "commissions.override_commission(): the wallet debit, txn, platform_revenue and booking update are 4 non-atomic awaits — a failure mid-way leaves the ledger and the booking out of sync. Consider ordering the booking update last (it is) and adding a compensation/log on failure.",
+    "finance.export_ledger() streams up to 20000 rows built fully in memory (io.StringIO) — fine now (1846 txns) but will need chunking as the ledger grows."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_admin_enterprise_b2.py",
+    "/app/backend/tests/_b2_state_check.py",
+    "/app/backend/tests/_seed_b2_ui.py",
+    "/app/backend/tests/_b2_freeze_probe.py",
+    "/app/backend/tests/_b2_negwallet_probe.py"
+  ],
+  "success_rate": {"backend": "100% (46/46 B2 + 49/49 B1) with 1 functional gap found by an extra probe outside the suite", "frontend": "95% (all flows work; 2 UX/perf issues on /admin/credit)"},
+  "seed_data_creation": "Fresh TEST_ offices created via /api/auth/register (TEST_B2CMD, B2USD, B2OVR, B2CRD, B2WDR, B2LFC, UIWDR, FRZPROBE) plus SAR/USD packages from seller@test.com and one pending withdrawal (6a97227c566d836e4109d7b2, driven to 'closed'). CLEANUP DONE: every commission rule created (API + UI TEST_UI_RULE) was deactivated (active rules = 0, default 10% restored); every credit limit set was reset to 0 and unfrozen; the credit-test office debt was cleared by top-up so no wallet is negative from this run.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "Used /app/memory/test_credentials.md as-is: abuzay84@gmail.com / Meraaj@2026 (access_token), seller@test.com & buyer@test.com / Test@1234, Rahal secret from backend/.env.",
+  "context_for_next_testing_agent": "Run the B2 suite serially: `cd /app/backend && python -m pytest tests/test_admin_enterprise_b2.py -n 0` (commission rules are GLOBAL state; parallel classes race). TestCommissionEngine::test_00 asserts there are 0 active commission rules before starting — if it fails, a previous run left a rule active; deactivate it via DELETE /api/admin/commission-rules/{id}. Helper _b2_state_check.py prints active rules / credit limits / negative wallets — use it before and after every run. _b2_freeze_probe.py reproduces the frozen-office booking bypass (rerun after the fix; it should return 400 'مجمّد'). Batch 1 suite (49 tests) still green. Preview data: 1846 transactions, 216 reconciliation mismatches (pre-existing, computed correctly).",
+  "rca_of_the_issue": "Frozen-office bypass: credit.credit_allows() returns the frozen rejection first, but market.create_booking() only enters that code path when plan_debit(wallet, ccy, required) returns None (i.e. insufficient funds). Repro: register office, top up 5000 SAR, POST /api/admin/credit/{id}/freeze {frozen:true} -> 200, then POST /api/bookings for a 1020 SAR booking -> 200 and wallet debited. Mitigation: evaluate the frozen status unconditionally at the start of create_booking (and in any other spending path) rather than as part of the credit-shortfall fallback."
+}

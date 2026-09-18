@@ -93,9 +93,14 @@ function Loader() {
   );
 }
 
+const IS_NATIVE = typeof window !== "undefined"
+  && (window.Capacitor?.isNativePlatform?.() || window.location.protocol === "capacitor:");
+
 function Protected({ role, perm, children }) {
   const { user, loading, permissions, can } = useAuth();
   if (loading || user === null) return <Loader />;
+  // On a native install every desktop route falls back into the app shell, never /dashboard.
+  if (IS_NATIVE) return <Navigate to={user ? "/m/home" : "/m/login"} replace />;
   if (!user) return <Navigate to="/login" replace />;
   if (perm && permissions.length === 0) return <Loader />;
   if (perm && !can(perm)) return <Navigate to={user.role === "super_admin" ? "/admin" : "/dashboard"} replace />;
@@ -110,12 +115,15 @@ function Protected({ role, perm, children }) {
 
 function Landing() {
   const { user } = useAuth();
+  // The packaged Android app must never render the website shell.
+  if (IS_NATIVE) return <Navigate to="/m" replace />;
   if (user) return <Navigate to={user.role === "super_admin" ? "/admin" : "/dashboard"} replace />;
   return <LandingPage />;
 }
 
-/** Native Android starts on the public Landing page. Auth then enters the existing mobile shell. */
+/** Native Android enters the mobile app shell; a web browser gets the website. */
 function RootEntry() {
+  if (IS_NATIVE) return <Navigate to="/m" replace />;
   return <Landing />;
 }
 
@@ -158,7 +166,6 @@ function AppRoutes() {
         <Route path="/m/accounting/ledger" element={<AccountingGate capability="ledger_view"><MAccLedger /></AccountingGate>} />
         <Route path="/m/accounting/reports" element={<AccountingGate capability="reports_view"><MAccReports /></AccountingGate>} />
         <Route path="/m/accounting/periods" element={<AccountingGate capability="periods_view"><MAccPeriods /></AccountingGate>} />
-        <Route path="/m/accounting/audit" element={<AccountingGate capability="reconciliation_view"><MAccAudit /></AccountingGate>} />
         <Route path="/m/admin/operations" element={<MAdminOrders />} />
         <Route path="/m/admin/orders" element={<MAdminOrders />} />
         <Route path="/m/admin/topups" element={<MAdminTopups />} />
@@ -220,8 +227,7 @@ function AppRoutes() {
       <Route path="/accounting/currencies" element={<Protected perm="accounting.currency.view"><AccCurrencies /></Protected>} />
       <Route path="/accounting/links" element={<Protected perm="accounting.links.view"><AccLinks /></Protected>} />
       <Route path="/accounting/reports" element={<Protected perm="accounting.reports.view"><AccReports /></Protected>} />
-      <Route path="/accounting/reconciliation" element={<Protected perm="accounting.reconciliation.view"><AccReconciliation /></Protected>} />
-      <Route path="/accounting/self-audit" element={<Protected perm="accounting.selfaudit.run"><AccSelfAudit /></Protected>} />
+      {/* المطابقة المحاسبية والتدقيق الذاتي: مخفيان من الواجهة — الـ APIs والمنطق باقية كما هي */}
       <Route path="/office-statement" element={<Protected><OfficeStatement /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -23,8 +23,6 @@ const ACCOUNTING_GROUP = {
     { to: "/accounting/currencies", label: "العملات والمصارفة", icon: Coins, perm: "accounting.currency.view" },
     { to: "/accounting/periods", label: "الفترات والإقفال", icon: CalendarClock, perm: "accounting.periods.view" },
     { to: "/accounting/links", label: "ربط الحسابات", icon: Network, perm: "accounting.links.view" },
-    { to: "/accounting/reconciliation", label: "المطابقة المحاسبية", icon: GitCompare, perm: "accounting.reconciliation.view" },
-    { to: "/accounting/self-audit", label: "التدقيق الذاتي", icon: ShieldCheck, perm: "accounting.selfaudit.run" },
   ],
 };
 

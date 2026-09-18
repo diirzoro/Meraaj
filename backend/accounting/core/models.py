@@ -1,5 +1,7 @@
 from typing import Optional
 
+import re
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .types import AccountType
@@ -8,6 +10,33 @@ from .types import AccountType
 # rule is readable and enforceable, not just an absence in a schema.
 IMMUTABLE_FIELDS = ("id", "entity_id", "code", "origin", "level", "role",
                     "next_child_seq", "created_at", "created_by")
+
+# Language separation for account names: the Arabic field holds Arabic, the English field
+# holds English. Enforced here so it cannot be bypassed by calling the API directly.
+_ARABIC_LETTER = re.compile(r"[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]")
+_LATIN_LETTER = re.compile(r"[A-Za-z]")
+
+
+def _validate_name_en(v):
+    if v is None:
+        return None
+    v = str(v).strip()
+    if not v:
+        return None
+    if _ARABIC_LETTER.search(v):
+        raise ValueError("حقل الاسم بالإنجليزية يقبل الإنجليزية فقط — اكتب الاسم العربي في حقل الاسم بالعربية")
+    return v
+
+
+def _validate_name_ar(v):
+    if v is None:
+        return None
+    v = str(v).strip()
+    if not v:
+        return None
+    if _LATIN_LETTER.search(v):
+        raise ValueError("حقل الاسم بالعربية يقبل العربية فقط — اكتب الاسم الإنجليزي في حقل الاسم بالإنجليزية")
+    return v
 
 
 class AccountCreate(BaseModel):
@@ -36,6 +65,16 @@ class AccountCreate(BaseModel):
         v = str(v).strip()
         return v or None
 
+    @field_validator("name")
+    @classmethod
+    def _name_en_only(cls, v):
+        return _validate_name_en(v)
+
+    @field_validator("name_ar")
+    @classmethod
+    def _name_ar_only(cls, v):
+        return _validate_name_ar(v)
+
 
 class AccountUpdate(BaseModel):
     """Only the fields below are ever updatable.
@@ -53,6 +92,16 @@ class AccountUpdate(BaseModel):
     type: Optional[AccountType] = None
     parent: Optional[str] = None
     is_group: Optional[bool] = None
+
+    @field_validator("name")
+    @classmethod
+    def _name_en_only(cls, v):
+        return _validate_name_en(v)
+
+    @field_validator("name_ar")
+    @classmethod
+    def _name_ar_only(cls, v):
+        return _validate_name_ar(v)
 
 
 PUBLIC_FIELDS = (

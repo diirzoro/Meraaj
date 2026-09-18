@@ -10,8 +10,8 @@ export default function AccLedger() {
   const [applied, setApplied] = useState(null);
 
   const url = applied
-    ? `/accounting/ledger/${encodeURIComponent(applied.account_code)}?currency=${applied.currency}` +
-      `${applied.date_from ? `&date_from=${applied.date_from}` : ""}${applied.date_to ? `&date_to=${applied.date_to}` : ""}` +
+    ? `/accounting/ledger/account/${encodeURIComponent(applied.account_code)}?currency=${applied.currency}` +
+      `${applied.date_from ? `&from_date=${applied.date_from}` : ""}${applied.date_to ? `&to_date=${applied.date_to}` : ""}` +
       `&page=${applied.page}&page_size=50`
     : null;
   const led = useFetch(url, [url]);
@@ -56,7 +56,10 @@ export default function AccLedger() {
 
       {applied && (
         <Panel testid="ledger-result" title={`حركة الحساب ${applied.account_code}`}>
-          {led.loading ? <Loading /> : !led.data ? <Empty /> : (
+          {led.loading ? <Loading />
+            : (led.data && (led.data.items || []).length === 0) ? (
+              <Empty>لا توجد حركات لهذا الحساب</Empty>
+            ) : !led.data ? <Empty /> : (
             <>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4 text-sm">
                 <div className="rounded-lg bg-slate-50 p-3" data-testid="ledger-opening">
@@ -92,7 +95,7 @@ export default function AccLedger() {
                   </tbody>
                 </table>
               </div>
-              {(led.data.items || []).length === 0 && <Empty>لا حركة في هذا النطاق</Empty>}
+              {(led.data.items || []).length === 0 && <Empty>لا توجد حركات لهذا الحساب</Empty>}
               <div className="flex items-center gap-2 mt-4">
                 <Button size="sm" variant="outline" disabled={applied.page <= 1} data-testid="ledger-prev"
                         onClick={() => setApplied({ ...applied, page: applied.page - 1 })}>السابق</Button>
